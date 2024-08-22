@@ -1,12 +1,18 @@
-import { Facet, RangeSetBuilder } from '@codemirror/state'
-import { Decoration, DecorationSet, EditorView, PluginValue, ViewUpdate, ViewPlugin } from '@codemirror/view'
+import { RangeSetBuilder } from '@codemirror/state'
+import {
+    Decoration,
+    type DecorationSet,
+    type EditorView,
+    type PluginValue,
+    type ViewUpdate,
+    ViewPlugin,
+} from '@codemirror/view'
 import classNames from 'classnames'
 
 import { logger } from '@sourcegraph/common'
 import { SyntaxKind } from '@sourcegraph/shared/src/codeintel/scip'
 
 import { getLinksFromString } from '../../linkifiy/get-links'
-import { BlobInfo } from '../CodeMirrorBlob'
 
 import { syntaxHighlight } from './highlight'
 
@@ -51,15 +57,15 @@ class LinkBuilder implements PluginValue {
             const fromLine = view.state.doc.lineAt(from)
             const toLine = view.state.doc.lineAt(to)
 
-            const { occurrences, lineIndex } = view.state.facet(syntaxHighlight)
+            const occurrences = view.state.facet(syntaxHighlight).allOccurrences
 
             // Find index of first relevant token
             let startIndex: number | undefined
             {
                 let line = fromLine.number - 1
                 do {
-                    startIndex = lineIndex[line++]
-                } while (startIndex === undefined && line < lineIndex.length)
+                    startIndex = occurrences.lineIndex[line++]
+                } while (startIndex === undefined && line < occurrences.lineIndex.length)
             }
 
             if (startIndex !== undefined) {
@@ -138,8 +144,4 @@ class LinkBuilder implements PluginValue {
 /**
  * Transforms URLs within code comments and string literals into links.
  */
-export const buildLinks = Facet.define<BlobInfo>({
-    static: true,
-    compareInput: (blobInfoA, blobInfoB) => blobInfoA.lsif === blobInfoB.lsif,
-    enables: ViewPlugin.fromClass(LinkBuilder, { decorations: plugin => plugin.decorations }),
-})
+export const linkify = ViewPlugin.fromClass(LinkBuilder, { decorations: plugin => plugin.decorations })

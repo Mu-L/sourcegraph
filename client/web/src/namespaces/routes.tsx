@@ -1,29 +1,28 @@
-import { lazyComponent } from '@sourcegraph/shared/src/util/lazyComponent'
+import { useEffect, type FunctionComponent } from 'react'
 
-import { NamespaceAreaRoute } from './NamespaceArea'
+import { useNavigate } from 'react-router-dom'
 
-const SavedSearchListPage = lazyComponent(() => import('../savedSearches/SavedSearchListPage'), 'SavedSearchListPage')
+import { urlToSavedSearchesList } from '../savedSearches/ListPage'
 
-const SavedSearchCreateForm = lazyComponent(
-    () => import('../savedSearches/SavedSearchCreateForm'),
-    'SavedSearchCreateForm'
-)
-const SavedSearchUpdateForm = lazyComponent(
-    () => import('../savedSearches/SavedSearchUpdateForm'),
-    'SavedSearchUpdateForm'
-)
+import type { NamespaceProps } from '.'
+import type { NamespaceAreaRoute } from './NamespaceArea'
 
 export const namespaceAreaRoutes: readonly NamespaceAreaRoute[] = [
     {
-        path: 'searches',
-        render: props => <SavedSearchListPage {...props} />,
-    },
-    {
-        path: 'searches/add',
-        render: props => <SavedSearchCreateForm {...props} />,
-    },
-    {
-        path: 'searches/:id',
-        render: props => <SavedSearchUpdateForm {...props} />,
+        path: 'searches/*',
+        render: props => <SavedSearchesRedirect {...props} />,
+        condition: () => window.context?.codeSearchEnabledOnInstance,
     },
 ]
+
+/**
+ * Redirect from `/users/USER/searches` and `/orgs/ORG/searches` to the new global URL path
+ * `/searches?owner=OWNER`, for backcompat.
+ */
+const SavedSearchesRedirect: FunctionComponent<NamespaceProps> = ({ namespace }) => {
+    const navigate = useNavigate()
+    useEffect(() => {
+        navigate(urlToSavedSearchesList(namespace.id), { replace: true })
+    }, [navigate, namespace.id])
+    return null
+}

@@ -3,25 +3,27 @@
 // It exports a Provider global variable, that should be used by all code
 // seeking to provide access to assets, regardless of their type (dev, oss
 // or enterprise).
+
+// Before using assets you have to call the package Init function, which sets up the global Provider
+// with the path to the assets, which by default is /assets-dist
 //
-// To select a particular bundle variant, use _one_ of the following imports in
-// the main.go:
+// import "github.com/sourcegraph/sourcegraph/ui/assets"
 //
-//   - If you want the oss bundle:
-//     import _ "github.com/sourcegraph/sourcegraph/ui/assets/oss" // Select oss assets
-//   - If you want the enterprise bundle:
-//     import _ "github.com/sourcegraph/sourcegraph/ui/assets/enterprise" // Select enterprise assets
+//	func main() {
+//		assets.Init()
+//	}
 //
-// And to support working with dev assets, with the webpack process handling them for you, you can use:
+// And to support working with dev assets, with the web builder process handling them for you, you can use:
 //
 //	 func main() {
-//		if os.Getenv("WEBPACK_DEV_SERVER") == "1" {
+//		assets.Init()
+//		if os.Getenv("WEB_BUILDER_DEV_SERVER") == "1" {
 //			assets.UseDevAssetsProvider()
 //		}
 //		// ...
 //	 }
 //
-// If this step isn't done, the default assets provider implementation, FailingAssetsProvider will ensure
+// If `assets.Init()` isn't called, the default assets provider implementation, FailingAssetsProvider will ensure
 // the binary panics when launched and will explicitly tell you about the problem.
 //
 // This enables to express which bundle type is needed at compile time, expressed through package dependency,

@@ -8,9 +8,16 @@ node_modules
 !.env.example
 package.json
 
-# Ignore files for PNPM, NPM and YARN
+# Ignore generated files
 pnpm-lock.yaml
 package-lock.json
 yarn.lock
+/static/mockServiceWorker.js
+*.gql.d.ts
+*.gql.ts
+auto-imports.d.ts
+graphql-operations.ts
+graphql-types.ts
+graphql-type-mocks.ts
 
 tsconfig.json

@@ -1,11 +1,12 @@
-import { MockedResponse } from '@apollo/client/testing'
-import { Meta, Story } from '@storybook/react'
+import type { MockedResponse } from '@apollo/client/testing'
+import type { Meta, StoryFn } from '@storybook/react'
 
 import { getDocumentNode } from '@sourcegraph/http-client'
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { NOOP_TELEMETRY_SERVICE } from '@sourcegraph/shared/src/telemetry/telemetryService'
 
 import { WebStory } from '../../../components/WebStory'
-import { FetchOwnershipResult } from '../../../graphql-operations'
+import type { FetchOwnershipResult } from '../../../graphql-operations'
 
 import { FileOwnershipPanel } from './FileOwnershipPanel'
 import { FETCH_OWNERS } from './grapqlQueries'
@@ -17,8 +18,11 @@ const response: FetchOwnershipResult = {
     node: {
         __typename: 'Repository',
         commit: {
+            __typename: 'GitCommit',
             blob: {
+                __typename: 'GitBlob',
                 ownership: {
+                    __typename: 'OwnershipConnection',
                     totalOwners: 4,
                     nodes: [
                         {
@@ -149,6 +153,7 @@ const response: FetchOwnershipResult = {
                 },
             },
         },
+        changelist: null,
     },
 }
 
@@ -168,20 +173,20 @@ const mockResponse: MockedResponse<FetchOwnershipResult> = {
 
 const config: Meta = {
     title: 'web/repo/blob/own/FileOwnership',
-    parameters: {
-        chromatic: { disableSnapshot: false },
-    },
+    parameters: {},
 }
 
 export default config
 
-export const Default: Story = () => (
+export const Default: StoryFn = () => (
     <WebStory mocks={[mockResponse]}>
         {() => (
             <FileOwnershipPanel
                 repoID="github.com/sourcegraph/sourcegraph"
                 filePath="README.md"
                 telemetryService={NOOP_TELEMETRY_SERVICE}
+                // TODO (dadlerj): update to use a real telemetry recorder
+                telemetryRecorder={noOpTelemetryRecorder}
             />
         )}
     </WebStory>

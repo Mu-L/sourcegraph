@@ -10,7 +10,7 @@ import (
 	"os"
 	"sync/atomic"
 
-	"github.com/google/go-github/v41/github"
+	"github.com/google/go-github/v55/github"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/sourcegraph/conc/pool"
 	"golang.org/x/oauth2"
@@ -66,7 +66,7 @@ func main() {
 		tc.Transport.(*oauth2.Transport).Base.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
 
-	gh, err := github.NewEnterpriseClient(cfg.githubURL, cfg.githubURL, tc)
+	gh, err := github.NewClient(tc).WithEnterpriseURLs(cfg.githubURL, cfg.githubURL)
 	if err != nil {
 		writeFailure(out, "Failed to sign-in to GHE")
 		log.Fatal(err)
@@ -135,7 +135,7 @@ func main() {
 	if clonesCount < 1 {
 		clonesCount = 1
 	}
-	for i := 0; i < clonesCount; i++ {
+	for i := range clonesCount {
 		clone, err := blank.clone(ctx, i)
 		if err != nil {
 			log.Fatal(err)
@@ -151,7 +151,7 @@ func main() {
 	}
 
 	// Distribute the blank repos.
-	for i := 0; i < cfg.count; i++ {
+	for i := range cfg.count {
 		repos[i].blank = blanks[i%clonesCount]
 	}
 
@@ -275,7 +275,7 @@ func writeFailure(out *output.Output, format string, a ...any) {
 
 func generateNames(prefix string, count int) []string {
 	names := make([]string, count)
-	for i := 0; i < count; i++ {
+	for i := range count {
 		names[i] = fmt.Sprintf("%s%09d", prefix, i)
 	}
 	return names

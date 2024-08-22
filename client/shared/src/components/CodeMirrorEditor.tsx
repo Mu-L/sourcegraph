@@ -1,16 +1,21 @@
-/* eslint-disable jsdoc/check-indentation */
-import React, { forwardRef, MutableRefObject, RefObject, useEffect, useImperativeHandle, useMemo, useRef } from 'react'
+import React, {
+    forwardRef,
+    useEffect,
+    useImperativeHandle,
+    useMemo,
+    useRef,
+    type MutableRefObject,
+    type RefObject,
+} from 'react'
 
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import {
-    ChangeSpec,
     Compartment,
     EditorState,
-    EditorStateConfig,
-    Extension,
     StateEffect,
-    StateEffectType,
-    StateField,
+    type ChangeSpec,
+    type EditorStateConfig,
+    type Extension,
 } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { tags } from '@lezer/highlight'
@@ -21,14 +26,14 @@ if (process.env.INTEGRATION_TESTS) {
     // Typecast "as any" is used to avoid TypeScript complaining about window
     // not having this property. We decided that it's fine to use this in a test
     // context
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access,@typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     ;(window as any).CodeMirrorFindFromDOM = (element: HTMLElement): ReturnType<typeof EditorView['findFromDOM']> =>
         EditorView.findFromDOM(element)
 }
 
 const defaultTheme = EditorView.baseTheme({
     // Overwrites the default cursor color, which has too low contrast in dark mode
-    '&dark .cm-cursor': {
+    '.theme-dark & .cm-cursor': {
         borderLeftColor: 'var(--grey-07)',
     },
 })
@@ -92,9 +97,35 @@ export function useCodeMirror(
     )
 }
 
+/**
+ * Generic interface for interaction with the editor.
+ */
 export interface Editor {
     focus(): void
     blur(): void
+}
+
+/**
+ * Helper function for creating an {@link Editor} from a {@link EditorView}.
+ * When calling `.focus` the input will only be focused if it doesn't have
+ * focus and it will move the cursor to the end of the input.
+ */
+export function viewToEditor(viewRef: RefObject<EditorView>): Editor {
+    return {
+        focus() {
+            const view = viewRef.current
+            if (view && !view.hasFocus) {
+                view.focus()
+                view.dispatch({
+                    selection: { anchor: view.state.doc.length },
+                    scrollIntoView: true,
+                })
+            }
+        },
+        blur() {
+            viewRef.current?.contentDOM.blur()
+        },
+    }
 }
 
 /**
@@ -108,25 +139,7 @@ export const CodeMirrorEditor = React.memo(
             const editorRef = useRef<EditorView | null>(null)
             useCodeMirror(editorRef, containerRef, value, extensions)
 
-            useImperativeHandle(
-                ref,
-                () => ({
-                    focus() {
-                        const editor = editorRef.current
-                        if (editor && !editor.hasFocus) {
-                            editor.focus()
-                            editor.dispatch({
-                                selection: { anchor: editor.state.doc.length },
-                                scrollIntoView: true,
-                            })
-                        }
-                    },
-                    blur() {
-                        editorRef.current?.contentDOM.blur()
-                    },
-                }),
-                []
-            )
+            useImperativeHandle(ref, () => viewToEditor(editorRef), [])
 
             return <div ref={containerRef} className={className} />
         }
@@ -149,85 +162,46 @@ export function replaceValue(view: EditorView, newValue: string): ChangeSpec | u
 /**
  * Helper hook for extensions that depend on on some input props.
  * With this hook the extension is isolated in a compartment so it can be
- * updated without reconfiguring the whole editor.
+ * updated without reconfiguring the whole editor. The return value is
+ * stable and should be included in the initial set of extensions.
+ * On rerender the hook will update the extension if it changed by
+ * dispatching an effect to editorRef.
  *
- * Use `useMemo` to compute the extension from some input and `useEffect` to
- * update it:
+ * Use `useMemo` to compute the extension from some input:
  *
- * const extension = useMemo(() => EditorView.darkTheme(isLightTheme === false), [isLightTheme])
- * const [compartment, updateCompartment] = useCompartment(extension)
- * const editor = useCodeMirror(..., ..., compartment)
- *
- * useEffect(() => {
- *   if (editor) {
- *     updateCompartment(extension)
- *  }
- *}, [editor, extension])
- *
- * @param initialExtension - the extension to use when creating the editor
- *
- * @returns A compartmentalized extension and a function to update the
- * compartment
+ * const extension = useCompartment(
+ * editorRef,
+ * useMemo(() => EditorView.darkTheme(isLightTheme === false), [isLightTheme])
+ * )
+ * const editor = useCodeMirror(..., ..., extension)
+ * @param editorRef - Ref object to the editor instance
+ * @param extension - the dynamic extension(s) to add to the editor
+ * @returns a compartmentalized extension
  */
 export function useCompartment(
-    initialExtension: Extension
-): [Extension, (editor: EditorView, extension: Extension) => void] {
-    return useMemo(() => {
-        const compartment = new Compartment()
-        return [
-            compartment.of(initialExtension),
-            (editor, extension: Extension) => {
-                // This check avoids an unnecessary update when the editor is
-                // first created
-                if (initialExtension !== extension) {
-                    editor.dispatch({ effects: compartment.reconfigure(extension) })
-                }
-            },
-        ]
-        // initialExtension is intentionally ignored in subsequent renders
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
-}
+    editorRef: RefObject<EditorView>,
+    extension: Extension,
+    extender?: (view: EditorView) => StateEffect<unknown>[]
+): Extension {
+    const compartment = useMemo(() => new Compartment(), [])
+    // We only want to trigger CodeMirror transactions when the component updates,
+    // not on the first render.
+    const shouldUpdate = useRef(false)
 
-/**
- * A helper function for creating an extension that operates on the value which
- * can be updated via an effect.
- * This is useful in React components where the extension depends on the value
- * of a prop  but that prop is unstable, and especially useful for callbacks.
- * Instead of reconfiguring the editor whenever the value changes (which is
- * apparently not cheap), the extension can be updated via the returned update
- * function or effect.
- *
- * Example:
- *
- * const {onChange} = props;
- * const [onChangeField, setOnChange] = useMemo(() => createUpdateableField(...), [])
- * ...
- * useEffect(() => {
- *   if (editor) {
- *     setOnchange(editor, onChange)
- *   }
- * }, [editor, onChange])
- */
-export function createUpdateableField<T>(
-    defaultValue: T,
-    provider?: (field: StateField<T>) => Extension
-): [StateField<T>, (editor: EditorView, newValue: T) => void, StateEffectType<T>] {
-    const fieldEffect = StateEffect.define<T>()
-    const field = StateField.define<T>({
-        create() {
-            return defaultValue
-        },
-        update(value, transaction) {
-            const effect = transaction.effects.find((effect): effect is StateEffect<typeof defaultValue> =>
-                effect.is(fieldEffect)
-            )
-            return effect ? effect.value : value
-        },
-        provide: provider,
-    })
+    useEffect(() => {
+        const view = editorRef.current
+        if (view && compartment.get(view.state) !== extension) {
+            view.dispatch({ effects: [compartment.reconfigure(extension), ...(extender?.(view) ?? [])] })
+        }
+    }, [shouldUpdate, compartment, editorRef, extension, extender])
 
-    return [field, (editor, newValue) => editor.dispatch({ effects: [fieldEffect.of(newValue)] }), fieldEffect]
+    // The compartment is initialized only in the first render.
+    // In subsequent renders we dispatch effects to update the compartment (
+    // see below).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const initialExtension = useMemo(() => compartment.of(extension), [compartment])
+
+    return initialExtension
 }
 
 /**

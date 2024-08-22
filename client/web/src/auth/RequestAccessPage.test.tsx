@@ -1,9 +1,11 @@
 import { act, fireEvent } from '@testing-library/react'
 import { Route, Routes } from 'react-router-dom'
+import { afterEach, describe, expect, test } from 'vitest'
 
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { renderWithBrandedContext } from '@sourcegraph/wildcard/src/testing'
 
-import { SourcegraphContext } from '../jscontext'
+import type { SourcegraphContext } from '../jscontext'
 
 import { RequestAccessPage } from './RequestAccessPage'
 
@@ -31,7 +33,7 @@ function renderPage({
     } as any
     return renderWithBrandedContext(
         <Routes>
-            <Route path="/request-access/*" element={<RequestAccessPage />} />
+            <Route path="/request-access/*" element={<RequestAccessPage telemetryRecorder={noOpTelemetryRecorder} />} />
             <Route path="/sign-in" element={<div>Sign in</div>} />
         </Routes>,
         { route }

@@ -1,8 +1,9 @@
-import { FC, useContext, useMemo } from 'react'
+import { type FC, useContext, useMemo } from 'react'
 
 import classNames from 'classnames'
 import MapSearchIcon from 'mdi-react/MapSearchIcon'
 import { useParams, useNavigate } from 'react-router-dom'
+import { lastValueFrom } from 'rxjs'
 
 import {
     Button,
@@ -11,7 +12,7 @@ import {
     PageHeader,
     useObservable,
     Link,
-    SubmissionErrors,
+    type SubmissionErrors,
 } from '@sourcegraph/wildcard'
 
 import { HeroPage } from '../../../../../components/HeroPage'
@@ -20,8 +21,8 @@ import { PageTitle } from '../../../../../components/PageTitle'
 import { CodeInsightsIcon, CodeInsightsPage } from '../../../components'
 import {
     CodeInsightsBackendContext,
-    CustomInsightDashboard,
-    InsightsDashboardOwner,
+    type CustomInsightDashboard,
+    type InsightsDashboardOwner,
     InsightsDashboardOwnerType,
     isGlobalOwner,
     isPersonalOwner,
@@ -29,7 +30,7 @@ import {
     useInsightDashboard,
 } from '../../../core'
 import {
-    DashboardCreationFields,
+    type DashboardCreationFields,
     InsightsDashboardCreationContent,
 } from '../creation/components/InsightsDashboardCreationContent'
 
@@ -70,13 +71,15 @@ export const EditDashboardPage: FC = props => {
             throw new Error('You have to specify a dashboard visibility')
         }
 
-        const updatedDashboard = await updateDashboard({
-            id: dashboard.id,
-            nextDashboardInput: {
-                name,
-                owners: [owner],
-            },
-        }).toPromise()
+        const updatedDashboard = await lastValueFrom(
+            updateDashboard({
+                id: dashboard.id,
+                nextDashboardInput: {
+                    name,
+                    owners: [owner],
+                },
+            })
+        )
 
         navigate(`/insights/dashboards/${updatedDashboard.id}`)
     }

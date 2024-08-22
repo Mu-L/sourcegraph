@@ -1,4 +1,4 @@
-import { useCallback, useRef, useEffect, FormEvent, useState, FC, useMemo } from 'react'
+import { useCallback, useRef, useEffect, type FormEvent, useState, type FC, useMemo } from 'react'
 
 import { mdiClose, mdiArrowRight, mdiStar } from '@mdi/js'
 import { VisuallyHidden } from '@reach/visually-hidden'
@@ -7,11 +7,12 @@ import { BehaviorSubject, combineLatest, of, timer } from 'rxjs'
 import { catchError, debounce, map, switchMap, tap } from 'rxjs/operators'
 
 import { asError, isErrorLike } from '@sourcegraph/common'
-import { AuthenticatedUser } from '@sourcegraph/shared/src/auth'
-import { SearchContextMinimalFields } from '@sourcegraph/shared/src/graphql-operations'
-import { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
-import { getDefaultSearchContextSpec, SearchContextInputProps } from '@sourcegraph/shared/src/search'
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import type { AuthenticatedUser } from '@sourcegraph/shared/src/auth'
+import type { SearchContextMinimalFields } from '@sourcegraph/shared/src/graphql-operations'
+import type { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
+import { getDefaultSearchContextSpec, type SearchContextInputProps } from '@sourcegraph/shared/src/search'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import {
     Badge,
     Button,
@@ -34,7 +35,8 @@ import styles from './SearchContextMenu.module.scss'
 export interface SearchContextMenuProps
     extends Omit<SearchContextInputProps, 'setSelectedSearchContextSpec'>,
         PlatformContextProps<'requestGraphQL'>,
-        TelemetryProps {
+        TelemetryProps,
+        TelemetryV2Props {
     showSearchContextManagement: boolean
     authenticatedUser: AuthenticatedUser | null
     isSourcegraphDotCom: boolean | null
@@ -69,6 +71,7 @@ export const SearchContextMenu: FC<SearchContextMenuProps> = props => {
         showSearchContextManagement,
         platformContext,
         telemetryService,
+        telemetryRecorder,
         isSourcegraphDotCom,
         className,
     } = props
@@ -165,8 +168,9 @@ export const SearchContextMenu: FC<SearchContextMenuProps> = props => {
             selectSearchContextSpec(context)
             onMenuClose(true)
             telemetryService.log('SearchContextSelected')
+            telemetryRecorder.recordEvent('search.contextDropdown', 'select')
         },
-        [onMenuClose, selectSearchContextSpec, telemetryService]
+        [onMenuClose, selectSearchContextSpec, telemetryService, telemetryRecorder]
     )
 
     const defaultContextExists = useObservable(
@@ -256,12 +260,16 @@ export const SearchContextMenu: FC<SearchContextMenuProps> = props => {
                                 <Text className="mb-0">
                                     To search across your team's private repositories,{' '}
                                     <Link
-                                        to="https://about.sourcegraph.com"
-                                        onClick={() =>
+                                        to="https://sourcegraph.com"
+                                        onClick={() => {
                                             telemetryService.log('ClickedOnEnterpriseCTA', {
                                                 location: 'ContextDropDown',
                                             })
-                                        }
+                                            telemetryRecorder.recordEvent(
+                                                'search.contextDropdown.enterpriseCTA',
+                                                'clicked'
+                                            )
+                                        }}
                                     >
                                         get Sourcegraph Enterprise
                                     </Link>

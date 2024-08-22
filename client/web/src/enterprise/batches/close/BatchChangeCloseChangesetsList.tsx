@@ -1,22 +1,22 @@
 import React, { useCallback } from 'react'
 
-import { repeatWhen, delay } from 'rxjs/operators'
+import { repeat } from 'rxjs/operators'
 
-import { ErrorLike } from '@sourcegraph/common'
+import type { ErrorLike } from '@sourcegraph/common'
 import { Container } from '@sourcegraph/wildcard'
 
-import { FilteredConnectionQueryArguments, FilteredConnection } from '../../../components/FilteredConnection'
-import { Scalars, ChangesetFields, BatchChangeChangesetsResult } from '../../../graphql-operations'
+import { type FilteredConnectionQueryArguments, FilteredConnection } from '../../../components/FilteredConnection'
+import type { Scalars, ChangesetFields, BatchChangeChangesetsResult } from '../../../graphql-operations'
 import {
     queryChangesets as _queryChangesets,
-    queryExternalChangesetWithFileDiffs as _queryExternalChangesetWithFileDiffs,
+    type queryExternalChangesetWithFileDiffs as _queryExternalChangesetWithFileDiffs,
 } from '../detail/backend'
 
 import {
     BatchChangeCloseHeaderWillCloseChangesets,
     BatchChangeCloseHeaderWillKeepChangesets,
 } from './BatchChangeCloseHeader'
-import { ChangesetCloseNodeProps, ChangesetCloseNode } from './ChangesetCloseNode'
+import { type ChangesetCloseNodeProps, ChangesetCloseNode } from './ChangesetCloseNode'
 import { CloseChangesetsListEmptyElement } from './CloseChangesetsListEmptyElement'
 
 import styles from './BatchChangeCloseChangesetsList.module.scss'
@@ -59,7 +59,7 @@ export const BatchChangeCloseChangesetsList: React.FunctionComponent<React.Props
                 onlyPublishedByThisBatchChange: true,
                 search: null,
                 onlyArchived: false,
-            }).pipe(repeatWhen(notifier => notifier.pipe(delay(5000)))),
+            }).pipe(repeat({ delay: 5000 })),
         [batchChangeID, queryChangesets]
     )
 

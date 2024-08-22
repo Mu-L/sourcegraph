@@ -7,7 +7,7 @@ import { TeamAvatar } from '@sourcegraph/shared/src/components/TeamAvatar'
 import { UserAvatar } from '@sourcegraph/shared/src/components/UserAvatar'
 import { Button, ButtonLink, Icon, LinkOrSpan, Tooltip } from '@sourcegraph/wildcard'
 
-import {
+import type {
     AssignedOwnerFields,
     CodeownersFileEntryFields,
     OwnerFields,
@@ -150,15 +150,20 @@ export const FileOwnershipEntry: React.FunctionComponent<Props> = ({
 
 const getOwnershipReasonPriority = (reason: OwnershipReason): number => {
     switch (reason.__typename ?? '') {
-        case 'CodeownersFileEntry':
+        case 'CodeownersFileEntry': {
             return 4
-        case 'AssignedOwner':
+        }
+        case 'AssignedOwner': {
             return 3
-        case 'RecentContributorOwnershipSignal':
+        }
+        case 'RecentContributorOwnershipSignal': {
             return 2
-        case 'RecentViewOwnershipSignal':
+        }
+        case 'RecentViewOwnershipSignal': {
             return 1
-        default:
+        }
+        default: {
             return 0
+        }
     }
 }

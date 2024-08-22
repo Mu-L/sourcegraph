@@ -2,7 +2,7 @@
 
 package schema
 
-// BatchSpecJSON is the content of the file "../../../schema/batch_spec.schema.json".
+// BatchSpecJSON is the content of the file "schema/batch_spec.schema.json".
 const BatchSpecJSON = `{
   "$id": "batch_spec.schema.json#",
   "$schema": "http://json-schema.org/draft-07/schema#",
@@ -12,6 +12,11 @@ const BatchSpecJSON = `{
   "additionalProperties": false,
   "required": ["name"],
   "properties": {
+    "version": {
+      "type": "number",
+      "description": "The version of the batch spec schema. Defaults to 1.",
+      "enum": [1, 2]
+    },
     "name": {
       "type": "string",
       "description": "The name of the batch change, which is unique among all batch changes in the namespace. A batch change's name is case-preserving.",

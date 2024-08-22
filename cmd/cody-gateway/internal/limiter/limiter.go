@@ -86,6 +86,11 @@ func (l StaticLimiter) TryAcquire(ctx context.Context) (_ func(context.Context, 
 		return nil, NoAccessError{}
 	}
 
+	// To work better with the abuse detection system, we consider the rate limit of 1 as no access.
+	if l.Limit == 1 {
+		return nil, NoAccessError{}
+	}
+
 	// Check the current usage. If no record exists, redis will return 0.
 	currentUsage, err = l.Redis.GetInt(l.Identifier)
 	if err != nil {
@@ -103,7 +108,7 @@ func (l StaticLimiter) TryAcquire(ctx context.Context) (_ func(context.Context, 
 
 		if l.RateLimitAlerter != nil {
 			// Call with usage 1 for 100% (rate limit exceeded)
-			go l.RateLimitAlerter(backgroundContextWithSpan(ctx), 1, retryAfter.Sub(l.NowFunc()))
+			go l.RateLimitAlerter(context.WithoutCancel(ctx), 1, retryAfter.Sub(l.NowFunc()))
 		}
 
 		return nil, RateLimitExceededError{
@@ -115,12 +120,12 @@ func (l StaticLimiter) TryAcquire(ctx context.Context) (_ func(context.Context, 
 	// Now that we know that we want to let the user pass, let's return our callback to
 	// increment the rate limit counter for the user if the request succeeds.
 	// Note that the rate limiter _may_ allow slightly more requests than the configured
-	// limit, incrementing the rate limit counter and reading the usage futher up are currently
+	// limit, incrementing the rate limit counter and reading the usage further up are currently
 	// not an atomic operation, because there is no good way to read the TTL in a transaction
 	// without a lua script.
-	// This approach could also slightly overcount the usage if redis requests after
+	// This approach could also slightly over-count the usage if redis requests after
 	// the INCR fail, but it will always recover safely.
-	// If Incr works but then everything else fails (eg ctx cancelled) the user spent
+	// If Incr works but then everything else fails (for example, ctx cancelled) the user spent
 	// a token without getting anything for it. This seems pretty rare and a fine trade-off
 	// since its just one token. The most likely reason this would happen is user cancelling
 	// the request and at that point its more likely to happen while the LLM is running than
@@ -131,7 +136,7 @@ func (l StaticLimiter) TryAcquire(ctx context.Context) (_ func(context.Context, 
 	// same time block since the TTL would have been set.
 	return func(ctx context.Context, usage int) (err error) {
 		// NOTE: This is to make sure we still commit usage even if the context was canceled.
-		ctx = backgroundContextWithSpan(ctx)
+		ctx = context.WithoutCancel(ctx)
 
 		var incrementedTo, ttlSeconds int
 		// We need to start a new span because the previous one has ended
@@ -155,7 +160,8 @@ func (l StaticLimiter) TryAcquire(ctx context.Context) (_ func(context.Context, 
 		}
 
 		// Set expiry on the key. If the key didn't exist prior to the previous INCR,
-		// it will set the expiry of the key to one day.
+		// it will set the expiry of the key to `intervalSeconds`.
+		//
 		// If it did exist before, it should have an expiry set already, so the TTL >= 0
 		// makes sure that we don't overwrite it and restart the 1h bucket.
 		ttl, err := l.Redis.TTL(l.Identifier)
@@ -219,8 +225,4 @@ func (l StaticLimiter) Usage(ctx context.Context) (_ int, _ time.Time, err error
 	}
 
 	return currentUsage, time.Now().Add(time.Duration(ttl) * time.Second).Truncate(time.Second), nil
-}
-
-func backgroundContextWithSpan(ctx context.Context) context.Context {
-	return trace.ContextWithSpan(context.Background(), trace.SpanFromContext(ctx))
 }

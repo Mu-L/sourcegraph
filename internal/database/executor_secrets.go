@@ -214,7 +214,7 @@ func (s *executorSecretStore) Create(ctx context.Context, scope ExecutorSecretSc
 	}
 
 	// SECURITY: check that the current user is authorized to create a secret for the given namespace.
-	if err := ensureActorHasNamespaceWriteAccess(ctx, NewDBWith(s.logger, s), secret); err != nil {
+	if err := EnsureActorHasNamespaceWriteAccess(ctx, NewDBWith(s.logger, s), secret); err != nil {
 		return err
 	}
 
@@ -258,7 +258,7 @@ func (s *executorSecretStore) Update(ctx context.Context, scope ExecutorSecretSc
 	}
 
 	// SECURITY: check that the current user is authorized to update a secret in the given namespace.
-	if err := ensureActorHasNamespaceWriteAccess(ctx, NewDBWith(s.logger, s), secret); err != nil {
+	if err := EnsureActorHasNamespaceWriteAccess(ctx, NewDBWith(s.logger, s), secret); err != nil {
 		return err
 	}
 
@@ -297,7 +297,7 @@ func (s *executorSecretStore) Delete(ctx context.Context, scope ExecutorSecretSc
 		}
 
 		// SECURITY: check that the current user is authorized to delete a secret in the given namespace.
-		if err := ensureActorHasNamespaceWriteAccess(ctx, NewDBWith(s.logger, tx), secret); err != nil {
+		if err := EnsureActorHasNamespaceWriteAccess(ctx, NewDBWith(s.logger, tx), secret); err != nil {
 			return err
 		}
 
@@ -401,7 +401,7 @@ var executorSecretsColumns = []*sqlf.Query{
 	sqlf.Sprintf("key"),
 	sqlf.Sprintf("value"),
 	sqlf.Sprintf("encryption_key_id"),
-	sqlf.Sprintf("COALESCE((SELECT o.id FROM executor_secrets o WHERE o.key = executor_secrets.key AND o.namespace_user_id IS NULL AND o.namespace_org_id IS NULL AND o.id != executor_secrets.id)::boolean, false) AS overwrites_global"),
+	sqlf.Sprintf("COALESCE((SELECT o.id FROM executor_secrets o WHERE o.key = executor_secrets.key AND o.scope = executor_secrets.scope AND o.namespace_user_id IS NULL AND o.namespace_org_id IS NULL AND o.id != executor_secrets.id)::boolean, false) AS overwrites_global"),
 	sqlf.Sprintf("namespace_user_id"),
 	sqlf.Sprintf("namespace_org_id"),
 	sqlf.Sprintf("creator_id"),
@@ -517,7 +517,7 @@ func scanExecutorSecret(secret *ExecutorSecret, key encryption.Key, s interface 
 	return nil
 }
 
-func ensureActorHasNamespaceWriteAccess(ctx context.Context, db DB, secret *ExecutorSecret) error {
+func EnsureActorHasNamespaceWriteAccess(ctx context.Context, db DB, secret *ExecutorSecret) error {
 	a := actor.FromContext(ctx)
 	if a.IsInternal() {
 		return nil

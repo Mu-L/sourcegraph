@@ -39,7 +39,9 @@ func TestSearchWithFiltering(t *testing.T) {
 				Name: "foo2",
 				Path: "file2",
 			},
-		}}
+		},
+		LimitHit: true,
+	}
 
 	mockServer := &mockSymbolsServer{
 		mockSearchGRPC: func(_ context.Context, _ *proto.SearchRequest) (*proto.SearchResponse, error) {
@@ -63,13 +65,16 @@ func TestSearchWithFiltering(t *testing.T) {
 
 	DefaultClient.Endpoints = endpoint.Static(srv.URL)
 
-	results, err := DefaultClient.Search(ctx, search.SymbolsParameters{
+	results, limitHit, err := DefaultClient.Search(ctx, search.SymbolsParameters{
 		Repo:     "foo",
 		CommitID: "HEAD",
 		Query:    "abc",
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if limitHit != true {
+		t.Fatal("expected limitHit to be true")
 	}
 	if results == nil {
 		t.Fatal("nil result")
@@ -95,13 +100,16 @@ func TestSearchWithFiltering(t *testing.T) {
 	})
 	authz.DefaultSubRepoPermsChecker = checker
 
-	results, err = DefaultClient.Search(ctx, search.SymbolsParameters{
+	results, limitHit, err = DefaultClient.Search(ctx, search.SymbolsParameters{
 		Repo:     "foo",
 		CommitID: "HEAD",
 		Query:    "abc",
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if limitHit != true {
+		t.Fatal("expected limitHit to be true")
 	}
 	if results == nil {
 		t.Fatal("nil result")
@@ -196,8 +204,7 @@ func TestDefinitionWithFiltering(t *testing.T) {
 
 type mockSymbolsServer struct {
 	mockSearchGRPC         func(ctx context.Context, request *proto.SearchRequest) (*proto.SearchResponse, error)
-	mockLocalCodeIntelGRPC func(ctx context.Context, request *proto.LocalCodeIntelRequest) (*proto.LocalCodeIntelResponse, error)
-	mockListLanguagesGRPC  func(ctx context.Context, request *proto.ListLanguagesRequest) (*proto.ListLanguagesResponse, error)
+	mockLocalCodeIntelGRPC func(request *proto.LocalCodeIntelRequest, ss proto.SymbolsService_LocalCodeIntelServer) error
 	mockSymbolInfoGRPC     func(ctx context.Context, request *proto.SymbolInfoRequest) (*proto.SymbolInfoResponse, error)
 	mockHealthzGRPC        func(ctx context.Context, request *proto.HealthzRequest) (*proto.HealthzResponse, error)
 
@@ -235,20 +242,12 @@ func (m *mockSymbolsServer) Search(ctx context.Context, r *proto.SearchRequest) 
 	return nil, errors.Newf("grpc: method %q not implemented", "Search")
 }
 
-func (m *mockSymbolsServer) LocalCodeIntel(ctx context.Context, r *proto.LocalCodeIntelRequest) (*proto.LocalCodeIntelResponse, error) {
+func (m *mockSymbolsServer) LocalCodeIntel(r *proto.LocalCodeIntelRequest, ss proto.SymbolsService_LocalCodeIntelServer) error {
 	if m.mockLocalCodeIntelGRPC != nil {
-		return m.LocalCodeIntel(ctx, r)
+		return m.LocalCodeIntel(r, ss)
 	}
 
-	return nil, errors.Newf("grpc: method %q not implemented", "LocalCodeIntel")
-}
-
-func (m *mockSymbolsServer) ListLanguages(ctx context.Context, r *proto.ListLanguagesRequest) (*proto.ListLanguagesResponse, error) {
-	if m.mockListLanguagesGRPC != nil {
-		return m.mockListLanguagesGRPC(ctx, r)
-	}
-
-	return nil, errors.Newf("grpc: method %q not implemented", "ListLanguages")
+	return errors.Newf("grpc: method %q not implemented", "LocalCodeIntel")
 }
 
 func (m *mockSymbolsServer) SymbolInfo(ctx context.Context, r *proto.SymbolInfoRequest) (*proto.SymbolInfoResponse, error) {

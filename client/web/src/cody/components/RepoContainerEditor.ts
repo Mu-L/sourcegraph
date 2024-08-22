@@ -1,9 +1,10 @@
-import {
+import type {
     ActiveTextEditor,
+    ActiveTextEditorDiagnostic,
     ActiveTextEditorSelection,
     ActiveTextEditorVisibleContent,
     Editor,
-} from '@sourcegraph/cody-shared/dist/editor'
+} from '@sourcegraph/cody-shared'
 
 export class RepoContainerEditor implements Editor {
     constructor(private repoName: string) {}
@@ -28,7 +29,21 @@ export class RepoContainerEditor implements Editor {
         return null
     }
 
+    public getActiveTextEditorSelectionOrVisibleContent(): ActiveTextEditorSelection | null {
+        return null
+    }
+
     public getActiveTextEditorVisibleContent(): ActiveTextEditorVisibleContent | null {
+        return null
+    }
+
+    public getWorkspaceRootUri(): null {
+        // Not implemented.
+        return null
+    }
+
+    public getActiveTextEditorDiagnosticsForRange(): ActiveTextEditorDiagnostic[] | null {
+        // Not implemented.
         return null
     }
 
@@ -57,5 +72,15 @@ export class RepoContainerEditor implements Editor {
     public didReceiveFixupText(id: string, text: string, state: 'streaming' | 'complete'): Promise<void> {
         // Not implemented.
         return Promise.resolve(undefined)
+    }
+
+    public getActiveInlineChatTextEditor(): ActiveTextEditor | null {
+        // Not implemented.
+        return null
+    }
+
+    public getActiveInlineChatSelection(): ActiveTextEditorSelection | null {
+        // Not implemented.
+        return null
     }
 }

@@ -1,13 +1,15 @@
-import { Remote } from 'comlink'
-import { throwError, of, Subscription, Unsubscribable, Subscribable } from 'rxjs'
-import * as sourcegraph from 'sourcegraph'
+import type { Remote } from 'comlink'
+import { throwError, of, Subscription, type Unsubscribable, type Observable } from 'rxjs'
+import type * as sourcegraph from 'sourcegraph'
+import { expect } from 'vitest'
 
 import { createExtensionHostClientConnection } from '../api/client/connection'
-import { FlatExtensionHostAPI, MainThreadAPI } from '../api/contract'
-import { InitData, startExtensionHost } from '../api/extension/extensionHost'
-import { WorkspaceRootWithMetadata } from '../api/extension/extensionHostApi'
-import { TextDocumentData, ViewerData } from '../api/viewerTypes'
-import { EndpointPair, PlatformContext } from '../platform/context'
+import type { FlatExtensionHostAPI, MainThreadAPI } from '../api/contract'
+import { type InitData, startExtensionHost } from '../api/extension/extensionHost'
+import type { WorkspaceRootWithMetadata } from '../api/extension/extensionHostApi'
+import type { TextDocumentData, ViewerData } from '../api/viewerTypes'
+import type { EndpointPair, PlatformContext } from '../platform/context'
+import { noOpTelemetryRecorder } from '../telemetry'
 
 export function assertToJSON(a: any, expected: any): void {
     const raw = JSON.stringify(a)
@@ -37,15 +39,21 @@ const FIXTURE_INIT_DATA: TestInitData = {
 interface Mocks
     extends Pick<
         PlatformContext,
-        'settings' | 'updateSettings' | 'getGraphQLClient' | 'requestGraphQL' | 'clientApplication'
+        | 'settings'
+        | 'updateSettings'
+        | 'getGraphQLClient'
+        | 'requestGraphQL'
+        | 'clientApplication'
+        | 'telemetryRecorder'
     > {}
 
 const NOOP_MOCKS: Mocks = {
     settings: of({ final: {}, subjects: [] }),
     updateSettings: () => Promise.reject(new Error('Mocks#updateSettings not implemented')),
     getGraphQLClient: () => Promise.reject(new Error('Mocks#getGraphQLClient not implemented')),
-    requestGraphQL: () => throwError(new Error('Mocks#queryGraphQL not implemented')),
+    requestGraphQL: () => throwError(() => new Error('Mocks#queryGraphQL not implemented')),
     clientApplication: 'sourcegraph',
+    telemetryRecorder: noOpTelemetryRecorder,
 }
 
 /**
@@ -106,19 +114,9 @@ export async function integrationTestContext(
     }
 }
 
-/**
- * Returns a {@link Promise} and a function. The {@link Promise} blocks until the returned function is called.
- *
- * @internal
- */
-export function createBarrier(): { wait: Promise<void>; done: () => void } {
-    let done!: () => void
-    const wait = new Promise<void>(resolve => (done = resolve))
-    return { wait, done }
-}
-
-export function collectSubscribableValues<T>(subscribable: Subscribable<T>): T[] {
+export function collectSubscribableValues<T>(observable: Observable<T>): T[] {
     const values: T[] = []
-    subscribable.subscribe(value => values.push(value))
+    // eslint-disable-next-line rxjs/no-ignored-subscription
+    observable.subscribe(value => values.push(value))
     return values
 }

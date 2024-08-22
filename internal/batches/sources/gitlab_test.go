@@ -11,7 +11,7 @@ import (
 
 	"github.com/Masterminds/semver"
 	"github.com/google/go-cmp/cmp"
-	"github.com/inconshreveable/log15"
+	"github.com/inconshreveable/log15" //nolint:logging // TODO move all logging to sourcegraph/log
 	"github.com/stretchr/testify/assert"
 
 	btypes "github.com/sourcegraph/sourcegraph/internal/batches/types"
@@ -1374,7 +1374,7 @@ func TestGitLabSource_WithAuthenticator(t *testing.T) {
 				src, err = src.WithAuthenticator(tc)
 				if err == nil {
 					t.Error("unexpected nil error")
-				} else if !errors.HasType(err, UnsupportedAuthenticatorError{}) {
+				} else if !errors.HasType[UnsupportedAuthenticatorError](err) {
 					t.Errorf("unexpected error of type %T: %v", err, err)
 				}
 				if src != nil {

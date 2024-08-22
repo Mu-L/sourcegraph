@@ -1,20 +1,25 @@
-import { FC } from 'react'
+import type { FC } from 'react'
 
 import { gql, useQuery } from '@sourcegraph/http-client'
 
-import { AuthenticatedUser } from '../../auth'
+import type { AuthenticatedUser } from '../../auth'
 import { useFeatureFlag } from '../../featureFlags/useFeatureFlag'
-import { ExternalServicesTotalCountResult } from '../../graphql-operations'
+import type { ExternalServicesTotalCountResult } from '../../graphql-operations'
 import { SearchPageContent, getShouldShowAddCodeHostWidget } from '../../storm/pages/SearchPage/SearchPageContent'
 
 export interface SearchPageProps {
     authenticatedUser: AuthenticatedUser | null
+    isSourcegraphDotCom: boolean
 }
 
-export const SearchPage: FC<SearchPageProps> = props => {
-    const shouldShowAddCodeHostWidget = useShouldShowAddCodeHostWidget(props.authenticatedUser)
-
-    return <SearchPageContent shouldShowAddCodeHostWidget={shouldShowAddCodeHostWidget} />
+export const SearchPage: FC<SearchPageProps> = ({ authenticatedUser, isSourcegraphDotCom }) => {
+    const shouldShowAddCodeHostWidget = useShouldShowAddCodeHostWidget(authenticatedUser)
+    return (
+        <SearchPageContent
+            shouldShowAddCodeHostWidget={shouldShowAddCodeHostWidget}
+            isSourcegraphDotCom={isSourcegraphDotCom}
+        />
+    )
 }
 
 const EXTERNAL_SERVICES_TOTAL_COUNT = gql`

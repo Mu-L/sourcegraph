@@ -1,4 +1,4 @@
-import React, { ReactElement, useCallback, useMemo, useState } from 'react'
+import React, { type ReactElement, useCallback, useMemo, useState } from 'react'
 
 import { mdiChevronDown, mdiChevronLeft, mdiOpenInNew } from '@mdi/js'
 import classNames from 'classnames'
@@ -7,15 +7,16 @@ import { escapeRegExp } from 'lodash'
 import { renderMarkdown } from '@sourcegraph/common'
 import { SearchPatternType } from '@sourcegraph/shared/src/graphql-operations'
 import {
-    SearchQueryState,
+    type SearchQueryState,
     createQueryExampleFromString,
     updateQueryWithFilterAndExample,
-    QueryExample,
+    type QueryExample,
     EditorHint,
 } from '@sourcegraph/shared/src/search'
 import { FILTERS, FilterType, isNegatableFilter } from '@sourcegraph/shared/src/search/query/filters'
 import { scanSearchQuery } from '@sourcegraph/shared/src/search/query/scanner'
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import {
     Button,
     useLocalStorage,
@@ -248,7 +249,7 @@ To use this filter, the search query must contain \`type:diff\` or \`type:commit
         field: FilterType.rev,
         commonRank: 20,
         description:
-            'Search a revision instead of the default branch. `rev:` can only be used in conjunction with `repo:` and may not be used more than once. See our [revision syntax documentation](https://docs.sourcegraph.com/code_search/reference/queries#repository-revisions) to learn more.',
+            'Search a revision instead of the default branch. `rev:` can only be used in conjunction with `repo:` and may not be used more than once. See our [revision syntax documentation](https://sourcegraph.com/docs/code_search/reference/queries#repository-revisions) to learn more.',
     },
     {
         ...createQueryExampleFromString('{result-types}'),
@@ -265,7 +266,7 @@ To use this filter, the search query must contain \`type:diff\` or \`type:commit
 - \`select:content\`
 - \`select:symbol.symboltype\`
 
-See [language definition](https://docs.sourcegraph.com/code_search/reference/language#select) for more information on possible values.`,
+See [language definition](https://sourcegraph.com/docs/code_search/reference/language#select) for more information on possible values.`,
         examples: ['fmt.Errorf select:repo', 'select:commit.diff.added //TODO', 'select:file.directory'],
     },
     {
@@ -280,7 +281,7 @@ See [language definition](https://docs.sourcegraph.com/code_search/reference/lan
         ...createQueryExampleFromString('{golang-duration-value}'),
         field: FilterType.timeout,
         description:
-            'Customizes the timeout for searches. The value of the parameter is a string that can be parsed by the [Go time package’s `ParseDuration`](https://golang.org/pkg/time/#ParseDuration) (e.g. 10s, 100ms). By default, the timeout is set to 10 seconds, and the search will optimize for returning results as soon as possible. The timeout value cannot be set longer than 1 minute. When provided, the search is given the full timeout to complete.',
+            'Customizes the timeout for searches. The value of the parameter is a string that can be parsed by the [Go time package’s `ParseDuration`](https://golang.org/pkg/time/#ParseDuration) (e.g. 10s, 100ms). By default, the timeout is set to 1 minute, and the search will optimize for returning results as soon as possible. The value of [`search.limits.maxTimeoutSeconds`](https://sourcegraph.com/docs/code-search/types/exhaustive#timeouts) can be configured by site admins. When provided, the search is given the full timeout to complete.',
         examples: ['repo:^github.com/sourcegraph timeout:15s func count:10000'],
     },
     {
@@ -378,21 +379,24 @@ const SearchReferenceExample: React.FunctionComponent<React.PropsWithChildren<Se
             <Button className="p-0 flex-1" onClick={() => onClick?.(example)}>
                 {scanResult.term.map((term, index) => {
                     switch (term.type) {
-                        case 'filter':
+                        case 'filter': {
                             return (
                                 <React.Fragment key={index}>
                                     <span className="search-filter-keyword">{term.field.value}:</span>
                                     {term.value?.quoted ? `"${term.value.value}"` : term.value?.value}
                                 </React.Fragment>
                             )
-                        case 'keyword':
+                        }
+                        case 'keyword': {
                             return (
                                 <span key={index} className="search-filter-keyword">
                                     {term.value}
                                 </span>
                             )
-                        default:
+                        }
+                        default: {
                             return example.slice(term.range.start, term.range.end)
+                        }
                     }
                 })}
             </Button>
@@ -521,14 +525,17 @@ const FilterInfoList = ({ filters, onClick, onExampleClick }: FilterInfoListProp
     </ul>
 )
 
-export interface SearchReferenceProps extends TelemetryProps, Pick<SearchQueryState, 'setQueryState'> {
+export interface SearchReferenceProps
+    extends TelemetryProps,
+        TelemetryV2Props,
+        Pick<SearchQueryState, 'setQueryState'> {
     filter: string
 }
 
 const SearchReference = React.memo(function SearchReference(props: SearchReferenceProps) {
     const [persistedTabIndex, setPersistedTabIndex] = useLocalStorage(SEARCH_REFERENCE_TAB_KEY, 0)
 
-    const { setQueryState, telemetryService } = props
+    const { setQueryState, telemetryService, telemetryRecorder } = props
     const filter = props.filter.trim()
     const hasFilter = filter.length > 0
 
@@ -560,16 +567,21 @@ const SearchReference = React.memo(function SearchReference(props: SearchReferen
     )
     const updateQueryWithOperator = useCallback(
         (info: OperatorInfo) => {
+            telemetryRecorder.recordEvent('search.reference.operator', 'click')
+
             setQueryState(({ query }) => ({ query: query + ` ${info.operator} ` }))
         },
-        [setQueryState]
+        [setQueryState, telemetryRecorder]
     )
     const updateQueryWithExample = useCallback(
         (example: string) => {
             telemetryService.log(hasFilter ? 'SearchReferenceSearchedAndClicked' : 'SearchReferenceFilterClicked')
+            telemetryRecorder.recordEvent('search.reference.filter', 'click', {
+                metadata: { hasFilter: hasFilter ? 1 : 0 },
+            })
             setQueryState(({ query }) => ({ query: query.trimEnd() + ' ' + example }))
         },
-        [setQueryState, hasFilter, telemetryService]
+        [setQueryState, hasFilter, telemetryService, telemetryRecorder]
     )
 
     const filterList = (

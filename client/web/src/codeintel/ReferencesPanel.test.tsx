@@ -1,5 +1,6 @@
 import { within, fireEvent } from '@testing-library/react'
 import { createPath } from 'react-router-dom'
+import { describe, expect, it, vi } from 'vitest'
 
 import { EMPTY_SETTINGS_CASCADE, SettingsProvider } from '@sourcegraph/shared/src/settings/settings'
 import { MockedTestProvider, waitForNextApolloResponse } from '@sourcegraph/shared/src/testing/apollo'
@@ -9,7 +10,7 @@ import '@sourcegraph/shared/src/testing/mockReactVisibilitySensor'
 import { Code } from '@sourcegraph/wildcard'
 import { renderWithBrandedContext } from '@sourcegraph/wildcard/src/testing'
 
-import { BlobProps } from '../repo/blob/CodeMirrorBlob'
+import type { BlobProps } from '../repo/blob/CodeMirrorBlob'
 
 import { ReferencesPanel } from './ReferencesPanel'
 import { buildReferencePanelMocks, defaultProps } from './ReferencesPanel.mocks'
@@ -20,7 +21,7 @@ import { buildReferencePanelMocks, defaultProps } from './ReferencesPanel.mocks'
 function mockCodeMirrorBlob(props: BlobProps) {
     return <Code data-testid="codeMirrorBlobMock">{props.blobInfo.content}</Code>
 }
-jest.mock('../repo/blob/CodeMirrorBlob', () => ({ CodeMirrorBlob: mockCodeMirrorBlob }))
+vi.mock('../repo/blob/CodeMirrorBlob', () => ({ CodeMirrorBlob: mockCodeMirrorBlob }))
 
 describe('ReferencesPanel', () => {
     async function renderReferencesPanel() {

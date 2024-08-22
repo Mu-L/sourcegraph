@@ -6,7 +6,7 @@ import (
 	"log"
 	"sync"
 
-	"github.com/google/go-github/v41/github"
+	"github.com/google/go-github/v55/github"
 )
 
 type state struct {
@@ -197,7 +197,7 @@ func (s *state) loadRepos() ([]*repo, error) {
 
 func generateNames(prefix string, count int) []string {
 	names := make([]string, count)
-	for i := 0; i < count; i++ {
+	for i := range count {
 		names[i] = fmt.Sprintf("%s-%09d", prefix, i)
 	}
 	return names
@@ -313,7 +313,6 @@ func (s *state) saveOrg(o *org) error {
 		o.Failed,
 		o.Created,
 		o.Login)
-
 	if err != nil {
 		return err
 	}
@@ -340,7 +339,6 @@ func (s *state) saveRepo(r *repo) error {
 		r.AssignedOrgs,
 		r.Complete,
 		r.Name)
-
 	if err != nil {
 		return err
 	}

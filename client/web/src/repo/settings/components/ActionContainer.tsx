@@ -3,7 +3,7 @@ import * as React from 'react'
 import classNames from 'classnames'
 
 import { asError } from '@sourcegraph/common'
-import { Button, ButtonProps, Heading, Tooltip, ErrorAlert, HeadingElement } from '@sourcegraph/wildcard'
+import { Button, type ButtonProps, Heading, Tooltip, ErrorAlert, type HeadingElement } from '@sourcegraph/wildcard'
 
 import styles from './ActionContainer.module.scss'
 
@@ -20,7 +20,7 @@ export const BaseActionContainer: React.FunctionComponent<
 > = ({ title, description, action, details, className, titleAs = 'h4', titleStyleAs = titleAs }) => (
     <div className={classNames(styles.actionContainer, className)}>
         <div className={styles.row}>
-            <div>
+            <div className={styles.content}>
                 <Heading as={titleAs} styleAs={titleStyleAs} className={styles.title}>
                     {title}
                 </Heading>

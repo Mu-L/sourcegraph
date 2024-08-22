@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/inconshreveable/log15"
+	"github.com/inconshreveable/log15" //nolint:logging // TODO move all logging to sourcegraph/log
 
 	btypes "github.com/sourcegraph/sourcegraph/internal/batches/types"
 
@@ -61,8 +61,12 @@ func NewBitbucketServerSource(ctx context.Context, svc *types.ExternalService, c
 	}, nil
 }
 
-func (s BitbucketServerSource) GitserverPushConfig(repo *types.Repo) (*protocol.PushConfig, error) {
-	return GitserverPushConfig(repo, s.au)
+func (s BitbucketServerSource) GitserverPushConfig(ctx context.Context, repo *types.Repo) (*protocol.PushConfig, error) {
+	return GitserverPushConfig(ctx, repo, s.au)
+}
+
+func (s BitbucketServerSource) AuthenticationStrategy() AuthenticationStrategy {
+	return AuthenticationStrategyUserCredential
 }
 
 func (s BitbucketServerSource) WithAuthenticator(a auth.Authenticator) (ChangesetSource, error) {

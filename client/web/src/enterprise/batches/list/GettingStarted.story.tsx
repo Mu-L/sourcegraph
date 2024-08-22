@@ -1,35 +1,41 @@
-import { Meta, Story, DecoratorFn } from '@storybook/react'
+import type { Meta, StoryFn, Decorator } from '@storybook/react'
+
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 
 import { WebStory } from '../../../components/WebStory'
 
 import { GettingStarted } from './GettingStarted'
 
-const decorator: DecoratorFn = story => <div className="p-3 container">{story()}</div>
+const decorator: Decorator = story => <div className="p-3 container">{story()}</div>
 
 const config: Meta = {
     title: 'web/batches/GettingStarted',
     decorators: [decorator],
-    parameters: {
-        chromatic: {
-            disableSnapshot: false,
-        },
-    },
+    parameters: {},
     argTypes: {
         isSourcegraphDotCom: {
             control: { type: 'boolean' },
-            defaultValue: false,
         },
         canCreateBatchChanges: {
             control: { type: 'boolean' },
-            defaultValue: true,
         },
+    },
+    args: {
+        isSourcegraphDotCom: false,
+        canCreateBatchChanges: true,
     },
 }
 
 export default config
 
-export const Overview: Story = args => (
+export const Overview: StoryFn = args => (
     <WebStory>
-        {() => <GettingStarted isSourcegraphDotCom={args.isSourcegraphDotCom} canCreate={args.canCreateBatchChanges} />}
+        {() => (
+            <GettingStarted
+                isSourcegraphDotCom={args.isSourcegraphDotCom}
+                canCreate={args.canCreateBatchChanges}
+                telemetryRecorder={noOpTelemetryRecorder}
+            />
+        )}
     </WebStory>
 )

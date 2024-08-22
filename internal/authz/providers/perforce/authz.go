@@ -28,7 +28,7 @@ import (
 func NewAuthzProviders(db database.DB, conns []*types.PerforceConnection) *atypes.ProviderInitResult {
 	initResults := &atypes.ProviderInitResult{}
 	for _, c := range conns {
-		p, err := newAuthzProvider(db, c.URN, c.Authorization, c.P4Port, c.P4User, c.P4Passwd, c.Depots)
+		p, err := newAuthzProvider(c.URN, db, c.Authorization, c.P4Port, c.P4User, c.P4Passwd, c.Depots)
 		if err != nil {
 			initResults.InvalidConnections = append(initResults.InvalidConnections, extsvc.TypePerforce)
 			initResults.Problems = append(initResults.Problems, err.Error())
@@ -41,8 +41,8 @@ func NewAuthzProviders(db database.DB, conns []*types.PerforceConnection) *atype
 }
 
 func newAuthzProvider(
-	db database.DB,
 	urn string,
+	db database.DB,
 	a *schema.PerforceAuthorization,
 	host, user, password string,
 	depots []string,
@@ -52,7 +52,7 @@ func newAuthzProvider(
 		return nil, nil
 	}
 
-	logger := log.Scoped("authz", "parse providers from config")
+	logger := log.Scoped("authz")
 	if err := licensing.Check(licensing.FeatureACLs); err != nil {
 		return nil, err
 	}
@@ -70,7 +70,7 @@ func newAuthzProvider(
 		}
 	}
 
-	return NewProvider(logger, gitserver.NewClient(db), urn, host, user, password, depotIDs), nil
+	return NewProvider(logger, db, gitserver.NewClient("authz.perforce"), urn, host, user, password, depotIDs, a.IgnoreRulesWithHost), nil
 }
 
 // ValidateAuthz validates the authorization fields of the given Perforce

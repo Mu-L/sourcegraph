@@ -1,27 +1,31 @@
-import { ReactElement, useEffect } from 'react'
+import { type ReactElement, useEffect } from 'react'
 
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { Text } from '@sourcegraph/wildcard'
 
 import { SiteAdminRepositoriesContainer } from '../../site-admin/SiteAdminRepositoriesContainer'
 
 import { CustomNextButton } from './setup-steps'
 
-interface SyncRepositoriesStepProps extends TelemetryProps {
+interface SyncRepositoriesStepProps extends TelemetryProps, TelemetryV2Props {
     baseURL: string
 }
 
 export function SyncRepositoriesStep({
     telemetryService,
+    telemetryRecorder,
     baseURL,
     ...attributes
 }: SyncRepositoriesStepProps): ReactElement {
     useEffect(() => {
         telemetryService.log('SetupWizardLandedSyncRepositories')
-    }, [telemetryService])
+        telemetryRecorder.recordEvent('setupWizard.syncRepos', 'view')
+    }, [telemetryService, telemetryRecorder])
 
     const handleFinishButtonClick = (): void => {
         telemetryService.log('SetupWizardFinishedSuccessfully')
+        telemetryRecorder.recordEvent('setupWizard', 'finish')
     }
 
     return (

@@ -3,13 +3,15 @@ package events
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"cloud.google.com/go/bigquery"
 	"github.com/sourcegraph/log"
 	oteltrace "go.opentelemetry.io/otel/trace"
 
-	"github.com/sourcegraph/sourcegraph/internal/codygateway"
+	sgactor "github.com/sourcegraph/sourcegraph/internal/actor"
+	"github.com/sourcegraph/sourcegraph/internal/codygateway/codygatewayevents"
 	"github.com/sourcegraph/sourcegraph/internal/trace"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
@@ -44,7 +46,7 @@ func NewBigQueryLogger(projectID, dataset, table string) (Logger, error) {
 // Event contains information to be logged.
 type Event struct {
 	// Event categorizes the event. Required.
-	Name codygateway.EventName
+	Name codygatewayevents.EventName
 	// Source indicates the source of the actor associated with the event.
 	// Required.
 	Source string
@@ -96,22 +98,30 @@ func (l *bigQueryLogger) LogEvent(spanCtx context.Context, event Event) (err err
 		return nil
 	}
 
-	var metadata json.RawMessage
-	if event.Metadata != nil {
-		var err error
-		metadata, err = json.Marshal(event.Metadata)
-		if err != nil {
-			return errors.Wrap(err, "marshaling metadata")
-		}
+	// Always have metadata
+	if event.Metadata == nil {
+		event.Metadata = map[string]any{}
 	}
 
+	// HACK: Inject Sourcegraph actor that is held in the span context
+	event.Metadata["sg.actor"] = sgactor.FromContext(spanCtx)
+
+	// Inject trace metadata
+	event.Metadata["trace_id"] = oteltrace.SpanContextFromContext(spanCtx).TraceID().String()
+
+	metadata, err := json.Marshal(event.Metadata)
+	if err != nil {
+		return errors.Wrap(err, "marshaling metadata")
+	}
 	if err := l.tableInserter.Put(
-		backgroundContextWithSpan(spanCtx),
+		// Create a cancel-free context to avoid interrupting the log when
+		// the parent context is cancelled.
+		context.WithoutCancel(spanCtx),
 		bigQueryEvent{
 			Name:       string(event.Name),
 			Source:     event.Source,
 			Identifier: event.Identifier,
-			Metadata:   metadata,
+			Metadata:   json.RawMessage(metadata),
 			CreatedAt:  time.Now(),
 		},
 	); err != nil {
@@ -130,7 +140,7 @@ func NewStdoutLogger(logger log.Logger) Logger {
 	// demo tracing in dev.
 	return &instrumentedLogger{
 		Scope:  "stdoutLogger",
-		Logger: &stdoutLogger{logger: logger.Scoped("events", "event logger")},
+		Logger: &stdoutLogger{logger: logger.Scoped("events")},
 	}
 }
 
@@ -140,7 +150,20 @@ func (l *stdoutLogger) LogEvent(spanCtx context.Context, event Event) error {
 			log.String("name", string(event.Name)),
 			log.String("source", event.Source),
 			log.String("identifier", event.Identifier),
+			log.String("metadata", fmt.Sprint(event.Metadata)),
 		),
 	)
 	return nil
+}
+
+// MergeMaps returns a map that contains all the keys from the given maps.
+// If two or more maps contain the same key, the last value (in the order the maps are passed as parameters) is retained.
+// dst is modified in-place.
+func MergeMaps(dst map[string]any, srcs ...map[string]any) map[string]any {
+	for _, src := range srcs {
+		for k, v := range src {
+			dst[k] = v
+		}
+	}
+	return dst
 }

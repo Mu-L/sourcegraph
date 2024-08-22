@@ -1,24 +1,25 @@
 import assert from 'assert'
 
-import { ElementHandle, MouseButton } from 'puppeteer'
+import { afterEach, beforeEach, describe, it } from 'mocha'
+import type { ElementHandle, MouseButton } from 'puppeteer'
 
-import { JsonDocument, SyntaxKind } from '@sourcegraph/shared/src/codeintel/scip'
-import { SharedGraphQlOperations } from '@sourcegraph/shared/src/graphql-operations'
-import { Driver, createDriverForTest, percySnapshot } from '@sourcegraph/shared/src/testing/driver'
+import { SyntaxKind, type JsonDocument } from '@sourcegraph/shared/src/codeintel/scip'
+import type { SharedGraphQlOperations } from '@sourcegraph/shared/src/graphql-operations'
+import { createDriverForTest, type Driver } from '@sourcegraph/shared/src/testing/driver'
 import { afterEachSaveScreenshotIfFailed } from '@sourcegraph/shared/src/testing/screenshotReporter'
 
-import { WebGraphQlOperations } from '../graphql-operations'
+import type { WebGraphQlOperations } from '../graphql-operations'
 
-import { WebIntegrationTestContext, createWebIntegrationTestContext } from './context'
+import { createWebIntegrationTestContext, type WebIntegrationTestContext } from './context'
 import {
-    createResolveRepoRevisionResult,
-    createFileExternalLinksResult,
-    createTreeEntriesResult,
     createBlobContentResult,
+    createFileExternalLinksResult,
     createFileTreeEntriesResult,
+    createResolveRepoRevisionResult,
+    createTreeEntriesResult,
 } from './graphQlResponseHelpers'
 import { commonWebGraphQlResults } from './graphQlResults'
-import { createEditorAPI, EditorAPI } from './utils'
+import { createEditorAPI, type EditorAPI } from './utils'
 
 describe('CodeMirror blob view', () => {
     let driver: Driver
@@ -124,7 +125,6 @@ describe('CodeMirror blob view', () => {
             )
             await waitForView()
             await driver.page.waitForSelector('.test-breadcrumb')
-            await percySnapshot(driver.page, 'truncates long file paths properly')
         })
     })
 
@@ -371,7 +371,7 @@ function createBlobPageData<T extends BlobInfo>({
         WebGraphQlOperations,
         'ResolveRepoRev' | 'FileTreeEntries' | 'FileExternalLinks' | 'Blob' | 'FileNames'
     > &
-        Pick<SharedGraphQlOperations, 'TreeEntries' | 'LegacyRepositoryIntrospection' | 'LegacyResolveRepo2'>
+        Pick<SharedGraphQlOperations, 'TreeEntries'>
     filePaths: { [k in keyof T]: string }
 } {
     const repositorySourcegraphUrl = `/${repoName}`
@@ -398,21 +398,6 @@ function createBlobPageData<T extends BlobInfo>({
                         __typename: 'GitCommit',
                         fileNames,
                     },
-                },
-            }),
-            LegacyRepositoryIntrospection: () => ({
-                __type: {
-                    fields: [
-                        {
-                            name: 'noFork',
-                        },
-                    ],
-                },
-            }),
-            LegacyResolveRepo2: () => ({
-                repository: {
-                    id: repoName,
-                    name: repoName,
                 },
             }),
         },

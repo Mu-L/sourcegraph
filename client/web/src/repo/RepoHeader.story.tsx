@@ -1,17 +1,18 @@
 import { mdiSourceRepository } from '@mdi/js'
-import { DecoratorFn, Meta, Story } from '@storybook/react'
+import type { Decorator, Meta, StoryFn } from '@storybook/react'
 
 import { CopyPathAction } from '@sourcegraph/branded'
 import { EMPTY_SETTINGS_CASCADE } from '@sourcegraph/shared/src/settings/settings'
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { NOOP_TELEMETRY_SERVICE } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { Button, H1, H2, Icon, Link } from '@sourcegraph/wildcard'
 import { BrandedStory } from '@sourcegraph/wildcard/src/stories'
 
-import { AuthenticatedUser } from '../auth'
+import type { AuthenticatedUser } from '../auth'
 
-import { GoToPermalinkAction } from './actions/GoToPermalinkAction'
+import { CopyPermalinkAction } from './actions/CopyPermalinkAction'
 import { FilePathBreadcrumbs } from './FilePathBreadcrumbs'
-import { RepoHeader, RepoHeaderContributionsLifecycleProps } from './RepoHeader'
+import { RepoHeader, type RepoHeaderContributionsLifecycleProps } from './RepoHeader'
 import { RepoRevisionContainerBreadcrumb } from './RepoRevisionContainer'
 
 import webStyles from '../SourcegraphWebApp.scss'
@@ -24,7 +25,7 @@ const mockUser = {
     siteAdmin: true,
 } as AuthenticatedUser
 
-const decorator: DecoratorFn = story => (
+const decorator: Decorator = story => (
     <BrandedStory initialEntries={['/github.com/sourcegraph/sourcegraph/-/tree/']} styles={webStyles}>
         {() => <div className="container mt-3">{story()}</div>}
     </BrandedStory>
@@ -38,7 +39,7 @@ const config: Meta = {
 
 export default config
 
-export const Default: Story = () => (
+export const Default: StoryFn = () => (
     <>
         <H1>Repo header</H1>
         <H2>Simple</H2>
@@ -70,18 +71,25 @@ const onLifecyclePropsChange = (lifecycleProps: RepoHeaderContributionsLifecycle
     lifecycleProps.repoHeaderContributionsLifecycleProps?.onRepoHeaderContributionAdd({
         id: 'copy-path',
         position: 'left',
-        children: () => <CopyPathAction filePath="foobar" telemetryService={NOOP_TELEMETRY_SERVICE} />,
+        children: () => (
+            <CopyPathAction
+                filePath="foobar"
+                telemetryService={NOOP_TELEMETRY_SERVICE}
+                telemetryRecorder={noOpTelemetryRecorder}
+            />
+        ),
     })
     lifecycleProps.repoHeaderContributionsLifecycleProps?.onRepoHeaderContributionAdd({
         id: 'go-to-permalink',
         position: 'right',
         children: () => (
-            <GoToPermalinkAction
-                telemetryService={NOOP_TELEMETRY_SERVICE}
+            <CopyPermalinkAction
                 revision="main"
                 commitID="123"
                 repoName="sourcegraph/sourcegraph"
                 actionType="nav"
+                telemetryService={NOOP_TELEMETRY_SERVICE}
+                telemetryRecorder={noOpTelemetryRecorder}
             />
         ),
     })
@@ -115,6 +123,7 @@ const createBreadcrumbs = (path: string) => [
                     revision="main"
                     repoName="sourcegraph/sourcegraph"
                     repo={undefined}
+                    telemetryRecorder={noOpTelemetryRecorder}
                 />
             ),
         },
@@ -132,6 +141,7 @@ const createBreadcrumbs = (path: string) => [
                     filePath={path}
                     isDir={false}
                     telemetryService={NOOP_TELEMETRY_SERVICE}
+                    telemetryRecorder={noOpTelemetryRecorder}
                 />
             ),
         },
@@ -140,7 +150,6 @@ const createBreadcrumbs = (path: string) => [
 ]
 
 const createProps = (path: string, forceWrap: boolean = false): React.ComponentProps<typeof RepoHeader> => ({
-    actionButtons: [],
     breadcrumbs: createBreadcrumbs(path),
     repoName: 'sourcegraph/sourcegraph',
     revision: 'main',
@@ -148,13 +157,5 @@ const createProps = (path: string, forceWrap: boolean = false): React.ComponentP
     settingsCascade: EMPTY_SETTINGS_CASCADE,
     authenticatedUser: mockUser,
     platformContext: {} as any,
-    telemetryService: NOOP_TELEMETRY_SERVICE,
     forceWrap,
 })
-
-Default.parameters = {
-    chromatic: {
-        enableDarkMode: false,
-        disableSnapshot: false,
-    },
-}

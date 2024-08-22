@@ -8,7 +8,9 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/sourcegraph/log/logtest"
+	"github.com/stretchr/testify/require"
 
+	"github.com/sourcegraph/sourcegraph/internal/actor"
 	uploadsshared "github.com/sourcegraph/sourcegraph/internal/codeintel/uploads/shared"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbtest"
@@ -18,13 +20,13 @@ import (
 
 func TestIsQueued(t *testing.T) {
 	logger := logtest.Scoped(t)
-	db := database.NewDB(logger, dbtest.NewDB(logger, t))
-	store := New(&observation.TestContext, db)
+	db := database.NewDB(logger, dbtest.NewDB(t))
+	store := New(observation.TestContextTB(t), db)
 
-	insertIndexes(t, db, uploadsshared.Index{ID: 1, RepositoryID: 1, Commit: makeCommit(1)})
-	insertIndexes(t, db, uploadsshared.Index{ID: 2, RepositoryID: 1, Commit: makeCommit(1), ShouldReindex: true})
-	insertIndexes(t, db, uploadsshared.Index{ID: 3, RepositoryID: 4, Commit: makeCommit(1), ShouldReindex: true})
-	insertIndexes(t, db, uploadsshared.Index{ID: 4, RepositoryID: 5, Commit: makeCommit(4), ShouldReindex: true})
+	insertAutoIndexJobs(t, db, uploadsshared.AutoIndexJob{ID: 1, RepositoryID: 1, Commit: makeCommit(1)})
+	insertAutoIndexJobs(t, db, uploadsshared.AutoIndexJob{ID: 2, RepositoryID: 1, Commit: makeCommit(1), ShouldReindex: true})
+	insertAutoIndexJobs(t, db, uploadsshared.AutoIndexJob{ID: 3, RepositoryID: 4, Commit: makeCommit(1), ShouldReindex: true})
+	insertAutoIndexJobs(t, db, uploadsshared.AutoIndexJob{ID: 4, RepositoryID: 5, Commit: makeCommit(4), ShouldReindex: true})
 	insertUploads(t, db, upload{ID: 2, RepositoryID: 2, Commit: makeCommit(2)})
 	insertUploads(t, db, upload{ID: 3, RepositoryID: 3, Commit: makeCommit(3), State: "deleted"})
 	insertUploads(t, db, upload{ID: 4, RepositoryID: 5, Commit: makeCommit(4), ShouldReindex: true})
@@ -62,16 +64,16 @@ func TestIsQueued(t *testing.T) {
 
 func TestIsQueuedRootIndexer(t *testing.T) {
 	logger := logtest.Scoped(t)
-	db := database.NewDB(logger, dbtest.NewDB(logger, t))
-	store := New(&observation.TestContext, db)
+	db := database.NewDB(logger, dbtest.NewDB(t))
+	store := New(observation.TestContextTB(t), db)
 
 	now := time.Now()
-	insertIndexes(t, db, uploadsshared.Index{ID: 1, RepositoryID: 1, Commit: makeCommit(1), Root: "/foo", Indexer: "i1", QueuedAt: now.Add(-time.Hour * 1)})
-	insertIndexes(t, db, uploadsshared.Index{ID: 2, RepositoryID: 1, Commit: makeCommit(1), Root: "/foo", Indexer: "i1", QueuedAt: now.Add(-time.Hour * 2)})
-	insertIndexes(t, db, uploadsshared.Index{ID: 3, RepositoryID: 2, Commit: makeCommit(2), Root: "/foo", Indexer: "i1", QueuedAt: now.Add(-time.Hour * 1), ShouldReindex: true})
-	insertIndexes(t, db, uploadsshared.Index{ID: 4, RepositoryID: 2, Commit: makeCommit(2), Root: "/foo", Indexer: "i1", QueuedAt: now.Add(-time.Hour * 2)})
-	insertIndexes(t, db, uploadsshared.Index{ID: 5, RepositoryID: 3, Commit: makeCommit(3), Root: "/foo", Indexer: "i1", QueuedAt: now.Add(-time.Hour * 1)})
-	insertIndexes(t, db, uploadsshared.Index{ID: 6, RepositoryID: 3, Commit: makeCommit(3), Root: "/foo", Indexer: "i1", QueuedAt: now.Add(-time.Hour * 2), ShouldReindex: true})
+	insertAutoIndexJobs(t, db, uploadsshared.AutoIndexJob{ID: 1, RepositoryID: 1, Commit: makeCommit(1), Root: "/foo", Indexer: "i1", QueuedAt: now.Add(-time.Hour * 1)})
+	insertAutoIndexJobs(t, db, uploadsshared.AutoIndexJob{ID: 2, RepositoryID: 1, Commit: makeCommit(1), Root: "/foo", Indexer: "i1", QueuedAt: now.Add(-time.Hour * 2)})
+	insertAutoIndexJobs(t, db, uploadsshared.AutoIndexJob{ID: 3, RepositoryID: 2, Commit: makeCommit(2), Root: "/foo", Indexer: "i1", QueuedAt: now.Add(-time.Hour * 1), ShouldReindex: true})
+	insertAutoIndexJobs(t, db, uploadsshared.AutoIndexJob{ID: 4, RepositoryID: 2, Commit: makeCommit(2), Root: "/foo", Indexer: "i1", QueuedAt: now.Add(-time.Hour * 2)})
+	insertAutoIndexJobs(t, db, uploadsshared.AutoIndexJob{ID: 5, RepositoryID: 3, Commit: makeCommit(3), Root: "/foo", Indexer: "i1", QueuedAt: now.Add(-time.Hour * 1)})
+	insertAutoIndexJobs(t, db, uploadsshared.AutoIndexJob{ID: 6, RepositoryID: 3, Commit: makeCommit(3), Root: "/foo", Indexer: "i1", QueuedAt: now.Add(-time.Hour * 2), ShouldReindex: true})
 
 	testCases := []struct {
 		repositoryID int
@@ -101,15 +103,15 @@ func TestIsQueuedRootIndexer(t *testing.T) {
 	}
 }
 
-func TestInsertIndexes(t *testing.T) {
+func TestInsertJobs(t *testing.T) {
 	ctx := context.Background()
 	logger := logtest.Scoped(t)
-	db := database.NewDB(logger, dbtest.NewDB(logger, t))
-	store := New(&observation.TestContext, db)
+	db := database.NewDB(logger, dbtest.NewDB(t))
+	store := New(observation.TestContextTB(t), db)
 
 	insertRepo(t, db, 50, "")
 
-	indexes, err := store.InsertIndexes(ctx, []uploadsshared.Index{
+	indexes, err := store.InsertJobs(ctx, []uploadsshared.AutoIndexJob{
 		{
 			State:        "queued",
 			Commit:       makeCommit(1),
@@ -142,9 +144,9 @@ func TestInsertIndexes(t *testing.T) {
 			},
 			LocalSteps:  nil,
 			Root:        "/baz",
-			Indexer:     "sourcegraph/lsif-rust:15",
+			Indexer:     "sourcegraph/scip-rust:15",
 			IndexerArgs: []string{"-v"},
-			Outfile:     "dump.lsif",
+			Outfile:     "out.scip",
 			ExecutionLogs: []executor.ExecutionLogEntry{
 				{Command: []string{"op", "1"}, Out: "Done with 1.\n"},
 				{Command: []string{"op", "2"}, Out: "Done with 2.\n"},
@@ -160,7 +162,7 @@ func TestInsertIndexes(t *testing.T) {
 
 	rank1 := 1
 	rank2 := 2
-	expected := []uploadsshared.Index{
+	expected := []uploadsshared.AutoIndexJob{
 		{
 			ID:             1,
 			Commit:         makeCommit(1),
@@ -206,9 +208,9 @@ func TestInsertIndexes(t *testing.T) {
 			},
 			LocalSteps:  []string{},
 			Root:        "/baz",
-			Indexer:     "sourcegraph/lsif-rust:15",
+			Indexer:     "sourcegraph/scip-rust:15",
 			IndexerArgs: []string{"-v"},
-			Outfile:     "dump.lsif",
+			Outfile:     "out.scip",
 			ExecutionLogs: []executor.ExecutionLogEntry{
 				{Command: []string{"op", "1"}, Out: "Done with 1.\n"},
 				{Command: []string{"op", "2"}, Out: "Done with 2.\n"},
@@ -224,5 +226,37 @@ func TestInsertIndexes(t *testing.T) {
 
 	if diff := cmp.Diff(expected, indexes); diff != "" {
 		t.Errorf("unexpected indexes (-want +got):\n%s", diff)
+	}
+}
+
+func TestInsertIndexWithActor(t *testing.T) {
+	logger := logtest.Scoped(t)
+	db := database.NewDB(logger, dbtest.NewDB(t))
+	store := New(observation.TestContextTB(t), db)
+
+	insertRepo(t, db, 50, "")
+	u, err := db.Users().Create(context.Background(), database.NewUser{Username: "alice"})
+	require.NoError(t, err)
+
+	for i, ctx := range []context.Context{
+		actor.WithActor(context.Background(), actor.FromUser(u.ID)),
+		actor.WithInternalActor(context.Background()),
+		context.Background(),
+	} {
+		indexes, err := store.InsertJobs(ctx, []uploadsshared.AutoIndexJob{
+			{ID: i, RepositoryID: 50, Commit: makeCommit(i), State: "queued"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(indexes) == 0 {
+			t.Fatalf("no indexes returned")
+		}
+
+		act := actor.FromContext(ctx)
+		if indexes[0].EnqueuerUserID != act.UID {
+			t.Fatalf("unexpected user id (got=%d,want=%d)", indexes[0].EnqueuerUserID, act.UID)
+		}
 	}
 }

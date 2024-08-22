@@ -1,21 +1,21 @@
 // This file is a fork from SearchBox.tsx and contains JetBrains specific UI changes
-/* eslint-disable no-restricted-imports */
 
 import React, { useCallback, useState } from 'react'
 
 import classNames from 'classnames'
 
-import { IEditor, LazyQueryInput } from '@sourcegraph/branded'
+import { type IEditor, LazyQueryInput } from '@sourcegraph/branded'
 import { SearchContextDropdown } from '@sourcegraph/branded/src/search-ui/input/SearchContextDropdown'
-import { AuthenticatedUser } from '@sourcegraph/shared/src/auth'
-import { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
-import { QueryState, SearchContextInputProps, SubmitSearchProps } from '@sourcegraph/shared/src/search'
-import { fetchStreamSuggestions as defaultFetchStreamSuggestions } from '@sourcegraph/shared/src/search/suggestions'
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import type { AuthenticatedUser } from '@sourcegraph/shared/src/auth'
+import type { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
+import type { QueryState, SearchContextInputProps, SubmitSearchProps } from '@sourcegraph/shared/src/search'
+import type { fetchStreamSuggestions as defaultFetchStreamSuggestions } from '@sourcegraph/shared/src/search/suggestions'
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 
 import { Search } from '../jetbrains-icons/Search'
 
-import { JetBrainsToggles, JetBrainsTogglesProps } from './JetBrainsToggles'
+import { JetBrainsToggles, type JetBrainsTogglesProps } from './JetBrainsToggles'
 
 import styles from './JetBrainsSearchBox.module.scss'
 
@@ -35,7 +35,6 @@ export interface JetBrainsSearchBoxProps
     submitSearchOnToggle?: SubmitSearchProps['submitSearch']
     onFocus?: () => void
     fetchStreamSuggestions?: typeof defaultFetchStreamSuggestions // Alternate implementation is used in the VS Code extension.
-    onCompletionItemSelected?: () => void
     onSuggestionsInitialized?: (actions: { trigger: () => void }) => void
     autoFocus?: boolean
     className?: string
@@ -46,9 +45,6 @@ export interface JetBrainsSearchBoxProps
 
     /** Don't show search help button */
     hideHelpButton?: boolean
-
-    /** Set in JSContext only available to the web app. */
-    isExternalServicesUserModeAll?: boolean
 
     /** Called with the underlying editor instance on creation. */
     onEditorCreated?: (editor: IEditor) => void
@@ -95,6 +91,7 @@ export const JetBrainsSearchBox: React.FunctionComponent<React.PropsWithChildren
                             fetchSearchContexts={props.fetchSearchContexts}
                             getUserSearchContextNamespaces={props.getUserSearchContextNamespaces}
                             telemetryService={props.telemetryService}
+                            telemetryRecorder={noOpTelemetryRecorder}
                             platformContext={props.platformContext}
                             query={queryState.query}
                             submitSearch={props.submitSearchOnSearchContextChange}

@@ -7,13 +7,13 @@ import (
 
 	"github.com/go-redsync/redsync/v4"
 	"github.com/sourcegraph/conc/pool"
+	"github.com/sourcegraph/log"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/sourcegraph/log"
-
+	"github.com/sourcegraph/sourcegraph/internal/codygateway/codygatewayactor"
 	"github.com/sourcegraph/sourcegraph/internal/goroutine"
 	"github.com/sourcegraph/sourcegraph/internal/observation"
 	sgtrace "github.com/sourcegraph/sourcegraph/internal/trace"
@@ -44,11 +44,27 @@ type Source interface {
 	Get(ctx context.Context, token string) (*Actor, error)
 }
 
+// ErrActorRecentlyUpdated can be used to indicate that an actor cannot be
+// updated because it was already updated more recently than allowed by a
+// Source implementation.
+type ErrActorRecentlyUpdated struct {
+	RetryAt time.Time
+}
+
+func (e ErrActorRecentlyUpdated) Error() string {
+	return fmt.Sprintf("actor was recently updated - try again in %s",
+		time.Until(e.RetryAt).Truncate(time.Second).String())
+}
+
+func IsErrActorRecentlyUpdated(err error) bool { return errors.As(err, &ErrActorRecentlyUpdated{}) }
+
 type SourceUpdater interface {
 	Source
 	// Update updates the given actor's state, though the implementation may
 	// decide not to do so every time.
-	Update(ctx context.Context, actor *Actor)
+	//
+	// Error can be ErrActorRecentlyUpdated if the actor was updated too recently.
+	Update(ctx context.Context, actor *Actor) error
 }
 
 type SourceSyncer interface {
@@ -133,7 +149,11 @@ func (s *Sources) SyncAll(ctx context.Context, logger log.Logger) error {
 				if err != nil {
 					return errors.Wrapf(err, "failed to sync %s", src.Name())
 				}
-				syncLogger.Info("Completed sync", log.Duration("sync_duration", time.Since(start)), log.Int("seen", seen))
+				span.SetAttributes(
+					attribute.Int("seen_actors", seen))
+				syncLogger.Info("Completed sync",
+					log.Duration("sync_duration", time.Since(start)),
+					log.Int("seen", seen))
 				return nil
 			})
 		}
@@ -150,16 +170,16 @@ func (s *Sources) SyncAll(ctx context.Context, logger log.Logger) error {
 // at a regular interval. It uses a redsync.Mutex to ensure only one worker is running
 // at a time.
 func (s *Sources) Worker(obCtx *observation.Context, rmux *redsync.Mutex, rootInterval time.Duration) goroutine.BackgroundRoutine {
-	logger := obCtx.Logger.Scoped("sources.worker", "sources background routie")
+	logger := obCtx.Logger.Scoped("sources.worker")
 
 	return &redisLockedBackgroundRoutine{
-		logger: logger.Scoped("redisLock", "distributed lock layer for sources sync"),
+		logger: logger.Scoped("redisLock"),
 		rmux:   rmux,
 
 		routine: goroutine.NewPeriodicGoroutine(
 			context.Background(),
 			&sourcesSyncHandler{
-				logger:       logger.Scoped("handler", "handler for actor sources sync"),
+				logger:       logger.Scoped("handler"),
 				rmux:         rmux,
 				sources:      s,
 				syncInterval: rootInterval,
@@ -185,6 +205,10 @@ type redisLockedBackgroundRoutine struct {
 	routine goroutine.BackgroundRoutine
 }
 
+func (s *redisLockedBackgroundRoutine) Name() string {
+	return s.routine.Name()
+}
+
 func (s *redisLockedBackgroundRoutine) Start() {
 	s.logger.Info("Starting background sync routine")
 
@@ -204,10 +228,10 @@ func (s *redisLockedBackgroundRoutine) Start() {
 	s.routine.Start()
 }
 
-func (s *redisLockedBackgroundRoutine) Stop() {
+func (s *redisLockedBackgroundRoutine) Stop(ctx context.Context) error {
 	start := time.Now()
 	s.logger.Info("Stopping background sync routine")
-	s.routine.Stop()
+	stopErr := s.routine.Stop(ctx)
 
 	// If we have the lock, release it and let somebody else work
 	if expire := s.rmux.Until(); !expire.IsZero() && expire.After(time.Now()) {
@@ -231,6 +255,7 @@ func (s *redisLockedBackgroundRoutine) Stop() {
 
 	s.logger.Info("Background sync successfully stopped",
 		log.Duration("elapsed", time.Since(start)))
+	return stopErr
 }
 
 // sourcesSyncHandler is a handler for NewPeriodicGoroutine
@@ -269,7 +294,7 @@ func (s *sourcesSyncHandler) Handle(ctx context.Context) (err error) {
 		// If another instance is working on background syncs, we don't want to
 		// do anything. We should check every time still in case the current worker
 		// goes offline, we want to be ready to pick up the work.
-		if err := s.rmux.LockContext(ctx); errors.HasType(err, &redsync.ErrTaken{}) {
+		if err := s.rmux.LockContext(ctx); errors.HasType[*redsync.ErrTaken](err) {
 			skippedReason = fmt.Sprintf("did not acquire lock, another worker is likely active: %s", err.Error())
 			handleLogger.Debug(skippedReason)
 			return nil // ignore lock contention errors
@@ -297,10 +322,25 @@ func (s *sourcesSyncHandler) Handle(ctx context.Context) (err error) {
 
 			return err
 		}
-		// We've succesfully extended the lock, continue!
+		// We've successfully extended the lock, continue!
 		span.SetAttributes(attribute.Bool("lock.extended", true))
 	}
 
 	handleLogger.Info("Running sources sync")
 	return s.sources.SyncAll(ctx, handleLogger)
 }
+
+type FakeSource struct {
+	SourceName codygatewayactor.ActorSource
+}
+
+func (m FakeSource) Name() string {
+	return string(m.SourceName)
+}
+
+func (m FakeSource) Get(_ context.Context, _ string) (*Actor, error) {
+	// TODO implement me
+	panic("implement me")
+}
+
+var _ Source = FakeSource{}

@@ -28,7 +28,7 @@
 [`sg`](https://github.com/sourcegraph/sourcegraph/tree/main/dev/sg) is the CLI tool that Sourcegraph developers can use to develop Sourcegraph.
 Learn more about the tool's overall vision in [`sg` Vision](./vision.md), and how to use it in the [usage section](#usage).
 
-> NOTE: Have feedback or ideas? Feel free to [open a discussion](https://github.com/sourcegraph/sourcegraph/discussions/categories/developer-experience)! Sourcegraph teammates can also leave a message in [#dev-experience](https://sourcegraph.slack.com/archives/C01N83PS4TU).
+> NOTE: Have feedback or ideas? Feel free to [join our community](https://community.sourcegraph.com)! Sourcegraph teammates can also leave a message in [#discuss-dev-infra](https://sourcegraph.slack.com/archives/C04MYFW01NV).
 
 ## Quickstart
 
@@ -79,10 +79,6 @@ On the next command run, if a new version is detected, `sg` will auto update bef
 
 To see what's changed, use `sg version changelog`.
 
-## Usage
-
-Refer to the [generated `sg` reference](reference.md) for complete documentation of all commands.
-
 ### Help
 
 You can get help about commands locally in a variety of ways:
@@ -93,9 +89,9 @@ sg help # show all available commands
 # learn about a specific command or subcommand
 sg <command> -h
 sg <command> --help
-```
 
-A full reference is available in the [generated `sg` reference](reference.md). You can also view the full reference locally with `sg help -full`.
+sg help -full # full reference
+```
 
 ### Autocompletion
 
@@ -164,7 +160,6 @@ commandsets:
       - searcher
       - symbols
       - caddy
-      - github-proxy
       - zoekt-indexserver-0
       - zoekt-indexserver-1
       - zoekt-webserver-0
@@ -191,10 +186,7 @@ env:
 commands:
   gitserver:
     install: |
-      config=""
-      [[ $(uname) == "Darwin" ]] && config="--config darwin-docker"
-      bazel build //enterprise/cmd/gitserver:image_tarball ${config} && \
-      docker load --input $(bazel cquery //enterprise/cmd/gitserver:image_tarball ${config} --output=files)
+      bazel run //cmd/gitserver:image_tarball
   gitserver-0:
     cmd: |
       docker inspect gitserver-${GITSERVER_INDEX} >/dev/null 2>&1 && docker stop gitserver-${GITSERVER_INDEX}
@@ -256,6 +248,49 @@ Ensure that the `sourcegraph/syntax-highlighter:insiders` image is already avail
 docker pull -q sourcegraph/syntax-highlighter:insiders
 ```
 
+## `sg` and pre-commit hooks
+
+When `sg setup` is run, it will automatically install pre-commit hooks (using [pre-commit.com](https://pre-commit.com)), with a [provided configuration](https://sourcegraph.com/github.com/sourcegraph/sourcegraph/-/blob/.pre-commit-config.yaml) that will perform a series of fast checks before each commit you create locally.
+
+Amongst that list of checks, is a [script](https://sourcegraph.com/github.com/sourcegraph/sourcegraph/-/blob/dev/check-tokens.sh) that tries to detect the presence of tokens that would have been accidentally committed. While it's implementation is rather simple and won't catch all tokens (this is covered by automated scans in CI), it's enough to catch common mistakes and save you from having to rotate secrets, as they never left your computer. Due to the importance of such a measure, it's an opt-out process instead of opt-in.
+
+Therefore, it's strongly recommended to keep the pre-commit git hook. In the eventuality of the pre-commit detecting a false positive, you can disable it through `sg setup disable-pre-commit` and prevent `sg setup` from installing it by passing a flag `sg setup --skip-pre-commit`.
+
+### Exceptions
+
+There are legitimate cases where code contains what appears to be a Sourcegraph token but isn't usable on any existing deployments.
+Testing code for generating tokens is good example.
+
+You can tell pre-commit to simply skip these files by adding a `// pre-commit:ignore_sourcegraph_token` top-level comment, as
+shown in the example below:
+
+```
+package accesstoken
+
+// pre-commit:ignore_sourcegraph_token
+
+import (
+	"testing"
+)
+
+func TestGenerateDotcomUserGatewayAccessToken(t *testing.T) {
+	type args struct {
+		apiToken string
+	}
+	tests := []struct {
+		name    string
+		args    args
+		want    string
+		wantErr bool
+	}{
+		{
+			name:    "valid token 1",
+			args:    args{apiToken: "0123456789abcdef0123456789abcdef01234567"},
+			want:    "LOOKS_LIKE_A_REAL_TOKEN",
+			wantErr: false,
+		},
+  // (...)
+```
 
 ## Contributing to `sg`
 
@@ -274,7 +309,7 @@ go run . -config ../../sg.config.yaml start
 
 The `-config` can be anything you want, of course.
 
-Have questions or need help? Feel free to [open a discussion](https://github.com/sourcegraph/sourcegraph/discussions/categories/developer-experience)! Sourcegraph teammates can also leave a message in [#dev-experience](https://sourcegraph.slack.com/archives/C01N83PS4TU).
+Have questions or need help? Feel free to [join our community](https://community.sourcegraph.com)! Sourcegraph teammates can also leave a message in [#discuss-dev-infra](https://sourcegraph.slack.com/archives/C04MYFW01NV).
 
 > NOTE: For Sourcegraph teammates, we have a weekly [`sg` hack hour](https://handbook.sourcegraph.com/departments/product-engineering/engineering/enablement/dev-experience#sg-hack-hour) you can hop in to if you're interested in contributing!
 
@@ -285,7 +320,7 @@ Have questions or need help? Feel free to [open a discussion](https://github.com
 A `sourcegraph/sg` Docker image is available:
 
 ```dockerfile
-# ... 
+# ...
 COPY --from us.gcr.io/sourcegraph-dev/sg:insiders /usr/local/bin/sg ./sg
 # ...
 ```

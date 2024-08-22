@@ -1,21 +1,13 @@
-import React, { FunctionComponent, useCallback, useEffect, useMemo, useState } from 'react'
+import React, { type FunctionComponent, useCallback, useEffect, useMemo, useState } from 'react'
 
 import { mdiOpenInNew, mdiCheckCircle, mdiChevronUp, mdiChevronDown, mdiAlertOctagram, mdiContentCopy } from '@mdi/js'
 import classNames from 'classnames'
-import { parseISO } from 'date-fns'
-import formatDistance from 'date-fns/formatDistance'
-import {
-    SetAutoUpgradeResult,
-    SetAutoUpgradeVariables,
-    SiteUpdateCheckResult,
-    SiteUpdateCheckVariables,
-    SiteUpgradeReadinessResult,
-    SiteUpgradeReadinessVariables,
-} from 'src/graphql-operations'
+import { parseISO, formatDistance } from 'date-fns'
 
 import { Toggle } from '@sourcegraph/branded/src/components/Toggle'
 import { useQuery, useMutation } from '@sourcegraph/http-client'
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import {
     LoadingSpinner,
     Link,
@@ -38,12 +30,20 @@ import {
 
 import { LogOutput } from '../components/LogOutput'
 import { PageTitle } from '../components/PageTitle'
+import type {
+    SetAutoUpgradeResult,
+    SetAutoUpgradeVariables,
+    SiteUpdateCheckResult,
+    SiteUpdateCheckVariables,
+    SiteUpgradeReadinessResult,
+    SiteUpgradeReadinessVariables,
+} from '../graphql-operations'
 
 import { SITE_UPDATE_CHECK, SITE_UPGRADE_READINESS, SET_AUTO_UPGRADE } from './backend'
 
 import styles from './SiteAdminUpdatesPage.module.scss'
 
-interface Props extends TelemetryProps {}
+interface Props extends TelemetryProps, TelemetryV2Props {}
 const capitalize = (text: string): string => (text && text[0].toUpperCase() + text.slice(1)) || ''
 
 const SiteUpdateCheck: React.FC = () => {
@@ -60,7 +60,7 @@ const SiteUpdateCheck: React.FC = () => {
                         Version {data.site.productVersion}{' '}
                         <small className="text-muted">
                             (
-                            <Link to="https://about.sourcegraph.com/changelog" target="_blank" rel="noopener">
+                            <Link to="https://sourcegraph.com/changelog" target="_blank" rel="noopener">
                                 changelog
                             </Link>
                             )
@@ -391,10 +391,11 @@ const SiteUpgradeReadiness: FunctionComponent = () => {
 /**
  * A page displaying information about available updates for the Sourcegraph instance. As well as the readiness status of the instance for upgrade.
  */
-export const SiteAdminUpdatesPage: React.FC<Props> = ({ telemetryService }) => {
+export const SiteAdminUpdatesPage: React.FC<Props> = ({ telemetryService, telemetryRecorder }) => {
     useMemo(() => {
         telemetryService.logViewEvent('SiteAdminUpdates')
-    }, [telemetryService])
+        telemetryRecorder.recordEvent('admin.updates', 'view')
+    }, [telemetryService, telemetryRecorder])
 
     return (
         <div>

@@ -1,20 +1,20 @@
-import { ApolloClient, ApolloError } from '@apollo/client'
+import type { ApolloClient, ApolloError } from '@apollo/client'
 import { groupBy } from 'lodash'
 
 import { isDefined } from '@sourcegraph/common'
 import { dataOrThrowErrors, getDocumentNode, gql } from '@sourcegraph/http-client'
 
-import { Connection } from '../../../../../../../components/FilteredConnection'
+import type { Connection } from '../../../../../../../components/FilteredConnection'
 import { useShowMorePagination } from '../../../../../../../components/FilteredConnection/hooks/useShowMorePagination'
 import {
-    AssignableInsight,
-    DashboardInsights,
-    FindInsightsBySearchTermResult,
-    FindInsightsBySearchTermVariables,
     GroupByField,
+    type AssignableInsight,
+    type DashboardInsights,
+    type FindInsightsBySearchTermResult,
+    type FindInsightsBySearchTermVariables,
 } from '../../../../../../../graphql-operations'
 
-import { DashboardInsight, InsightSuggestion, InsightType } from './types'
+import { InsightType, type DashboardInsight, type InsightSuggestion } from './types'
 
 const SYNC_DASHBOARD_INSIGHTS = gql`
     fragment DashboardInsights on InsightsDashboard {
@@ -108,7 +108,7 @@ export function useInsightSuggestions(input: UseInsightSuggestionsInput): UseIns
         AssignableInsight | null
     >({
         query: GET_INSIGHTS_BY_SEARCH_TERM,
-        variables: { first: 20, after: null, search, excludeIds },
+        variables: { search, excludeIds },
         getConnection: result => {
             const { insightViews } = dataOrThrowErrors(result)
 

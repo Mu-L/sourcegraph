@@ -1,4 +1,7 @@
 import * as H from 'history'
+import { describe, expect, test } from 'vitest'
+
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 
 import { SearchPatternType } from '../graphql-operations'
 
@@ -16,6 +19,7 @@ describe('search/helpers', () => {
                 caseSensitive: false,
                 selectedSearchContextSpec: 'global',
                 source: 'home',
+                telemetryRecorder: noOpTelemetryRecorder,
             })
             expect(history.location.search).toMatchInlineSnapshot(
                 '"?q=context:global+querystring&patternType=standard&sm=0"'
@@ -31,6 +35,7 @@ describe('search/helpers', () => {
                 caseSensitive: false,
                 selectedSearchContextSpec: 'global',
                 source: 'home',
+                telemetryRecorder: noOpTelemetryRecorder,
             })
             expect(history.location.search).toMatchInlineSnapshot(
                 '"?q=context:global+querystring&patternType=standard&sm=0&trace=1"'

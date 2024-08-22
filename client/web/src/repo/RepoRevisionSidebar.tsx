@@ -1,14 +1,15 @@
-import { FC, useCallback, useState } from 'react'
+import { type FC, useCallback, useState } from 'react'
 
 import { mdiChevronDoubleRight, mdiChevronDoubleLeft } from '@mdi/js'
 import classNames from 'classnames'
 
-import { Scalars } from '@sourcegraph/shared/src/graphql-operations'
+import type { Scalars } from '@sourcegraph/shared/src/graphql-operations'
 import { useKeyboardShortcut } from '@sourcegraph/shared/src/keyboardShortcuts/useKeyboardShortcut'
 import { Shortcut } from '@sourcegraph/shared/src/react-shortcuts'
-import { SettingsCascadeProps } from '@sourcegraph/shared/src/settings/settings'
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
-import { RepoFile } from '@sourcegraph/shared/src/util/url'
+import { type SettingsCascadeProps, useExperimentalFeatures } from '@sourcegraph/shared/src/settings/settings'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import type { RepoFile } from '@sourcegraph/shared/src/util/url'
 import {
     Button,
     useLocalStorage,
@@ -24,16 +25,17 @@ import {
 } from '@sourcegraph/wildcard'
 
 import settingsSchemaJSON from '../../../../schema/settings.schema.json'
-import { AuthenticatedUser } from '../auth'
+import type { AuthenticatedUser } from '../auth'
 import { useFeatureFlag } from '../featureFlags/useFeatureFlag'
 import { GettingStartedTour } from '../tour/GettingStartedTour'
+import { useShowOnboardingTour } from '../tour/hooks'
 
 import { RepoRevisionSidebarFileTree } from './RepoRevisionSidebarFileTree'
 import { RepoRevisionSidebarSymbols } from './RepoRevisionSidebarSymbols'
 
 import styles from './RepoRevisionSidebar.module.scss'
 
-interface RepoRevisionSidebarProps extends RepoFile, TelemetryProps, SettingsCascadeProps {
+interface RepoRevisionSidebarProps extends RepoFile, TelemetryProps, TelemetryV2Props, SettingsCascadeProps {
     repoID?: Scalars['ID']
     isDir: boolean
     defaultBranch: string
@@ -54,11 +56,16 @@ export const RepoRevisionSidebar: FC<RepoRevisionSidebarProps> = props => {
         SIDEBAR_KEY,
         settingsSchemaJSON.properties.fileSidebarVisibleByDefault.default
     )
+    const showOnboardingTour = useShowOnboardingTour({
+        authenticatedUser: props.authenticatedUser,
+        isSourcegraphDotCom: props.isSourcegraphDotCom,
+    })
 
     const isWideScreen = useMatchMedia('(min-width: 768px)', false)
     const [isVisible, setIsVisible] = useState(persistedIsVisible && isWideScreen)
 
-    const [initialFilePath, setInitialFilePath] = useState<string>(props.filePath)
+    const showFullTreeContextEnabled = useExperimentalFeatures(features => features.showFullTreeContext)
+    const [initialFilePath, setInitialFilePath] = useState<string>(showFullTreeContextEnabled ? '' : props.filePath)
     const [initialFilePathIsDir, setInitialFilePathIsDir] = useState<boolean>(props.isDir)
     const onExpandParent = useCallback((parent: string) => {
         setInitialFilePath(parent)
@@ -71,15 +78,16 @@ export const RepoRevisionSidebar: FC<RepoRevisionSidebarProps> = props => {
                 action: 'click',
                 label: 'expand / collapse file tree view',
             })
+            props.telemetryRecorder.recordEvent('repoSidebar.fileTreeView', 'click')
             setPersistedIsVisible(value)
             setIsVisible(value)
         },
-        [setPersistedIsVisible, props.telemetryService]
+        [setPersistedIsVisible, props.telemetryService, props.telemetryRecorder]
     )
-    const handleSymbolClick = useCallback(
-        () => props.telemetryService.log('SymbolTreeViewClicked'),
-        [props.telemetryService]
-    )
+    const handleSymbolClick = useCallback(() => {
+        props.telemetryService.log('SymbolTreeViewClicked')
+        props.telemetryRecorder.recordEvent('repoSidebar.symbolTreeView', 'click')
+    }, [props.telemetryService, props.telemetryRecorder])
 
     const [enableBlobPageSwitchAreasShortcuts] = useFeatureFlag('blob-page-switch-areas-shortcuts')
     const focusFileTreeShortcut = useKeyboardShortcut('focusFileTree')
@@ -90,14 +98,22 @@ export const RepoRevisionSidebar: FC<RepoRevisionSidebarProps> = props => {
     return (
         <>
             {isVisible ? (
-                <Panel defaultSize={256} position="left" storageKey={SIZE_STORAGE_KEY} ariaLabel="File sidebar">
+                <Panel
+                    defaultSize={256}
+                    minSize={150}
+                    position="left"
+                    storageKey={SIZE_STORAGE_KEY}
+                    ariaLabel="File sidebar"
+                >
                     <div className="d-flex flex-column h-100 w-100">
-                        <GettingStartedTour
-                            className="mr-3"
-                            telemetryService={props.telemetryService}
-                            isAuthenticated={!!props.authenticatedUser}
-                            isSourcegraphDotCom={props.isSourcegraphDotCom}
-                        />
+                        {showOnboardingTour && (
+                            <GettingStartedTour
+                                className="mr-3"
+                                telemetryService={props.telemetryService}
+                                telemetryRecorder={props.telemetryRecorder}
+                                authenticatedUser={props.authenticatedUser}
+                            />
+                        )}
                         <Tabs
                             className="w-100 test-repo-revision-sidebar h-25 d-flex flex-column flex-grow-1"
                             index={persistedTabIndex}
@@ -152,6 +168,7 @@ export const RepoRevisionSidebar: FC<RepoRevisionSidebarProps> = props => {
                                                 filePath={props.filePath}
                                                 filePathIsDirectory={props.isDir}
                                                 telemetryService={props.telemetryService}
+                                                telemetryRecorder={props.telemetryRecorder}
                                             />
                                         </TabPanel>
                                         <TabPanel>

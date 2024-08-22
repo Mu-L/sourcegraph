@@ -1,24 +1,26 @@
-import { FC, useCallback, useEffect } from 'react'
+import { type FC, useCallback, useEffect } from 'react'
 
-import { Observable } from 'rxjs'
+import type { Observable } from 'rxjs'
 
-import { FilteredConnection, FilteredConnectionQueryArguments } from '../../components/FilteredConnection'
+import { EVENT_LOGGER } from '@sourcegraph/shared/src/telemetry/web/eventLogger'
+
+import { FilteredConnection, type FilteredConnectionQueryArguments } from '../../components/FilteredConnection'
 import { PageTitle } from '../../components/PageTitle'
-import { GitRefType, GitRefConnectionFields, GitRefFields } from '../../graphql-operations'
-import { eventLogger } from '../../tracking/eventLogger'
+import { GitRefType, type GitRefConnectionFields, type GitRefFields } from '../../graphql-operations'
 import { GitReferenceNode, queryGitReferences } from '../GitReference'
 
-import { RepositoryBranchesAreaPageProps } from './RepositoryBranchesArea'
+import type { RepositoryBranchesAreaPageProps } from './RepositoryBranchesArea'
 
 interface Props extends RepositoryBranchesAreaPageProps {}
 
 /** A page that shows all of a repository's branches. */
 export const RepositoryBranchesAllPage: FC<Props> = props => {
-    const { repo } = props
+    const { repo, telemetryRecorder } = props
 
     useEffect(() => {
-        eventLogger.logViewEvent('RepositoryBranchesAll')
-    }, [])
+        EVENT_LOGGER.logViewEvent('RepositoryBranchesAll')
+        telemetryRecorder.recordEvent('repo.branches.all', 'view')
+    }, [telemetryRecorder])
 
     const queryBranches = useCallback(
         (args: FilteredConnectionQueryArguments): Observable<GitRefConnectionFields> =>

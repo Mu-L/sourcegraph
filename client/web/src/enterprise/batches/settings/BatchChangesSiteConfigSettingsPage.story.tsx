@@ -1,18 +1,19 @@
-import { DecoratorFn, Meta, Story } from '@storybook/react'
-import { MATCH_ANY_PARAMETERS, WildcardMockedResponse, WildcardMockLink } from 'wildcard-mock-link'
+import type { Decorator, Meta, StoryFn } from '@storybook/react'
+import { MATCH_ANY_PARAMETERS, type WildcardMockedResponse, WildcardMockLink } from 'wildcard-mock-link'
 
 import { getDocumentNode } from '@sourcegraph/http-client'
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { MockedTestProvider } from '@sourcegraph/shared/src/testing/apollo'
 
 import { WebStory } from '../../../components/WebStory'
-import { BatchChangesCodeHostFields, ExternalServiceKind } from '../../../graphql-operations'
+import { type BatchChangesCodeHostFields, ExternalServiceKind } from '../../../graphql-operations'
 import { BATCH_CHANGES_SITE_CONFIGURATION } from '../backend'
 import { rolloutWindowConfigMockResult } from '../mocks'
 
 import { GLOBAL_CODE_HOSTS } from './backend'
 import { BatchChangesSiteConfigSettingsPage } from './BatchChangesSiteConfigSettingsPage'
 
-const decorator: DecoratorFn = story => <div className="p-3 container">{story()}</div>
+const decorator: Decorator = story => <div className="p-3 container">{story()}</div>
 
 const config: Meta = {
     title: 'web/batches/settings/BatchChangesSiteConfigSettingsPage',
@@ -51,7 +52,7 @@ const createMock = (...hosts: BatchChangesCodeHostFields[]): WildcardMockedRespo
     nMatches: Number.POSITIVE_INFINITY,
 })
 
-export const Overview: Story = () => (
+export const Overview: StoryFn = () => (
     <WebStory>
         {() => (
             <MockedTestProvider
@@ -124,23 +125,23 @@ export const Overview: Story = () => (
                     )
                 }
             >
-                <BatchChangesSiteConfigSettingsPage />
+                <BatchChangesSiteConfigSettingsPage telemetryRecorder={noOpTelemetryRecorder} />
             </MockedTestProvider>
         )}
     </WebStory>
 )
 
-export const NoItems: Story = () => (
+export const NoItems: StoryFn = () => (
     <WebStory>
         {() => (
             <MockedTestProvider link={new WildcardMockLink([ROLLOUT_WINDOWS_CONFIGURATION_MOCK, createMock()])}>
-                <BatchChangesSiteConfigSettingsPage />
+                <BatchChangesSiteConfigSettingsPage telemetryRecorder={noOpTelemetryRecorder} />
             </MockedTestProvider>
         )}
     </WebStory>
 )
 
-export const ConfigAdded: Story = () => (
+export const ConfigAdded: StoryFn = () => (
     <WebStory>
         {() => (
             <MockedTestProvider
@@ -155,6 +156,7 @@ export const ConfigAdded: Story = () => (
                                     isSiteCredential: true,
                                     sshPublicKey:
                                         'rsa-ssh randorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorando',
+                                    gitHubApp: null,
                                 },
                                 externalServiceKind: ExternalServiceKind.GITHUB,
                                 externalServiceURL: 'https://github.com/',
@@ -178,6 +180,7 @@ export const ConfigAdded: Story = () => (
                                     isSiteCredential: true,
                                     sshPublicKey:
                                         'rsa-ssh randorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorando',
+                                    gitHubApp: null,
                                 },
                                 externalServiceKind: ExternalServiceKind.GITLAB,
                                 externalServiceURL: 'https://gitlab.com/',
@@ -193,6 +196,7 @@ export const ConfigAdded: Story = () => (
                                     isSiteCredential: true,
                                     sshPublicKey:
                                         'rsa-ssh randorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorando',
+                                    gitHubApp: null,
                                 },
                                 externalServiceKind: ExternalServiceKind.BITBUCKETSERVER,
                                 externalServiceURL: 'https://bitbucket.sgdev.org/',
@@ -208,6 +212,7 @@ export const ConfigAdded: Story = () => (
                                     isSiteCredential: true,
                                     sshPublicKey:
                                         'rsa-ssh randorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorando',
+                                    gitHubApp: null,
                                 },
                                 externalServiceKind: ExternalServiceKind.BITBUCKETCLOUD,
                                 externalServiceURL: 'https://bitbucket.org/',
@@ -220,7 +225,7 @@ export const ConfigAdded: Story = () => (
                     ])
                 }
             >
-                <BatchChangesSiteConfigSettingsPage />
+                <BatchChangesSiteConfigSettingsPage telemetryRecorder={noOpTelemetryRecorder} />
             </MockedTestProvider>
         )}
     </WebStory>

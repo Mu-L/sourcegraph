@@ -2,9 +2,9 @@ import { dataOrThrowErrors, gql } from '@sourcegraph/http-client'
 
 import {
     useShowMorePagination,
-    UseShowMorePaginationResult,
+    type UseShowMorePaginationResult,
 } from '../../../components/FilteredConnection/hooks/useShowMorePagination'
-import {
+import type {
     OutboundWebhookLogFields,
     OutboundWebhookLogsResult,
     OutboundWebhookLogsVariables,
@@ -60,8 +60,6 @@ export const useOutboundWebhookLogsConnection = (
     useShowMorePagination<OutboundWebhookLogsResult, OutboundWebhookLogsVariables, OutboundWebhookLogFields>({
         query: OUTBOUND_WEBHOOK_LOGS,
         variables: {
-            first: 20,
-            after: null,
             id,
             onlyErrors,
         },

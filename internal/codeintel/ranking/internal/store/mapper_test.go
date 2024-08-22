@@ -24,8 +24,8 @@ func TestInsertPathCountInputs(t *testing.T) {
 
 	logger := logtest.Scoped(t)
 	ctx := context.Background()
-	db := database.NewDB(logger, dbtest.NewDB(logger, t))
-	store := New(&observation.TestContext, db)
+	db := database.NewDB(logger, dbtest.NewDB(t))
+	store := New(observation.TestContextTB(t), db)
 
 	key := rankingshared.NewDerivativeGraphKey(mockRankingGraphKey, "123")
 
@@ -197,8 +197,8 @@ func TestInsertInitialPathCounts(t *testing.T) {
 
 	logger := logtest.Scoped(t)
 	ctx := context.Background()
-	db := database.NewDB(logger, dbtest.NewDB(logger, t))
-	store := New(&observation.TestContext, db)
+	db := database.NewDB(logger, dbtest.NewDB(t))
+	store := New(observation.TestContextTB(t), db)
 
 	key := rankingshared.NewDerivativeGraphKey(mockRankingGraphKey, "123")
 
@@ -255,8 +255,8 @@ func TestInsertInitialPathCounts(t *testing.T) {
 func TestVacuumStaleProcessedReferences(t *testing.T) {
 	logger := logtest.Scoped(t)
 	ctx := context.Background()
-	db := database.NewDB(logger, dbtest.NewDB(logger, t))
-	store := New(&observation.TestContext, db)
+	db := database.NewDB(logger, dbtest.NewDB(t))
+	store := New(observation.TestContextTB(t), db)
 
 	key := rankingshared.NewDerivativeGraphKey(mockRankingGraphKey, "123")
 
@@ -319,8 +319,8 @@ func TestVacuumStaleProcessedReferences(t *testing.T) {
 func TestVacuumStaleProcessedPaths(t *testing.T) {
 	logger := logtest.Scoped(t)
 	ctx := context.Background()
-	db := database.NewDB(logger, dbtest.NewDB(logger, t))
-	store := New(&observation.TestContext, db)
+	db := database.NewDB(logger, dbtest.NewDB(t))
+	store := New(observation.TestContextTB(t), db)
 
 	key := rankingshared.NewDerivativeGraphKey(mockRankingGraphKey, "123")
 
@@ -383,8 +383,8 @@ func TestVacuumStaleProcessedPaths(t *testing.T) {
 func TestVacuumStaleGraphs(t *testing.T) {
 	logger := logtest.Scoped(t)
 	ctx := context.Background()
-	db := database.NewDB(logger, dbtest.NewDB(logger, t))
-	store := New(&observation.TestContext, db)
+	db := database.NewDB(logger, dbtest.NewDB(t))
+	store := New(observation.TestContextTB(t), db)
 
 	key := rankingshared.NewDerivativeGraphKey(mockRankingGraphKey, "123")
 

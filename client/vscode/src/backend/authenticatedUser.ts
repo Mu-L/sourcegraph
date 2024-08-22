@@ -1,11 +1,11 @@
-import { Observable, ReplaySubject } from 'rxjs'
-import * as vscode from 'vscode'
+import { type Observable, ReplaySubject } from 'rxjs'
+import type * as vscode from 'vscode'
 
 import { gql } from '@sourcegraph/http-client'
-import { AuthenticatedUser } from '@sourcegraph/shared/src/auth'
-import { CurrentAuthStateResult, CurrentAuthStateVariables } from '@sourcegraph/shared/src/graphql-operations'
+import type { AuthenticatedUser } from '@sourcegraph/shared/src/auth'
+import type { CurrentAuthStateResult, CurrentAuthStateVariables } from '@sourcegraph/shared/src/graphql-operations'
 
-import { scretTokenKey } from '../webview/platform/AuthProvider'
+import { secretTokenKey } from '../webview/platform/AuthProvider'
 
 import { requestGraphQLFromVSCode } from './requestGraphQl'
 
@@ -28,7 +28,6 @@ const currentAuthStateQuery = gql`
                 nodes {
                     id
                     name
-                    displayName
                     url
                     settingsURL
                 }
@@ -64,8 +63,8 @@ export function observeAuthenticatedUser(secretStorage: vscode.SecretStorage): O
     updateAuthenticatedUser()
 
     secretStorage.onDidChange(async event => {
-        if (event.key === scretTokenKey) {
-            const token = await secretStorage.get(scretTokenKey)
+        if (event.key === secretTokenKey) {
+            const token = await secretStorage.get(secretTokenKey)
             if (token) {
                 updateAuthenticatedUser()
             }

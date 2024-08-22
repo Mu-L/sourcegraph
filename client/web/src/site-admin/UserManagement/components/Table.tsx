@@ -23,12 +23,12 @@ import {
     Position,
     Button,
     Tooltip,
-    PopoverOpenEvent,
+    type PopoverOpenEvent,
     Input,
     Select,
 } from '@sourcegraph/wildcard'
 
-import { DateRangeSelect, DateRangeSelectProps } from './DateRangeSelect'
+import { DateRangeSelect, type DateRangeSelectProps } from './DateRangeSelect'
 
 import styles from './Table.module.scss'
 
@@ -394,7 +394,7 @@ function Row<T>({
                             <Text alignment={align || 'left'} className="mb-0">
                                 {typeof accessor === 'function'
                                     ? accessor(data)
-                                    : typeof accessor !== 'undefined'
+                                    : accessor !== undefined
                                     ? data[accessor]
                                     : 'n/a'}
                             </Text>

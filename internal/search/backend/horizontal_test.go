@@ -18,7 +18,6 @@ import (
 	"github.com/sourcegraph/zoekt"
 
 	"github.com/sourcegraph/sourcegraph/lib/errors"
-	"github.com/sourcegraph/sourcegraph/schema"
 )
 
 func TestHorizontalSearcher(t *testing.T) {
@@ -48,7 +47,7 @@ func TestHorizontalSearcher(t *testing.T) {
 
 	// Start up background goroutines which continuously hit the searcher
 	// methods to ensure we are safe under concurrency.
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		cleanup := backgroundSearch(searcher)
 		defer cleanup(t)
 	}
@@ -108,19 +107,6 @@ func TestHorizontalSearcher(t *testing.T) {
 			t.Errorf("list mismatch (-want +got):\n%s", cmp.Diff(want, got))
 		}
 
-		rle, err = searcher.List(context.Background(), nil, &zoekt.ListOptions{Minimal: true})
-		if err != nil {
-			t.Fatal(err)
-		}
-		got = []string{}
-		for r := range rle.Minimal { //nolint:staticcheck // See https://github.com/sourcegraph/sourcegraph/issues/45814
-			got = append(got, strconv.Itoa(int(r)))
-		}
-		sort.Strings(got)
-		if !cmp.Equal(want, got, cmpopts.EquateEmpty()) {
-			t.Fatalf("list mismatch (-want +got):\n%s", cmp.Diff(want, got))
-		}
-
 		rle, err = searcher.List(context.Background(), nil, &zoekt.ListOptions{Field: zoekt.RepoListFieldReposMap})
 		if err != nil {
 			t.Fatal(err)
@@ -164,7 +150,7 @@ func TestHorizontalSearcherWithFileRanks(t *testing.T) {
 
 	// Start up background goroutines which continuously hit the searcher
 	// methods to ensure we are safe under concurrency.
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		cleanup := backgroundSearch(searcher)
 		defer cleanup(t)
 	}
@@ -273,7 +259,7 @@ func TestSyncSearchers(t *testing.T) {
 
 	// First call initializes the list, second should use the fast-path so
 	// should have the same dialNum.
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		t.Log("gen", i)
 		m, err := searcher.syncSearchers()
 		if err != nil {
@@ -406,85 +392,6 @@ func TestZoektRolloutErrors(t *testing.T) {
 	}
 }
 
-func TestResultQueueSettingsFromConfig(t *testing.T) {
-	dummy := 100
-
-	cases := []struct {
-		name                   string
-		siteConfig             schema.SiteConfiguration
-		wantMaxQueueDepth      int
-		wantMaxReorderDuration time.Duration
-		wantMaxQueueMatchCount int
-		wantMaxSizeBytes       int
-	}{
-		{
-			name:                   "defaults",
-			siteConfig:             schema.SiteConfiguration{},
-			wantMaxQueueDepth:      24,
-			wantMaxQueueMatchCount: -1,
-			wantMaxSizeBytes:       -1,
-		},
-		{
-			name: "MaxReorderDurationMS",
-			siteConfig: schema.SiteConfiguration{ExperimentalFeatures: &schema.ExperimentalFeatures{Ranking: &schema.Ranking{
-				MaxReorderDurationMS: 5,
-			}}},
-			wantMaxQueueDepth:      24,
-			wantMaxReorderDuration: 5 * time.Millisecond,
-			wantMaxQueueMatchCount: -1,
-			wantMaxSizeBytes:       -1,
-		},
-		{
-			name: "MaxReorderQueueSize",
-			siteConfig: schema.SiteConfiguration{ExperimentalFeatures: &schema.ExperimentalFeatures{Ranking: &schema.Ranking{
-				MaxReorderQueueSize: &dummy}}},
-			wantMaxQueueDepth:      dummy,
-			wantMaxQueueMatchCount: -1,
-			wantMaxSizeBytes:       -1,
-		},
-		{
-			name: "MaxQueueMatchCount",
-			siteConfig: schema.SiteConfiguration{ExperimentalFeatures: &schema.ExperimentalFeatures{Ranking: &schema.Ranking{
-				MaxQueueMatchCount: &dummy,
-			}}},
-			wantMaxQueueDepth:      24,
-			wantMaxQueueMatchCount: dummy,
-			wantMaxSizeBytes:       -1,
-		},
-		{
-			name: "MaxSizeBytes",
-			siteConfig: schema.SiteConfiguration{ExperimentalFeatures: &schema.ExperimentalFeatures{Ranking: &schema.Ranking{
-				MaxQueueSizeBytes: &dummy,
-			}}},
-			wantMaxQueueDepth:      24,
-			wantMaxQueueMatchCount: -1,
-			wantMaxSizeBytes:       dummy,
-		},
-	}
-
-	for _, tt := range cases {
-		t.Run(tt.name, func(t *testing.T) {
-			settings := newRankingSiteConfig(tt.siteConfig)
-
-			if settings.maxQueueDepth != tt.wantMaxQueueDepth {
-				t.Fatalf("want %d, got %d", tt.wantMaxQueueDepth, settings.maxQueueDepth)
-			}
-
-			if settings.maxReorderDuration != tt.wantMaxReorderDuration {
-				t.Fatalf("want %d, got %d", tt.wantMaxReorderDuration, settings.maxReorderDuration)
-			}
-
-			if settings.maxMatchCount != tt.wantMaxQueueMatchCount {
-				t.Fatalf("want %d, got %d", tt.wantMaxQueueMatchCount, settings.maxMatchCount)
-			}
-
-			if settings.maxSizeBytes != tt.wantMaxSizeBytes {
-				t.Fatalf("want %d, got %d", tt.wantMaxSizeBytes, settings.maxSizeBytes)
-			}
-		})
-	}
-}
-
 // implements net.Addr
 type fakeAddr string
 
@@ -589,7 +496,7 @@ func BenchmarkDedup(b *testing.B) {
 		shard := []zoekt.FileMatch{}
 		for i := stride; i <= nRepos; i += stride {
 			repo := fmt.Sprintf("repo-%d", i)
-			for j := 0; j < nMatchPerRepo; j++ {
+			for j := range nMatchPerRepo {
 				path := fmt.Sprintf("%d.go", j)
 				shard = append(shard, zoekt.FileMatch{
 					Repository: repo,
@@ -601,7 +508,7 @@ func BenchmarkDedup(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for n := 0; n < b.N; n++ {
+	for range b.N {
 		// Create copy since we mutate the input in Deddup
 		b.StopTimer()
 		shards := make([][]zoekt.FileMatch, 0, len(shardsOrig))

@@ -1,19 +1,20 @@
-import { DecoratorFn, Story, Meta } from '@storybook/react'
-import { WildcardMockLink, MATCH_ANY_PARAMETERS } from 'wildcard-mock-link'
+import type { Decorator, Meta, StoryFn } from '@storybook/react'
+import { MATCH_ANY_PARAMETERS, WildcardMockLink } from 'wildcard-mock-link'
 
 import { getDocumentNode } from '@sourcegraph/http-client'
 import { EMPTY_SETTINGS_CASCADE } from '@sourcegraph/shared/src/settings/settings'
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { MockedTestProvider } from '@sourcegraph/shared/src/testing/apollo'
 import { updateJSContextBatchChangesLicense } from '@sourcegraph/shared/src/testing/batches'
 
 import { WebStory } from '../../../components/WebStory'
-import { GlobalChangesetsStatsResult } from '../../../graphql-operations'
+import type { GlobalChangesetsStatsResult } from '../../../graphql-operations'
 
 import {
-    GLOBAL_CHANGESETS_STATS,
     BATCH_CHANGES,
     BATCH_CHANGES_BY_NAMESPACE,
     GET_LICENSE_AND_USAGE_INFO,
+    GLOBAL_CHANGESETS_STATS,
 } from './backend'
 import { BatchChangeListPage } from './BatchChangeListPage'
 import {
@@ -23,18 +24,13 @@ import {
     getLicenseAndUsageInfoResult,
 } from './testData'
 
-const decorator: DecoratorFn = story => <div className="p-3 container">{story()}</div>
+const decorator: Decorator = story => <div className="p-3 container">{story()}</div>
 
 const config: Meta = {
     title: 'web/batches/list/BatchChangeListPage',
     decorators: [decorator],
 
-    parameters: {
-        chromatic: {
-            viewports: [320, 576, 978, 1440],
-            disableSnapshot: false,
-        },
-    },
+    parameters: {},
 }
 
 export default config
@@ -90,7 +86,7 @@ interface Args {
     isApp: boolean
 }
 
-export const ListOfBatchChanges: Story<Args> = args => {
+export const ListOfBatchChanges: StoryFn<Args> = args => {
     updateJSContextBatchChangesLicense('full')
 
     return (
@@ -102,8 +98,8 @@ export const ListOfBatchChanges: Story<Args> = args => {
                         headingElement="h1"
                         canCreate={args.canCreate || "You don't have permission to create batch changes"}
                         settingsCascade={EMPTY_SETTINGS_CASCADE}
-                        isSourcegraphDotCom={args.isDotCom}
                         authenticatedUser={null}
+                        telemetryRecorder={noOpTelemetryRecorder}
                     />
                 </MockedTestProvider>
             )}
@@ -114,18 +110,20 @@ ListOfBatchChanges.argTypes = {
     canCreate: {
         name: 'can create batch changes',
         control: { type: 'boolean' },
-        defaultValue: true,
     },
     isDotCom: {
         name: 'is sourcegraph.com',
         control: { type: 'boolean' },
-        defaultValue: false,
     },
+}
+ListOfBatchChanges.args = {
+    canCreate: true,
+    isDotCom: false,
 }
 
 ListOfBatchChanges.storyName = 'List of batch changes'
 
-export const ListOfBatchChangesSpecificNamespace: Story = () => {
+export const ListOfBatchChangesSpecificNamespace: StoryFn = () => {
     updateJSContextBatchChangesLicense('full')
 
     return (
@@ -138,8 +136,8 @@ export const ListOfBatchChangesSpecificNamespace: Story = () => {
                         canCreate={true}
                         namespaceID="test-12345"
                         settingsCascade={EMPTY_SETTINGS_CASCADE}
-                        isSourcegraphDotCom={false}
                         authenticatedUser={null}
+                        telemetryRecorder={noOpTelemetryRecorder}
                     />
                 </MockedTestProvider>
             )}
@@ -149,7 +147,7 @@ export const ListOfBatchChangesSpecificNamespace: Story = () => {
 
 ListOfBatchChangesSpecificNamespace.storyName = 'List of batch changes, for a specific namespace'
 
-export const ListOfBatchChangesServerSideExecutionEnabled: Story = () => {
+export const ListOfBatchChangesServerSideExecutionEnabled: StoryFn = () => {
     updateJSContextBatchChangesLicense('full')
 
     return (
@@ -166,8 +164,8 @@ export const ListOfBatchChangesServerSideExecutionEnabled: Story = () => {
                                 experimentalFeatures: { batchChangesExecution: true },
                             },
                         }}
-                        isSourcegraphDotCom={false}
                         authenticatedUser={null}
+                        telemetryRecorder={noOpTelemetryRecorder}
                     />
                 </MockedTestProvider>
             )}
@@ -177,7 +175,7 @@ export const ListOfBatchChangesServerSideExecutionEnabled: Story = () => {
 
 ListOfBatchChangesServerSideExecutionEnabled.storyName = 'List of batch changes, server-side execution enabled'
 
-export const LicensingNotEnforced: Story = () => {
+export const LicensingNotEnforced: StoryFn = () => {
     updateJSContextBatchChangesLicense('limited')
 
     return (
@@ -189,8 +187,8 @@ export const LicensingNotEnforced: Story = () => {
                         headingElement="h1"
                         canCreate={true}
                         settingsCascade={EMPTY_SETTINGS_CASCADE}
-                        isSourcegraphDotCom={false}
                         authenticatedUser={null}
+                        telemetryRecorder={noOpTelemetryRecorder}
                     />
                 </MockedTestProvider>
             )}
@@ -200,7 +198,7 @@ export const LicensingNotEnforced: Story = () => {
 
 LicensingNotEnforced.storyName = 'Licensing not enforced'
 
-export const NoBatchChanges: Story = () => {
+export const NoBatchChanges: StoryFn = () => {
     updateJSContextBatchChangesLicense('full')
 
     return (
@@ -212,8 +210,8 @@ export const NoBatchChanges: Story = () => {
                         headingElement="h1"
                         canCreate={true}
                         settingsCascade={EMPTY_SETTINGS_CASCADE}
-                        isSourcegraphDotCom={false}
                         authenticatedUser={null}
+                        telemetryRecorder={noOpTelemetryRecorder}
                     />
                 </MockedTestProvider>
             )}
@@ -223,7 +221,7 @@ export const NoBatchChanges: Story = () => {
 
 NoBatchChanges.storyName = 'No batch changes'
 
-export const AllBatchChangesTabEmpty: Story = () => {
+export const AllBatchChangesTabEmpty: StoryFn = () => {
     updateJSContextBatchChangesLicense('full')
 
     return (
@@ -236,8 +234,8 @@ export const AllBatchChangesTabEmpty: Story = () => {
                         canCreate={true}
                         openTab="batchChanges"
                         settingsCascade={EMPTY_SETTINGS_CASCADE}
-                        isSourcegraphDotCom={false}
                         authenticatedUser={null}
+                        telemetryRecorder={noOpTelemetryRecorder}
                     />
                 </MockedTestProvider>
             )}

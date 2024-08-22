@@ -2,18 +2,17 @@ import React from 'react'
 
 import { Routes, Route } from 'react-router-dom'
 
-import { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
-import { SettingsCascadeProps } from '@sourcegraph/shared/src/settings/settings'
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import type { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
+import type { SettingsCascadeProps } from '@sourcegraph/shared/src/settings/settings'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { lazyComponent } from '@sourcegraph/shared/src/util/lazyComponent'
 
-import { AuthenticatedUser } from '../../../auth'
+import type { AuthenticatedUser } from '../../../auth'
 import { Page } from '../../../components/Page'
 
 interface Props extends TelemetryProps, PlatformContextProps, SettingsCascadeProps {
     authenticatedUser: AuthenticatedUser | null
     isSourcegraphDotCom: boolean
-    isSourcegraphApp: boolean
 }
 
 const CodeMonitoringPage = lazyComponent(() => import('../CodeMonitoringPage'), 'CodeMonitoringPage')
@@ -29,9 +28,33 @@ export const GlobalCodeMonitoringArea: React.FunctionComponent<React.PropsWithCh
     <div className="w-100">
         <Page>
             <Routes>
-                <Route path="" element={<CodeMonitoringPage {...outerProps} />} />
-                <Route path="new" element={<CreateCodeMonitorPage {...outerProps} />} />
-                <Route path=":id" element={<ManageCodeMonitorPage {...outerProps} />} />
+                <Route
+                    path=""
+                    element={
+                        <CodeMonitoringPage
+                            {...outerProps}
+                            telemetryRecorder={outerProps.platformContext.telemetryRecorder}
+                        />
+                    }
+                />
+                <Route
+                    path="new"
+                    element={
+                        <CreateCodeMonitorPage
+                            {...outerProps}
+                            telemetryRecorder={outerProps.platformContext.telemetryRecorder}
+                        />
+                    }
+                />
+                <Route
+                    path=":id"
+                    element={
+                        <ManageCodeMonitorPage
+                            {...outerProps}
+                            telemetryRecorder={outerProps.platformContext.telemetryRecorder}
+                        />
+                    }
+                />
             </Routes>
         </Page>
     </div>

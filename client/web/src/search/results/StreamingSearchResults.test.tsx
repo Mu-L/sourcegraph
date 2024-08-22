@@ -1,33 +1,38 @@
 import React from 'react'
 
+import '@sourcegraph/shared/src/testing/mockReactVisibilitySensor'
+
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { BrowserRouter } from 'react-router-dom'
-import { EMPTY, NEVER, of } from 'rxjs'
-import { spy, assert } from 'sinon'
+import { EMPTY, lastValueFrom, NEVER, of } from 'rxjs'
+import { assert, spy } from 'sinon'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { GitRefType, SearchPatternType } from '@sourcegraph/shared/src/graphql-operations'
 import { SearchMode, SearchQueryStateStoreProvider } from '@sourcegraph/shared/src/search'
-import { AggregateStreamingSearchResults, Skipped } from '@sourcegraph/shared/src/search/stream'
+import type { AggregateStreamingSearchResults, Skipped } from '@sourcegraph/shared/src/search/stream'
+import { LATEST_VERSION } from '@sourcegraph/shared/src/search/stream'
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { NOOP_TELEMETRY_SERVICE } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { MockedTestProvider } from '@sourcegraph/shared/src/testing/apollo'
 import {
+    CHUNK_MATCH_RESULT,
     COLLAPSABLE_SEARCH_RESULT,
     HIGHLIGHTED_FILE_LINES_REQUEST,
+    LINE_MATCH_RESULT,
     MULTIPLE_SEARCH_RESULT,
     REPO_MATCH_RESULT,
-    CHUNK_MATCH_RESULT,
-    LINE_MATCH_RESULT,
 } from '@sourcegraph/shared/src/testing/searchTestHelpers'
 import { simulateMenuItemClick } from '@sourcegraph/shared/src/testing/simulateMenuItemClick'
 
-import { AuthenticatedUser } from '../../auth'
+import type { AuthenticatedUser } from '../../auth'
 import { useNavbarQueryState } from '../../stores'
 import * as helpers from '../helpers'
 
 import { SearchResultsCacheProvider } from './SearchResultsCacheProvider'
 import { generateMockedResponses } from './sidebar/Revisions.mocks'
-import { StreamingSearchResults, StreamingSearchResultsProps } from './StreamingSearchResults'
+import { StreamingSearchResults, type StreamingSearchResultsProps } from './StreamingSearchResults'
 
 describe('StreamingSearchResults', () => {
     const streamingSearchResult = MULTIPLE_SEARCH_RESULT
@@ -39,9 +44,14 @@ describe('StreamingSearchResults', () => {
 
         settingsCascade: {
             subjects: null,
-            final: null,
+            final: { experimentalFeatures: { newSearchResultFiltersPanel: false } },
         },
-        platformContext: { settings: NEVER, requestGraphQL: () => EMPTY, sourcegraphURL: 'https://sourcegraph.com' },
+        platformContext: {
+            settings: NEVER,
+            requestGraphQL: () => EMPTY,
+            sourcegraphURL: 'https://sourcegraph.com',
+            telemetryRecorder: noOpTelemetryRecorder,
+        } as any,
 
         streamSearch: () => of(MULTIPLE_SEARCH_RESULT),
 
@@ -51,6 +61,7 @@ describe('StreamingSearchResults', () => {
         searchAggregationEnabled: false,
         codeMonitoringEnabled: true,
         ownEnabled: true,
+        searchJobsEnabled: true,
     }
 
     const revisionsMockResponses = generateMockedResponses(GitRefType.GIT_BRANCH, 5, 'github.com/golang/oauth2')
@@ -83,7 +94,11 @@ describe('StreamingSearchResults', () => {
     })
 
     it('should call streaming search API with the right parameters from URL', async () => {
-        useNavbarQueryState.setState({ searchCaseSensitivity: true, searchPatternType: SearchPatternType.regexp })
+        useNavbarQueryState.setState({
+            searchCaseSensitivity: true,
+            searchPatternType: SearchPatternType.regexp,
+            searchMode: SearchMode.SmartSearch,
+        })
         const searchSpy = spy(defaultProps.streamSearch)
 
         renderWrapper(<StreamingSearchResults {...defaultProps} streamSearch={searchSpy} />)
@@ -91,18 +106,20 @@ describe('StreamingSearchResults', () => {
         assert.calledOnce(searchSpy)
         const call = searchSpy.getCall(0)
         // We have to extract the query from the observable since we can't directly compare observables
-        const receivedQuery = await call.args[0].toPromise()
+        const receivedQuery = await lastValueFrom(call.args[0])
         const receivedOptions = call.args[1]
 
         expect(receivedQuery).toEqual('r:golang/oauth2 test f:travis')
         expect(receivedOptions).toEqual({
-            version: 'V3',
+            version: LATEST_VERSION,
             patternType: SearchPatternType.regexp,
             caseSensitive: true,
             searchMode: SearchMode.SmartSearch,
             trace: undefined,
             chunkMatches: true,
+            maxLineLen: 5 * 1024,
             featureOverrides: [],
+            zoektSearchOptions: '',
         })
     })
 
@@ -180,7 +197,10 @@ describe('StreamingSearchResults', () => {
         assert.calledWith(logSpy, 'SearchResultsFetched')
     })
 
-    it('should log events when clicking on search result', () => {
+    // This test passes but it throws some internal happy-dom errors while
+    // running. See thread  https://sourcegraph.slack.com/archives/C04MYFW01NV/p1705436143793999
+    // you can find original problem issue https://github.com/sourcegraph/sourcegraph/issues/59700
+    it.skip('should log events when clicking on search result', () => {
         const logSpy = spy()
         const telemetryService = {
             ...NOOP_TELEMETRY_SERVICE,
@@ -194,7 +214,6 @@ describe('StreamingSearchResults', () => {
         assert.calledWith(logSpy, 'search.ranking.result-clicked', {
             index: 0,
             type: 'fileMatch',
-            ranked: false,
             resultsLength: 3,
         })
 
@@ -203,7 +222,6 @@ describe('StreamingSearchResults', () => {
         assert.calledWith(logSpy, 'search.ranking.result-clicked', {
             index: 2,
             type: 'fileMatch',
-            ranked: false,
             resultsLength: 3,
         })
     })
@@ -229,7 +247,7 @@ describe('StreamingSearchResults', () => {
     })
 
     it('should start a new search with added params when onSearchAgain event is triggered', async () => {
-        const submitSearchMock = jest.spyOn(helpers, 'submitSearch').mockImplementation(() => {})
+        const submitSearchMock = vi.spyOn(helpers, 'submitSearch').mockImplementation(() => {})
         const tests = [
             {
                 parsedSearchQuery: 'r:golang/oauth2 test f:travis',
@@ -245,7 +263,7 @@ describe('StreamingSearchResults', () => {
             },
             {
                 parsedSearchQuery: 'r:golang/oauth2 (foo count:1) or (bar count:2)',
-                skipReason: ['document-match-limit', 'excluded-fork'] as Skipped['reason'][],
+                skipReason: ['document-match-limit', 'repository-fork'] as Skipped['reason'][],
                 additionalProperties: ['count:1000', 'fork:yes'],
                 want: 'r:golang/oauth2 (foo count:1000) or (bar count:1000) fork:yes',
             },
@@ -282,9 +300,13 @@ describe('StreamingSearchResults', () => {
                 userEvent.click(check, undefined, { skipPointerEventsCheck: true })
             }
 
-            userEvent.click(await screen.findByText(/search again/i, { selector: 'button[type=submit]' }), undefined, {
-                skipPointerEventsCheck: true,
-            })
+            userEvent.click(
+                await screen.findByText(/modify and re-run/i, { selector: 'button[type=submit]' }),
+                undefined,
+                {
+                    skipPointerEventsCheck: true,
+                }
+            )
 
             expect(helpers.submitSearch).toBeCalledTimes(index + 1)
             const args = submitSearchMock.mock.calls[index][0]

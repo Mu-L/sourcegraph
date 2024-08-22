@@ -1,15 +1,16 @@
-import { combineLatest, ReplaySubject } from 'rxjs'
+import { combineLatest, lastValueFrom, ReplaySubject } from 'rxjs'
 import { map } from 'rxjs/operators'
 
 import { asError } from '@sourcegraph/common'
 import { isHTTPAuthError } from '@sourcegraph/http-client'
-import { PlatformContext } from '@sourcegraph/shared/src/platform/context'
+import type { PlatformContext } from '@sourcegraph/shared/src/platform/context'
 import { mutateSettings, updateSettings } from '@sourcegraph/shared/src/settings/edit'
-import { EMPTY_SETTINGS_CASCADE, gqlToCascade, SettingsSubject } from '@sourcegraph/shared/src/settings/settings'
+import { EMPTY_SETTINGS_CASCADE, gqlToCascade, type SettingsSubject } from '@sourcegraph/shared/src/settings/settings'
 import { toPrettyBlobURL } from '@sourcegraph/shared/src/util/url'
 
 import { createGraphQLHelpers } from '../backend/requestGraphQl'
-import { CodeHost } from '../code-hosts/shared/codeHost'
+import type { CodeHost } from '../code-hosts/shared/codeHost'
+import { noOpTelemetryRecorder } from '../telemetry'
 
 import { createExtensionHost } from './extensionHost'
 import { getInlineExtensions } from './inlineExtensionsService'
@@ -76,7 +77,7 @@ export function createPlatformContext(
         ),
         refreshSettings: async () => {
             try {
-                const settings = await fetchViewerSettings(requestGraphQL).toPromise()
+                const settings = await lastValueFrom(fetchViewerSettings(requestGraphQL))
                 updatedViewerSettings.next(settings)
             } catch (error) {
                 if (isHTTPAuthError(error)) {
@@ -128,6 +129,10 @@ export function createPlatformContext(
         sourcegraphURL,
         clientApplication: 'other',
         getStaticExtensions: () => getInlineExtensions(assetsURL),
+        /**
+         * This will be replaced by a real telemetry recorder in codeHost.tsx.
+         */
+        telemetryRecorder: noOpTelemetryRecorder,
     }
     return context
 }

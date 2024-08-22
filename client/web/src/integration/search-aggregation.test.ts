@@ -1,15 +1,19 @@
 import delay from 'delay'
 import expect from 'expect'
-import { test } from 'mocha'
+import { afterEach, beforeEach, describe, test } from 'mocha'
 
-import { SharedGraphQlOperations } from '@sourcegraph/shared/src/graphql-operations'
-import { SearchEvent } from '@sourcegraph/shared/src/search/stream'
-import { createDriverForTest, Driver } from '@sourcegraph/shared/src/testing/driver'
+import type { SharedGraphQlOperations } from '@sourcegraph/shared/src/graphql-operations'
+import type { SearchEvent } from '@sourcegraph/shared/src/search/stream'
+import { createDriverForTest, type Driver } from '@sourcegraph/shared/src/testing/driver'
 import { afterEachSaveScreenshotIfFailed } from '@sourcegraph/shared/src/testing/screenshotReporter'
 
-import { GetSearchAggregationResult, WebGraphQlOperations, SearchAggregationMode } from '../graphql-operations'
+import {
+    type GetSearchAggregationResult,
+    type WebGraphQlOperations,
+    SearchAggregationMode,
+} from '../graphql-operations'
 
-import { createWebIntegrationTestContext, WebIntegrationTestContext } from './context'
+import { createWebIntegrationTestContext, type WebIntegrationTestContext } from './context'
 import { commonWebGraphQlResults } from './graphQlResults'
 import { createEditorAPI, removeContextFromQuery } from './utils'
 
@@ -85,22 +89,22 @@ const mockDefaultStreamEvents: SearchEvent[] = [
     {
         type: 'filters',
         data: [
-            { label: 'archived:yes', value: 'archived:yes', count: 5, kind: 'utility', limitHit: true },
-            { label: 'fork:yes', value: 'fork:yes', count: 46, kind: 'utility', limitHit: true },
+            { label: 'archived:yes', value: 'archived:yes', count: 5, kind: 'utility', exhaustive: false },
+            { label: 'fork:yes', value: 'fork:yes', count: 46, kind: 'utility', exhaustive: false },
             // Two repo filters to trigger the repository sidebar section
             {
                 label: 'github.com/Algorilla/manta-ray',
                 value: 'repo:^github\\.com/Algorilla/manta-ray$',
                 count: 1,
                 kind: 'repo',
-                limitHit: true,
+                exhaustive: false,
             },
             {
                 label: 'github.com/Algorilla/manta-ray2',
                 value: 'repo:^github\\.com/Algorilla/manta-ray2$',
                 count: 1,
                 kind: 'repo',
-                limitHit: true,
+                exhaustive: false,
             },
         ],
     },
@@ -156,19 +160,8 @@ describe('Search aggregation', () => {
     afterEach(() => testContext?.dispose())
     afterEachSaveScreenshotIfFailed(() => driver.page)
 
-    test('should be hidden if feature flag is off', async () => {
-        await driver.page.goto(
-            `${driver.sourcegraphBaseUrl}/search?q=${encodeURIComponent('context:global foo')}&patternType=literal`
-        )
-
-        await driver.page.waitForSelector('[data-testid="filter-link"]')
-        const aggregationSidebar = await driver.page.$x("//button[contains(., 'Grouped by')]")
-
-        expect(aggregationSidebar).toStrictEqual([])
-    })
-
     describe('with aggregation feature flag on', () => {
-        beforeEach(() =>
+        beforeEach(() => {
             testContext.overrideGraphQL({
                 ...commonSearchGraphQLResults,
                 ViewerSettings: () => ({
@@ -184,6 +177,7 @@ describe('Search aggregation', () => {
                                     id: 0,
                                     contents: JSON.stringify({
                                         experimentalFeatures: {
+                                            newSearchResultFiltersPanel: false,
                                             searchResultsAggregations: true,
                                             searchQueryInput: 'v1',
                                         },
@@ -195,7 +189,7 @@ describe('Search aggregation', () => {
                     },
                 }),
             })
-        )
+        })
 
         test('should sync aggregation settings across different UI via URL', async () => {
             const origQuery = 'context:global insights('
@@ -203,6 +197,10 @@ describe('Search aggregation', () => {
             await driver.page.goto(
                 `${driver.sourcegraphBaseUrl}/search?q=${encodeURIComponent(origQuery)}&patternType=literal`
             )
+
+            await driver.page.evaluate(() => {
+                localStorage.setItem('search.sidebar.collapsed', 'false')
+            })
 
             await driver.page.waitForSelector('[aria-label="Aggregation mode picker"]')
 
@@ -246,6 +244,10 @@ describe('Search aggregation', () => {
             await driver.page.goto(
                 `${driver.sourcegraphBaseUrl}/search?q=${encodeURIComponent(origQuery)}&patternType=literal`
             )
+
+            await driver.page.evaluate(() => {
+                localStorage.setItem('search.sidebar.collapsed', 'false')
+            })
 
             await driver.page.waitForSelector('[aria-label="Aggregation mode picker"]')
 
@@ -305,8 +307,12 @@ describe('Search aggregation', () => {
             const origQuery = 'context:global insights('
 
             await driver.page.goto(
-                `${driver.sourcegraphBaseUrl}/search?q=${encodeURIComponent(origQuery)}&patternType=literal`
+                `${driver.sourcegraphBaseUrl}/search?q=${encodeURIComponent(origQuery)}&patternType=keyword`
             )
+
+            await driver.page.evaluate(() => {
+                localStorage.setItem('search.sidebar.collapsed', 'false')
+            })
 
             const editor = await createEditorAPI(driver, QUERY_INPUT_SELECTOR)
             await editor.waitForIt()
@@ -349,6 +355,10 @@ describe('Search aggregation', () => {
             await driver.page.goto(
                 `${driver.sourcegraphBaseUrl}/search?q=${encodeURIComponent(origQuery)}&patternType=literal&case=yes`
             )
+
+            await driver.page.evaluate(() => {
+                localStorage.setItem('search.sidebar.collapsed', 'false')
+            })
 
             const variables = await testContext.waitForGraphQLRequest(() => {}, 'GetSearchAggregation')
 

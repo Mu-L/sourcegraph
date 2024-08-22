@@ -1,11 +1,12 @@
 import userEvent from '@testing-library/user-event'
 import sinon from 'sinon'
+import { describe, expect, it } from 'vitest'
 
 import { renderWithBrandedContext } from '../../testing'
 import { AnchorLink } from '../Link'
 
 import { NavMenu } from '.'
-import { NavMenuSectionProps } from './NavMenu'
+import type { NavMenuSectionProps } from './NavMenu'
 
 describe('<NavMenu />', () => {
     it('Should render Menu Items Correctly', () => {
@@ -66,13 +67,13 @@ describe('<NavMenu />', () => {
                     {
                         content: 'About Sourcegraph',
                         itemAs: AnchorLink,
-                        to: 'https://about.sourcegraph.com',
+                        to: 'https://sourcegraph.com',
                         key: 6,
                     },
                     {
                         content: 'Browser Extension',
                         itemAs: AnchorLink,
-                        to: 'https://docs.sourcegraph.com/integration/browser_extension',
+                        to: 'https://sourcegraph.com/docs/integration/browser_extension',
                         key: 7,
                     },
                 ],

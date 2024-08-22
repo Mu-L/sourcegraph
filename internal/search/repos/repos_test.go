@@ -1,15 +1,19 @@
 package repos
 
 import (
+	stdcmp "cmp"
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"os"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
-	mockrequire "github.com/derision-test/go-mockgen/testutil/require"
+	mockrequire "github.com/derision-test/go-mockgen/v2/testutil/require"
 	"github.com/google/go-cmp/cmp"
 	"github.com/grafana/regexp"
 	"github.com/sourcegraph/zoekt"
@@ -17,19 +21,24 @@ import (
 
 	"github.com/sourcegraph/log/logtest"
 
-	"github.com/sourcegraph/sourcegraph/cmd/searcher/protocol"
 	"github.com/sourcegraph/sourcegraph/internal/api"
-	"github.com/sourcegraph/sourcegraph/internal/authz"
+	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/database"
+	"github.com/sourcegraph/sourcegraph/internal/database/dbmocks"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbtest"
 	"github.com/sourcegraph/sourcegraph/internal/endpoint"
+	"github.com/sourcegraph/sourcegraph/internal/extsvc"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver/gitdomain"
+	"github.com/sourcegraph/sourcegraph/internal/grpc/defaults"
 	"github.com/sourcegraph/sourcegraph/internal/search"
 	"github.com/sourcegraph/sourcegraph/internal/search/query"
 	"github.com/sourcegraph/sourcegraph/internal/search/searcher"
+	"github.com/sourcegraph/sourcegraph/internal/searcher/protocol"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
+	"github.com/sourcegraph/sourcegraph/lib/iterator"
+	"github.com/sourcegraph/sourcegraph/schema"
 )
 
 func TestMain(m *testing.M) {
@@ -70,7 +79,7 @@ func TestRevisionValidation(t *testing.T) {
 		}
 		return "", &gitdomain.RevisionNotFoundError{Repo: "repoFoo", Spec: spec}
 	})
-	mockGitserver.ListRefsFunc.SetDefaultHook(func(_ context.Context, _ api.RepoName) ([]gitdomain.Ref, error) {
+	mockGitserver.ListRefsFunc.SetDefaultHook(func(_ context.Context, _ api.RepoName, _ gitserver.ListRefsOpts) ([]gitdomain.Ref, error) {
 		return []gitdomain.Ref{{
 			Name: "refs/heads/revBar",
 		}, {
@@ -139,16 +148,17 @@ func TestRevisionValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.repoFilters[0], func(t *testing.T) {
-			repos := database.NewMockRepoStore()
+			repos := dbmocks.NewMockRepoStore()
 			repos.ListMinimalReposFunc.SetDefaultReturn([]types.MinimalRepo{{Name: "repoFoo"}}, nil)
-			db := database.NewMockDB()
+			db := dbmocks.NewMockDB()
 			db.ReposFunc.SetDefaultReturn(repos)
 
 			op := search.RepoOptions{RepoFilters: toParsedRepoFilters(tt.repoFilters...)}
-			repositoryResolver := NewResolver(logtest.Scoped(t), db, nil, nil, nil)
+			repositoryResolver := NewResolver(logtest.Scoped(t), db, nil, nil, defaults.NewConnectionCache(logtest.Scoped(t)), nil)
 			repositoryResolver.gitserver = mockGitserver
-			resolved, err := repositoryResolver.Resolve(context.Background(), op)
-			if diff := cmp.Diff(tt.wantErr, errors.UnwrapAll(err)); diff != "" {
+			resolved, _, err := repositoryResolver.resolve(context.Background(), op)
+			if !errors.Is(err, tt.wantErr) {
+				diff := cmp.Diff(tt.wantErr, errors.UnwrapAll(err))
 				t.Error(diff)
 			}
 			if diff := cmp.Diff(tt.wantRepoRevs, resolved.RepoRevs); diff != "" {
@@ -253,7 +263,7 @@ func BenchmarkGetRevsForMatchedRepo(b *testing.B) {
 	b.Run("2 conflicting", func(b *testing.B) {
 		repoRevs := toParsedRepoFilters(".*o@123456", "foo@234567")
 		_, pats := findPatternRevs(repoRevs)
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			_, _ = getRevsForMatchedRepo("foo", pats)
 		}
 	})
@@ -261,7 +271,7 @@ func BenchmarkGetRevsForMatchedRepo(b *testing.B) {
 	b.Run("multiple overlapping", func(b *testing.B) {
 		repoRevs := toParsedRepoFilters(".*o@a:b:c:d", "foo@b:c:d:e", "foo@c:d:e:f")
 		_, pats := findPatternRevs(repoRevs)
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			_, _ = getRevsForMatchedRepo("foo", pats)
 		}
 	})
@@ -270,15 +280,15 @@ func BenchmarkGetRevsForMatchedRepo(b *testing.B) {
 func TestResolverIterator(t *testing.T) {
 	ctx := context.Background()
 	logger := logtest.Scoped(t)
-	db := database.NewDB(logger, dbtest.NewDB(logger, t))
+	db := database.NewDB(logger, dbtest.NewDB(t))
 
 	for i := 1; i <= 5; i++ {
-		r := types.MinimalRepo{
+		r := &types.Repo{
 			Name:  api.RepoName(fmt.Sprintf("github.com/foo/bar%d", i)),
 			Stars: i * 100,
 		}
 
-		if err := db.Repos().Create(ctx, r.ToRepo()); err != nil {
+		if err := db.Repos().Create(ctx, r); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -295,13 +305,30 @@ func TestResolverIterator(t *testing.T) {
 		return "", nil
 	})
 
-	resolver := NewResolver(logtest.Scoped(t), db, gsClient, nil, nil)
-	all, err := resolver.Resolve(ctx, search.RepoOptions{})
+	resolver := NewResolver(logtest.Scoped(t), db, gsClient, nil, defaults.NewConnectionCache(logtest.Scoped(t)), nil)
+	all, _, err := resolver.resolve(ctx, search.RepoOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	allAtRev, err := resolver.Resolve(ctx, search.RepoOptions{RepoFilters: toParsedRepoFilters("foo/bar[0-4]@rev")})
+	// Assertation that we get the cursor we expect
+	{
+		want := types.MultiCursor{
+			{Column: "stars", Direction: "prev", Value: fmt.Sprint(all.RepoRevs[3].Repo.Stars)},
+			{Column: "id", Direction: "prev", Value: fmt.Sprint(all.RepoRevs[3].Repo.ID)},
+		}
+		_, next, err := resolver.resolve(ctx, search.RepoOptions{
+			Limit: 3,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if diff := cmp.Diff(next, want); diff != "" {
+			t.Errorf("unexpected cursor (-have, +want):\n%s", diff)
+		}
+	}
+
+	allAtRev, _, err := resolver.resolve(ctx, search.RepoOptions{RepoFilters: toParsedRepoFilters("foo/bar[0-4]@rev")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,10 +352,6 @@ func TestResolverIterator(t *testing.T) {
 			pages: []Resolved{
 				{
 					RepoRevs: all.RepoRevs[:3],
-					Next: types.MultiCursor{
-						{Column: "stars", Direction: "prev", Value: fmt.Sprint(all.RepoRevs[3].Repo.Stars)},
-						{Column: "id", Direction: "prev", Value: fmt.Sprint(all.RepoRevs[3].Repo.ID)},
-					},
 				},
 				{
 					RepoRevs: all.RepoRevs[3:],
@@ -363,10 +386,6 @@ func TestResolverIterator(t *testing.T) {
 			pages: []Resolved{
 				{
 					RepoRevs: allAtRev.RepoRevs[:2],
-					Next: types.MultiCursor{
-						{Column: "stars", Direction: "prev", Value: fmt.Sprint(allAtRev.RepoRevs[2].Repo.Stars)},
-						{Column: "id", Direction: "prev", Value: fmt.Sprint(allAtRev.RepoRevs[2].Repo.ID)},
-					},
 				},
 				{
 					RepoRevs: allAtRev.RepoRevs[2:],
@@ -390,7 +409,7 @@ func TestResolverIterator(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := NewResolver(logtest.Scoped(t), db, gsClient, nil, nil)
+			r := NewResolver(logtest.Scoped(t), db, gsClient, nil, defaults.NewConnectionCache(logtest.Scoped(t)), nil)
 			it := r.Iterator(ctx, tc.opts)
 
 			var pages []Resolved
@@ -401,12 +420,375 @@ func TestResolverIterator(t *testing.T) {
 			}
 
 			err = it.Err()
-			if diff := cmp.Diff(errors.UnwrapAll(err), tc.err); diff != "" {
+			if !errors.Is(err, tc.err) {
+				diff := cmp.Diff(errors.UnwrapAll(err), tc.err)
 				t.Errorf("%s unexpected error (-have, +want):\n%s", tc.name, diff)
 			}
 
 			if diff := cmp.Diff(pages, tc.pages); diff != "" {
 				t.Errorf("%s unexpected pages (-have, +want):\n%s", tc.name, diff)
+			}
+		})
+	}
+}
+
+func TestResolverIterator_Perforce(t *testing.T) {
+	conf.Mock(&conf.Unified{
+		SiteConfiguration: schema.SiteConfiguration{
+			ExperimentalFeatures: &schema.ExperimentalFeatures{
+				PerforceChangelistMapping: "enabled",
+			},
+		},
+	})
+	t.Cleanup(func() {
+		conf.Mock(nil)
+	})
+
+	ctx := context.Background()
+	logger := logtest.Scoped(t)
+	db := database.NewDB(logger, dbtest.NewDB(t))
+
+	var revSpecs []RepoRevSpecs
+	for i := 1; i <= 5; i++ {
+		r := &types.Repo{
+			Name:  api.RepoName(fmt.Sprintf("p4/foo/bar%d", i)),
+			Stars: i * 100,
+			ExternalRepo: api.ExternalRepoSpec{
+				ID:          "my-external-id",
+				ServiceType: extsvc.TypePerforce,
+			},
+		}
+
+		if err := db.Repos().Create(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+
+		revSpecs = append(revSpecs, RepoRevSpecs{Repo: types.MinimalRepo{
+			ID:    r.ID,
+			Name:  r.Name,
+			Stars: r.Stars,
+			ExternalRepo: api.ExternalRepoSpec{
+				ID:          "my-external-id",
+				ServiceType: extsvc.TypePerforce,
+			},
+		}})
+	}
+
+	// Populate perforce changelist mapping table
+	s := db.RepoCommitsChangelists()
+	data := []types.PerforceChangelist{}
+	for i := range revSpecs {
+		repo := &revSpecs[i]
+		sha := gitSha(fmt.Sprintf("%d", repo.Repo.ID))
+		data = append(data, types.PerforceChangelist{
+			CommitSHA:    api.CommitID(sha),
+			ChangelistID: int64(i),
+		})
+		repo.Revs = []query.RevisionSpecifier{
+			{
+				RevSpec: sha,
+			},
+		}
+		err := s.BatchInsertCommitSHAsWithPerforceChangelistID(ctx, api.RepoID(repo.Repo.ID), data)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	gsClient := gitserver.NewMockClient()
+	gsClient.ResolveRevisionFunc.SetDefaultHook(func(_ context.Context, name api.RepoName, spec string, _ gitserver.ResolveRevisionOptions) (api.CommitID, error) {
+		if spec == "bad_commit" || spec == "changelist/bad_commit" {
+			return "", &gitdomain.BadCommitError{}
+		}
+		// All repos have the revision except foo/bar5
+		if name == "p4/foo/bar5" {
+			return "", &gitdomain.RevisionNotFoundError{}
+		}
+
+		if len(spec) > 0 {
+			shortSpec := api.CommitID(spec).Short()
+			for _, revSpec := range revSpecs {
+				shortRevSpec := api.CommitID(revSpec.Revs[0].RevSpec).Short()
+				if name == revSpec.Repo.Name && shortSpec == shortRevSpec {
+					return api.CommitID(revSpec.Revs[0].RevSpec), nil
+				}
+			}
+
+			return "", &gitdomain.RevisionNotFoundError{}
+		}
+
+		return "", nil
+	})
+
+	resolver := NewResolver(logtest.Scoped(t), db, gsClient, nil, defaults.NewConnectionCache(logtest.Scoped(t)), nil)
+	all, _, err := resolver.resolve(ctx, search.RepoOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert that we get the cursor we expect
+	{
+		want := types.MultiCursor{
+			{Column: "stars", Direction: "prev", Value: fmt.Sprint(all.RepoRevs[3].Repo.Stars)},
+			{Column: "id", Direction: "prev", Value: fmt.Sprint(all.RepoRevs[3].Repo.ID)},
+		}
+		_, next, err := resolver.resolve(ctx, search.RepoOptions{
+			Limit: 3,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if diff := cmp.Diff(next, want); diff != "" {
+			t.Errorf("unexpected cursor (-have, +want):\n%s", diff)
+		}
+	}
+
+	withRepoRevs := func(rrs []*search.RepositoryRevisions, revs ...string) []*search.RepositoryRevisions {
+		var with []*search.RepositoryRevisions
+		for _, r := range rrs {
+			with = append(with, &search.RepositoryRevisions{
+				Repo: r.Repo,
+				Revs: revs,
+			})
+		}
+		return with
+	}
+
+	for _, tc := range []struct {
+		name  string
+		opts  search.RepoOptions
+		pages []Resolved
+		err   error
+	}{
+		{
+			name: "with sha rev",
+			opts: search.RepoOptions{
+				RepoFilters: toParsedRepoFilters(fmt.Sprintf("foo/bar[0-4]@%s", data[2].CommitSHA.Short())),
+			},
+			pages: []Resolved{
+				{
+					RepoRevs: withRepoRevs(all.RepoRevs[2:3], data[2].CommitSHA.Short()),
+				},
+			}, err: &MissingRepoRevsError{Missing: []RepoRevSpecs{
+				{
+					Repo: all.RepoRevs[0].Repo,
+					Revs: []query.RevisionSpecifier{
+						{
+							RevSpec: "rev",
+						},
+					},
+				},
+				{
+					Repo: all.RepoRevs[1].Repo,
+					Revs: []query.RevisionSpecifier{
+						{
+							RevSpec: "rev",
+						},
+					},
+				},
+			}},
+		},
+		{
+			name: "with perforce changelist id rev",
+			opts: search.RepoOptions{
+				RepoFilters: toParsedRepoFilters(fmt.Sprintf("foo/bar[0-4]@changelist/%d", data[2].ChangelistID)),
+			},
+			pages: []Resolved{
+				{
+					RepoRevs: withRepoRevs(all.RepoRevs[2:3], string(data[2].CommitSHA)),
+				},
+			}, err: &MissingRepoRevsError{Missing: []RepoRevSpecs{
+				{
+					Repo: all.RepoRevs[0].Repo,
+					Revs: []query.RevisionSpecifier{
+						{
+							RevSpec: "rev",
+						},
+					},
+				},
+				{
+					Repo: all.RepoRevs[1].Repo,
+					Revs: []query.RevisionSpecifier{
+						{
+							RevSpec: "rev",
+						},
+					},
+				},
+			}},
+		},
+		{
+			name: "single perforce changelist id rev",
+			opts: search.RepoOptions{
+				RepoFilters: toParsedRepoFilters(fmt.Sprintf("foo/bar3@changelist/%d", data[2].ChangelistID)),
+			},
+			pages: []Resolved{
+				{
+					RepoRevs: withRepoRevs(all.RepoRevs[2:3], string(data[2].CommitSHA)),
+				},
+			}, err: nil,
+		},
+		{
+			name: "with limit 3 and fatal error",
+			opts: search.RepoOptions{
+				Limit:       3,
+				RepoFilters: toParsedRepoFilters("foo/bar[0-5]@bad_commit"),
+			},
+			err:   &gitdomain.BadCommitError{},
+			pages: nil,
+		},
+		{
+			name: "with bad changelist id",
+			opts: search.RepoOptions{
+				Limit:       3,
+				RepoFilters: toParsedRepoFilters("foo/bar[0-5]@changelist/bad_commit"),
+			},
+			err:   &gitdomain.BadCommitError{},
+			pages: nil,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := NewResolver(logtest.Scoped(t), db, gsClient, nil, defaults.NewConnectionCache(logtest.Scoped(t)), nil)
+			it := r.Iterator(ctx, tc.opts)
+
+			var pages []Resolved
+
+			for it.Next() {
+				page := it.Current()
+				pages = append(pages, page)
+			}
+
+			err = it.Err()
+			if !errors.Is(err, tc.err) {
+				diff := cmp.Diff(errors.UnwrapAll(err), tc.err)
+				t.Errorf("%s unexpected error (-have, +want):\n%s", tc.name, diff)
+			}
+
+			if diff := cmp.Diff(pages, tc.pages); diff != "" {
+				t.Errorf("%s unexpected pages (-have, +want):\n%s", tc.name, diff)
+			}
+		})
+	}
+}
+
+func TestResolverIterateRepoRevs(t *testing.T) {
+	ctx := context.Background()
+	logger := logtest.Scoped(t)
+	db := database.NewDB(logger, dbtest.NewDB(t))
+
+	// intentionally nil so it panics if we call it
+	var gsClient gitserver.Client = nil
+
+	var all []RepoRevSpecs
+	for i := 1; i <= 5; i++ {
+		r := &types.Repo{
+			Name:  api.RepoName(fmt.Sprintf("github.com/foo/bar%d", i)),
+			Stars: i * 100,
+		}
+
+		if err := db.Repos().Create(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+
+		all = append(all, RepoRevSpecs{Repo: types.MinimalRepo{
+			ID:    r.ID,
+			Name:  r.Name,
+			Stars: r.Stars,
+		}})
+	}
+
+	withRevSpecs := func(rrs []RepoRevSpecs, revs ...query.RevisionSpecifier) []RepoRevSpecs {
+		var with []RepoRevSpecs
+		for _, r := range rrs {
+			with = append(with, RepoRevSpecs{
+				Repo: r.Repo,
+				Revs: revs,
+			})
+		}
+		return with
+	}
+
+	for _, tc := range []struct {
+		name    string
+		opts    search.RepoOptions
+		want    []RepoRevSpecs
+		wantErr string
+	}{
+		{
+			name: "default",
+			opts: search.RepoOptions{},
+			want: withRevSpecs(all, query.RevisionSpecifier{}),
+		},
+		{
+			name: "specific repo",
+			opts: search.RepoOptions{
+				RepoFilters: toParsedRepoFilters("foo/bar1"),
+			},
+			want: withRevSpecs(all[:1], query.RevisionSpecifier{}),
+		},
+		{
+			name: "no repos",
+			opts: search.RepoOptions{
+				RepoFilters: toParsedRepoFilters("horsegraph"),
+			},
+			wantErr: ErrNoResolvedRepos.Error(),
+		},
+
+		// The next block of test cases would normally reach out to gitserver
+		// and fail. But because we haven't reached out we should still get
+		// back a list. See the corresponding cases in TestResolverIterator.
+		{
+			name: "no gitserver revspec",
+			opts: search.RepoOptions{
+				RepoFilters: toParsedRepoFilters("foo/bar[0-5]@bad_commit"),
+			},
+			want: withRevSpecs(all, query.RevisionSpecifier{RevSpec: "bad_commit"}),
+		},
+		{
+			name: "no gitserver refglob",
+			opts: search.RepoOptions{
+				RepoFilters: toParsedRepoFilters("foo/bar[0-5]@*refs/heads/foo*"),
+			},
+			want: withRevSpecs(all, query.RevisionSpecifier{RefGlob: "refs/heads/foo*"}),
+		},
+		{
+			name: "no gitserver excluderefglob",
+			opts: search.RepoOptions{
+				RepoFilters: toParsedRepoFilters("foo/bar[0-5]@*!refs/heads/foo*"),
+			},
+			want: withRevSpecs(all, query.RevisionSpecifier{ExcludeRefGlob: "refs/heads/foo*"}),
+		},
+		{
+			name: "no gitserver multiref",
+			opts: search.RepoOptions{
+				RepoFilters: toParsedRepoFilters("foo/bar[0-5]@foo:bar"),
+			},
+			want: withRevSpecs(all, query.RevisionSpecifier{RevSpec: "foo"}, query.RevisionSpecifier{RevSpec: "bar"}),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := NewResolver(logger, db, gsClient, nil, defaults.NewConnectionCache(logtest.Scoped(t)), nil)
+			got, err := iterator.Collect(r.IterateRepoRevs(ctx, tc.opts))
+
+			var gotErr string
+			if err != nil {
+				gotErr = err.Error()
+			}
+			if diff := cmp.Diff(gotErr, tc.wantErr); diff != "" {
+				t.Errorf("unexpected error (-have, +want):\n%s", diff)
+			}
+
+			// copy want because we will mutate it when sorting
+			var want []RepoRevSpecs
+			want = append(want, tc.want...)
+
+			compare := func(a, b RepoRevSpecs) int {
+				return stdcmp.Compare(a.Repo.ID, b.Repo.ID)
+			}
+			slices.SortFunc(got, compare)
+			slices.SortFunc(want, compare)
+
+			if diff := cmp.Diff(got, want); diff != "" {
+				t.Errorf("unexpected (-have, +want):\n%s", diff)
 			}
 		})
 	}
@@ -426,7 +808,7 @@ func TestResolveRepositoriesWithSearchContext(t *testing.T) {
 		return api.CommitID(spec), nil
 	})
 
-	repos := database.NewMockRepoStore()
+	repos := dbmocks.NewMockRepoStore()
 	repos.ListMinimalReposFunc.SetDefaultHook(func(ctx context.Context, op database.ReposListOptions) ([]types.MinimalRepo, error) {
 		if op.SearchContextID != searchContext.ID {
 			t.Fatalf("got %q, want %q", op.SearchContextID, searchContext.ID)
@@ -434,7 +816,7 @@ func TestResolveRepositoriesWithSearchContext(t *testing.T) {
 		return []types.MinimalRepo{repoA, repoB}, nil
 	})
 
-	sc := database.NewMockSearchContextsStore()
+	sc := dbmocks.NewMockSearchContextsStore()
 	sc.GetSearchContextFunc.SetDefaultHook(func(ctx context.Context, opts database.GetSearchContextOptions) (*types.SearchContext, error) {
 		if opts.Name != searchContext.Name {
 			t.Fatalf("got %q, want %q", opts.Name, searchContext.Name)
@@ -448,15 +830,15 @@ func TestResolveRepositoriesWithSearchContext(t *testing.T) {
 		return searchContextRepositoryRevisions, nil
 	})
 
-	db := database.NewMockDB()
+	db := dbmocks.NewMockDB()
 	db.ReposFunc.SetDefaultReturn(repos)
 	db.SearchContextsFunc.SetDefaultReturn(sc)
 
 	op := search.RepoOptions{
 		SearchContextSpec: "searchcontext",
 	}
-	repositoryResolver := NewResolver(logtest.Scoped(t), db, gsClient, nil, nil)
-	resolved, err := repositoryResolver.Resolve(context.Background(), op)
+	repositoryResolver := NewResolver(logtest.Scoped(t), db, gsClient, nil, defaults.NewConnectionCache(logtest.Scoped(t)), nil)
+	resolved, _, err := repositoryResolver.resolve(context.Background(), op)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -483,12 +865,12 @@ func TestRepoHasFileContent(t *testing.T) {
 		}
 	}
 
-	repos := database.NewMockRepoStore()
+	repos := dbmocks.NewMockRepoStore()
 	repos.ListMinimalReposFunc.SetDefaultHook(func(context.Context, database.ReposListOptions) ([]types.MinimalRepo, error) {
 		return []types.MinimalRepo{repoA, repoB, repoC, repoD, repoE}, nil
 	})
 
-	db := database.NewMockDB()
+	db := dbmocks.NewMockDB()
 	db.ReposFunc.SetDefaultReturn(repos)
 
 	mockGitserver := gitserver.NewMockClient()
@@ -515,13 +897,20 @@ func TestRepoHasFileContent(t *testing.T) {
 			},
 		},
 	}
-	searcher.MockSearch = func(ctx context.Context, repo api.RepoName, repoID api.RepoID, commit api.CommitID, p *search.TextPatternInfo, fetchTimeout time.Duration, onMatches func([]*protocol.FileMatch)) (limitHit bool, err error) {
+	searcher.MockSearch = func(ctx context.Context, repo api.RepoName, repoID api.RepoID, commit api.CommitID, p *search.TextPatternInfo, fetchTimeout time.Duration, onMatch func(*protocol.FileMatch)) (limitHit bool, err error) {
+		var pattern string
+		if pt, ok := p.Query.(*protocol.PatternNode); ok {
+			pattern = pt.Value
+		} else {
+			return false, errors.New("expected a simple regex pattern")
+		}
+
 		if r, ok := unindexedCorpus[string(repo)]; ok {
 			for path, lines := range r {
-				if len(p.IncludePatterns) == 0 || p.IncludePatterns[0] == path {
+				if len(p.IncludePaths) == 0 || p.IncludePaths[0] == path {
 					for line := range lines {
-						if p.Pattern == line || p.Pattern == "" {
-							onMatches([]*protocol.FileMatch{{}})
+						if pattern == line || pattern == "" {
+							onMatch(&protocol.FileMatch{})
 						}
 					}
 				}
@@ -627,8 +1016,8 @@ func TestRepoHasFileContent(t *testing.T) {
 				ReposMap: tc.matchingRepos,
 			}, nil)
 
-			res := NewResolver(logtest.Scoped(t), db, mockGitserver, endpoint.Static("test"), mockZoekt)
-			resolved, err := res.Resolve(context.Background(), search.RepoOptions{
+			res := NewResolver(logtest.Scoped(t), db, mockGitserver, endpoint.Static("test"), defaults.NewConnectionCache(logtest.Scoped(t)), mockZoekt)
+			resolved, _, err := res.resolve(context.Background(), search.RepoOptions{
 				RepoFilters:    toParsedRepoFilters(".*"),
 				HasFileContent: tc.filters,
 			})
@@ -653,22 +1042,22 @@ func TestRepoHasCommitAfter(t *testing.T) {
 	}
 
 	mockGitserver := gitserver.NewMockClient()
-	mockGitserver.HasCommitAfterFunc.SetDefaultHook(func(_ context.Context, _ authz.SubRepoPermissionChecker, repoName api.RepoName, _ string, _ string) (bool, error) {
+	mockGitserver.CommitsFunc.SetDefaultHook(func(_ context.Context, repoName api.RepoName, _ gitserver.CommitsOptions) ([]*gitdomain.Commit, error) {
 		switch repoName {
 		case repoA.Name:
-			return true, nil
+			return []*gitdomain.Commit{{ID: "1"}}, nil
 		case repoB.Name:
-			return true, nil
+			return []*gitdomain.Commit{{ID: "1"}}, nil
 		case repoC.Name:
-			return false, nil
+			return []*gitdomain.Commit{}, nil
 		case repoD.Name:
-			return false, &gitdomain.RevisionNotFoundError{}
+			return []*gitdomain.Commit{}, &gitdomain.RevisionNotFoundError{}
 		default:
 			panic("unreachable")
 		}
 	})
 
-	repos := database.NewMockRepoStore()
+	repos := dbmocks.NewMockRepoStore()
 	repos.ListMinimalReposFunc.SetDefaultHook(func(_ context.Context, opts database.ReposListOptions) ([]types.MinimalRepo, error) {
 		res := []types.MinimalRepo{}
 		for _, r := range []types.MinimalRepo{repoA, repoB, repoC, repoD} {
@@ -679,7 +1068,7 @@ func TestRepoHasCommitAfter(t *testing.T) {
 		return res, nil
 	})
 
-	db := database.NewMockDB()
+	db := dbmocks.NewMockDB()
 	db.ReposFunc.SetDefaultReturn(repos)
 
 	cases := []struct {
@@ -730,9 +1119,9 @@ func TestRepoHasCommitAfter(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			res := NewResolver(logtest.Scoped(t), db, nil, endpoint.Static("test"), nil)
+			res := NewResolver(logtest.Scoped(t), db, nil, endpoint.Static("test"), defaults.NewConnectionCache(logtest.Scoped(t)), nil)
 			res.gitserver = mockGitserver
-			resolved, err := res.Resolve(context.Background(), search.RepoOptions{
+			resolved, _, err := res.resolve(context.Background(), search.RepoOptions{
 				RepoFilters: toParsedRepoFilters(tc.nameFilter),
 				CommitAfter: tc.commitAfter,
 			})
@@ -740,4 +1129,10 @@ func TestRepoHasCommitAfter(t *testing.T) {
 			require.Equal(t, tc.expected, resolved.RepoRevs)
 		})
 	}
+}
+
+func gitSha(val string) string {
+	writer := sha1.New()
+	writer.Write([]byte(val))
+	return hex.EncodeToString(writer.Sum(nil))
 }

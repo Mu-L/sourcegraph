@@ -6,11 +6,11 @@ import (
 
 	"github.com/sourcegraph/sourcegraph/cmd/worker/job"
 	workerdb "github.com/sourcegraph/sourcegraph/cmd/worker/shared/init/db"
-	"github.com/sourcegraph/sourcegraph/internal/conf/deploy"
 	"github.com/sourcegraph/sourcegraph/internal/env"
 	"github.com/sourcegraph/sourcegraph/internal/goroutine"
 	"github.com/sourcegraph/sourcegraph/internal/observation"
 	"github.com/sourcegraph/sourcegraph/internal/oobmigration"
+	"github.com/sourcegraph/sourcegraph/internal/version/upgradestore"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
 
@@ -50,30 +50,43 @@ func (m *migrator) Routines(startupCtx context.Context, observationCtx *observat
 	}
 
 	if os.Getenv("SRC_DISABLE_OOBMIGRATION_VALIDATION") != "" {
-		if !deploy.IsApp() {
-			observationCtx.Logger.Warn("Skipping out-of-band migrations check")
-		}
+		observationCtx.Logger.Warn("Skipping out-of-band migrations check")
 	} else {
 		if err := oobmigration.ValidateOutOfBandMigrationRunner(startupCtx, db, outOfBandMigrationRunner); err != nil {
 			return nil, err
 		}
 	}
 
-	version, err := currentVersion(observationCtx.Logger)
+	currentVersion, err := currentVersion(observationCtx.Logger)
 	if err != nil {
 		return nil, err
 	}
 
+	firstVersionString, _, err := upgradestore.New(db).GetFirstServiceVersion(startupCtx)
+	if err != nil {
+		return nil, err
+	}
+
+	firstVersion, ok := oobmigration.NewVersionFromString(firstVersionString)
+	if !ok {
+		return nil, err
+	}
+
 	return []goroutine.BackgroundRoutine{
-		&outOfBandMigrationRunnerWrapper{Runner: outOfBandMigrationRunner, version: version},
+		&outOfBandMigrationRunnerWrapper{
+			Runner:         outOfBandMigrationRunner,
+			currentVersion: currentVersion,
+			firstVersion:   firstVersion,
+		},
 	}, nil
 }
 
 type outOfBandMigrationRunnerWrapper struct {
 	*oobmigration.Runner
-	version oobmigration.Version
+	currentVersion oobmigration.Version
+	firstVersion   oobmigration.Version
 }
 
 func (w *outOfBandMigrationRunnerWrapper) Start() {
-	w.Runner.Start(w.version)
+	w.Runner.Start(w.currentVersion, w.firstVersion)
 }

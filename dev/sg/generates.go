@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/sourcegraph/sourcegraph/dev/sg/buf"
@@ -22,7 +23,15 @@ var allGenerateTargets = generateTargets{
 		Help:   "Re-generate protocol buffer bindings using buf",
 		Runner: generateProtoRunner,
 		Completer: func() (options []string) {
-			options, _ = buf.CodegenFiles()
+			options, _ = buf.PluginConfigurationFiles()
+			// Try to convert the options into relative paths for brevity
+			if cwd, err := os.Getwd(); err == nil {
+				for i, o := range options {
+					if rel, err := filepath.Rel(cwd, o); err == nil {
+						options[i] = rel
+					}
+				}
+			}
 			return
 		},
 	},
@@ -39,6 +48,16 @@ var allGenerateTargets = generateTargets{
 			return
 		},
 	},
+	{
+		Name:   "bazel",
+		Help:   "Run the bazel target //dev:write_all_generated",
+		Runner: generateBazelRunner,
+	},
+}
+
+func generateBazelRunner(ctx context.Context, args []string) *generate.Report {
+	runnerFunc := generate.RunScript("bazel run //dev:write_all_generated", true)
+	return runnerFunc(ctx, args)
 }
 
 func generateGoRunner(ctx context.Context, args []string) *generate.Report {
@@ -52,21 +71,30 @@ func generateGoRunner(ctx context.Context, args []string) *generate.Report {
 }
 
 func generateProtoRunner(ctx context.Context, args []string) *generate.Report {
-	// Always run in CI
-	if os.Getenv("CI") == "true" {
-		return proto.Generate(ctx, verbose)
+	// If args are provided, assume the args are paths to buf configuration
+	// files - so we just generate over specifiied configuration files.
+	if len(args) > 0 {
+		return proto.Generate(ctx, args, verbose)
 	}
 
-	// Check to see if any .proto files changed
-	out, err := exec.Command("git", "diff", "--name-only", "main...HEAD").Output()
+	// If we're not in CI, we check for proto file changes
+	if os.Getenv("CI") != "true" {
+		out, err := exec.Command("git", "diff", "--name-only", "main").Output()
+		if err != nil {
+			return &generate.Report{Err: errors.Wrap(err, "git diff failed")} // should never happen
+		}
+
+		if !strings.Contains(string(out), ".proto") {
+			return &generate.Report{Output: "No .proto files changed or not in CI. Skipping buf gen.\n"}
+		}
+	}
+
+	// By default, we will run buf generate in every directory with buf.gen.yaml
+	bufGenFilePaths, err := buf.PluginConfigurationFiles()
 	if err != nil {
-		return &generate.Report{Err: errors.Wrap(err, "git diff failed")} // should never happen
+		return &generate.Report{Err: errors.Wrapf(err, "finding plugin configuration files")}
 	}
 
-	// Don't run buf gen if no .proto files changed or not in CI
-	if !strings.Contains(string(out), ".proto") {
-		return &generate.Report{Output: "No .proto files changed or not in CI. Skipping buf gen.\n"}
-	}
 	// Run buf gen by default
-	return proto.Generate(ctx, verbose)
+	return proto.Generate(ctx, bufGenFilePaths, verbose)
 }

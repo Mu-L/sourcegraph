@@ -33,7 +33,7 @@ We generally follow the following algorithm to root-cause issues with traces:
    1. items near the leaves that take up a significant portion of the overall request time.
    2. spans that have errors attached to them
    3. [log entries](./logs.md) that correspond to spans in the trace (using the `TraceId` and `SpanId` fields)
-3. Report this information to Sourcegraph (via [issue](https://github.com/sourcegraph/sourcegraph/issues/new) or [reaching out directly](https://about.sourcegraph.com/contact/request-info/)) by screenshotting the relevant trace or sharing the trace JSON.
+3. Report this information to Sourcegraph (via [issue](https://github.com/sourcegraph/sourcegraph/issues/new) or [reaching out directly](https://sourcegraph.com/contact/request-info/)) by screenshotting the relevant trace or sharing the trace JSON.
 
 ### Trace a search query
 
@@ -51,10 +51,17 @@ The response headers of the response will now include an `x-trace-url` entry, wh
 
 Note that getting a trace URL requires `urlTemplate` to be configured.
 
+Alternatively you can use the GraphQL API console: Log in to your Sourcegraph instance of choice, navigate
+to `/api/console` (e.g. https://sourcegraph.sourcegraph.com/api/console) and add the query parameter `trace=1` to your browser's URL.
+Open the developer tools' network tab to inspect your request and find the tracing link in the response headers.
+
 ## Tracing backends
 
 Tracing backends can be configured for Sourcegraph to export traces to.
 We support exporting traces via [OpenTelemetry](#opentelemetry) (recommended), or directly to [Jaeger](#jaeger).
+
+When you use `sg`, you can run `sg start otel` to start the tracing backend. Requests with `trace=1` or the according
+tracing header will then contain a response header with a link to your local tracing backend.
 
 ### OpenTelemetry
 

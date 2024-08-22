@@ -1,149 +1,82 @@
 import { dirname } from 'path'
 
-import { memoize } from 'lodash'
-import type { Observable } from 'rxjs'
-import { map } from 'rxjs/operators'
-
-import { createAggregateError, memoizeObservable } from '$lib/common'
-import type { TreeEntriesResult, GitCommitFieldsWithTree, TreeFields, TreeEntryFields } from '$lib/graphql-operations'
-import { gql } from '$lib/http-client'
-import { makeRepoURI, type AbsoluteRepoFile } from '$lib/shared'
+import { mapOrThrow, query } from '$lib/graphql'
+import type { Scalars } from '$lib/graphql-types'
 import type { TreeProvider } from '$lib/TreeView'
-import { requestGraphQL } from '$lib/web'
 
-export const fetchTreeEntries = memoizeObservable(
-    (args: AbsoluteRepoFile & { first?: number }): Observable<GitCommitFieldsWithTree> =>
-        requestGraphQL<TreeEntriesResult>(
-            gql`
-                query TreeEntries(
-                    $repoName: String!
-                    $revision: String!
-                    $commitID: String!
-                    $filePath: String!
-                    $first: Int
-                ) {
-                    repository(name: $repoName) {
-                        id
-                        commit(rev: $commitID, inputRevspec: $revision) {
-                            ...GitCommitFieldsWithTree
-                        }
-                    }
-                }
-
-                fragment GitCommitFieldsWithTree on GitCommit {
-                    oid
-                    abbreviatedOID
-                    url
-                    author {
-                        ...UserFields
-                    }
-                    committer {
-                        ...UserFields
-                    }
-                    subject
-
-                    tree(path: $filePath) {
-                        ...TreeFields
-                    }
-                }
-                fragment TreeFields on GitTree {
-                    ...TreeEntryFields
-                    entries(first: $first, recursiveSingleChild: false) {
-                        ...TreeEntryFields
-                    }
-                }
-                fragment TreeEntryFields on TreeEntry {
-                    name
-                    path
-                    isDirectory
-                    url
-                    submodule {
-                        url
-                        commit
-                    }
-                    isSingleChild
-                    ...GitTreeEntry
-                }
-                fragment GitTreeEntry on GitTree {
-                    isRoot
-                }
-
-                fragment UserFields on Signature {
-                    person {
-                        name
-                        displayName
-                        avatarURL
-                    }
-                    date
-                }
-            `,
-            args
-            //mightContainPrivateInfo: true,
-        ).pipe(
-            map(({ data, errors }) => {
-                if (errors || !data?.repository?.commit?.tree) {
-                    throw createAggregateError(errors)
-                }
-                return data.repository.commit
-            })
-        ),
-    ({ first, ...args }) => `${makeRepoURI(args)}:first-${String(first)}`
-)
+import { type GitCommitFieldsWithTree, type TreeEntriesVariables, TreeEntries } from './tree.gql'
 
 const MAX_FILE_TREE_ENTRIES = 1000
-export const NODE_LIMIT: unique symbol = Symbol()
-type ExpandableFileTreeNodeValues = TreeEntryFields
-export type FileTreeNodeValue = ExpandableFileTreeNodeValues | typeof NODE_LIMIT
 
-export const fetchSidebarFileTree = memoize(
-    async ({
-        repoName,
-        commitID,
-        revision,
-        filePath,
-    }: {
-        repoName: string
-        commitID: string
-        revision: string
-        filePath: string
-    }): Promise<{ root: TreeFields; values: FileTreeNodeValue[] }> => {
-        const result = await fetchTreeEntries({
-            repoName,
-            commitID,
-            revision,
-            filePath,
-            first: MAX_FILE_TREE_ENTRIES,
-        }).toPromise()
-        if (!result.tree) {
-            throw new Error('Unable to fetch directory contents')
-        }
-        const root = result.tree
-        let values: FileTreeNodeValue[] = root.entries
-        if (values.length >= MAX_FILE_TREE_ENTRIES) {
-            values = [...values, NODE_LIMIT]
-        }
+/**
+ * Represents the root path of the repository.
+ */
+export const ROOT_PATH = ''
 
-        return { root, values }
-    },
-    args => `${makeRepoURI(args)}:first-${String(MAX_FILE_TREE_ENTRIES)}`
-)
-
-export interface FileTreeLoader {
-    (args: {
-        repoName: string
-        commitID: string
-        revision: string
-        filePath: string
-        parent?: FileTreeProvider
-    }): Promise<FileTreeProvider>
+export function isFileEntry(entry: TreeEntry): entry is Extract<TreeEntry, { __typename: 'GitBlob' }> {
+    return entry.__typename === 'GitBlob' || !entry.isDirectory
 }
 
-interface FileTreeProviderArgs {
-    root: TreeFields
-    values: FileTreeNodeValue[]
-    repoName: string
-    commitID: string
+export function fetchTreeEntries(args: TreeEntriesVariables): Promise<GitCommitFieldsWithTree> {
+    return query(
+        TreeEntries,
+        {
+            ...args,
+            first: args.first ?? MAX_FILE_TREE_ENTRIES,
+        }
+        // mightContainPrivateInfo: true,
+    ).then(
+        mapOrThrow(result => {
+            if (!result.data?.repository) {
+                throw new Error('Unable to fetch repository information')
+            }
+            if (!result.data.repository.commit) {
+                throw new Error('Unable to fetch commit information')
+            }
+            return result.data.repository.commit
+        })
+    )
+}
+
+export const NODE_LIMIT: unique symbol = Symbol()
+
+type TreeRoot = NonNullable<GitCommitFieldsWithTree['tree']>
+export type TreeEntry = NonNullable<GitCommitFieldsWithTree['tree']>['entries'][number]
+type ExpandableFileTreeNodeValues = TreeEntry
+export type FileTreeNodeValue = ExpandableFileTreeNodeValues | typeof NODE_LIMIT
+export type FileTreeData = { root: TreeRoot; values: FileTreeNodeValue[] }
+
+export async function fetchSidebarFileTree({
+    repoName,
+    revision,
+    filePath,
+}: {
+    repoName: Scalars['ID']['input']
     revision: string
+    filePath: string
+}): Promise<FileTreeData> {
+    const result = await fetchTreeEntries({
+        repoName,
+        revision,
+        filePath,
+        first: MAX_FILE_TREE_ENTRIES,
+    })
+    if (!result.tree) {
+        throw new Error('Unable to fetch directory contents')
+    }
+    const root = result.tree
+    let values: FileTreeNodeValue[] = root.entries
+    if (values.length >= MAX_FILE_TREE_ENTRIES) {
+        values = [...values, NODE_LIMIT]
+    }
+    return { root, values }
+}
+
+export type FileTreeLoader = (args: { filePath: string; parent?: FileTreeProvider }) => Promise<FileTreeData>
+
+interface FileTreeProviderArgs {
+    root: NonNullable<GitCommitFieldsWithTree['tree']>
+    values: FileTreeNodeValue[]
     loader: FileTreeLoader
     parent?: TreeProvider<FileTreeNodeValue>
 }
@@ -151,15 +84,15 @@ interface FileTreeProviderArgs {
 export class FileTreeProvider implements TreeProvider<FileTreeNodeValue> {
     constructor(private args: FileTreeProviderArgs) {}
 
-    getRoot(): FileTreeNodeValue {
+    public copy(args?: Partial<FileTreeProviderArgs>): FileTreeProvider {
+        return new FileTreeProvider({ ...this.args, ...args })
+    }
+
+    public getRoot(): FileTreeNodeValue {
         return this.args.root
     }
 
-    getRepoName(): string {
-        return this.args.repoName
-    }
-
-    getEntries(): FileTreeNodeValue[] {
+    public getEntries(): FileTreeNodeValue[] {
         if (this.args.parent || this.args.root.isRoot) {
             return this.args.values
         }
@@ -167,41 +100,37 @@ export class FileTreeProvider implements TreeProvider<FileTreeNodeValue> {
         return [this.args.root, ...this.args.values]
     }
 
-    async fetchChildren(entry: FileTreeNodeValue): Promise<FileTreeProvider> {
+    public async fetchChildren(entry: FileTreeNodeValue): Promise<FileTreeProvider> {
         if (!this.isExpandable(entry)) {
             // This should never happen because the caller should only call fetchChildren
             // for entries where isExpandable returns true
             throw new Error('Cannot fetch children for non-expandable tree entry')
         }
 
-        return this.args.loader({
-            repoName: this.args.repoName,
-            commitID: this.args.commitID,
-            revision: this.args.revision,
+        const args = await this.args.loader({
             filePath: entry.path,
             parent: this,
         })
+        return new FileTreeProvider({ ...args, loader: this.args.loader, parent: this })
     }
 
-    async fetchParent(): Promise<FileTreeProvider> {
-        const parentPath = dirname(this.args.root.path)
-        return this.args.loader({
-            repoName: this.args.repoName,
-            commitID: this.args.commitID,
-            revision: this.args.revision,
-            filePath: parentPath,
+    public async fetchParent(): Promise<FileTreeProvider> {
+        const args = await this.args.loader({
+            filePath: dirname(this.args.root.path),
+            parent: this,
         })
+        return new FileTreeProvider({ ...args, loader: this.args.loader })
     }
 
-    getNodeID(entry: FileTreeNodeValue): string {
+    public getNodeID(entry: FileTreeNodeValue): string {
         return entry === NODE_LIMIT ? 'node-limit' : entry.path
     }
 
-    isExpandable(entry: FileTreeNodeValue): entry is ExpandableFileTreeNodeValues {
+    public isExpandable(entry: FileTreeNodeValue): entry is ExpandableFileTreeNodeValues {
         return entry !== NODE_LIMIT && entry !== this.args.root && entry.isDirectory
     }
 
-    isSelectable(entry: FileTreeNodeValue): boolean {
+    public isSelectable(entry: FileTreeNodeValue): boolean {
         return entry !== NODE_LIMIT
     }
 }

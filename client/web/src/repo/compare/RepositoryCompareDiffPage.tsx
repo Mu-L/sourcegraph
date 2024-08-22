@@ -1,22 +1,22 @@
 import React, { useCallback } from 'react'
 
-import { Observable } from 'rxjs'
+import type { Observable } from 'rxjs'
 import { map } from 'rxjs/operators'
 
 import { dataOrThrowErrors, gql } from '@sourcegraph/http-client'
-import { Scalars } from '@sourcegraph/shared/src/graphql-operations'
+import type { Scalars } from '@sourcegraph/shared/src/graphql-operations'
 
-import { fileDiffFields, diffStatFields } from '../../backend/diff'
+import { diffStatFields, fileDiffFields } from '../../backend/diff'
 import { requestGraphQL } from '../../backend/graphql'
-import { FileDiffNode, FileDiffNodeProps } from '../../components/diff/FileDiffNode'
-import { ConnectionQueryArguments, FilteredConnection } from '../../components/FilteredConnection'
-import {
+import { FileDiffNode, type FileDiffNodeProps } from '../../components/diff/FileDiffNode'
+import { FilteredConnection, type FilteredConnectionQueryArguments } from '../../components/FilteredConnection'
+import type {
+    FileDiffFields,
     RepositoryComparisonDiffResult,
     RepositoryComparisonDiffVariables,
-    FileDiffFields,
 } from '../../graphql-operations'
 
-import { RepositoryCompareAreaPageProps } from './RepositoryCompareArea'
+import type { RepositoryCompareAreaPageProps } from './RepositoryCompareArea'
 
 export type RepositoryComparisonDiff = Extract<RepositoryComparisonDiffResult['node'], { __typename?: 'Repository' }>
 
@@ -95,7 +95,7 @@ interface RepositoryCompareDiffPageProps extends RepositoryCompareAreaPageProps 
 /** A page with the file diffs in the comparison. */
 export const RepositoryCompareDiffPage: React.FunctionComponent<RepositoryCompareDiffPageProps> = props => {
     const queryDiffs = useCallback(
-        (args: ConnectionQueryArguments): Observable<RepositoryComparisonDiff['comparison']['fileDiffs']> =>
+        (args: FilteredConnectionQueryArguments): Observable<RepositoryComparisonDiff['comparison']['fileDiffs']> =>
             queryRepositoryComparisonFileDiffs({
                 first: args.first ?? null,
                 after: args.after ?? null,

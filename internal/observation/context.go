@@ -8,6 +8,7 @@ import (
 	"github.com/sourcegraph/log"
 	"github.com/sourcegraph/log/logtest"
 	oteltrace "go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/sourcegraph/sourcegraph/internal/honey"
 	"github.com/sourcegraph/sourcegraph/internal/metrics"
@@ -42,19 +43,19 @@ func (c *Context) Clone(opts ...Opt) *Context {
 // TestContext is a behaviorless Context usable for unit tests.
 var TestContext = Context{
 	Logger:     log.NoOp(),
-	Tracer:     oteltrace.NewNoopTracerProvider().Tracer("noop"),
+	Tracer:     noop.NewTracerProvider().Tracer("noop"),
 	Registerer: metrics.NoOpRegisterer,
 	// We do not set HoneyDataset since if we accidently have HONEYCOMB_TEAM
 	// set in a test run it will log to honeycomb.
 }
 
 // TestContextTB creates a Context similar to `TestContext` but with a logger scoped
-// to the `testing.TB`.
+// to the `testing.TB` and a pedantic Registerer.
 func TestContextTB(t testing.TB) *Context {
 	return &Context{
 		Logger:     logtest.Scoped(t),
-		Registerer: metrics.NoOpRegisterer,
-		Tracer:     oteltrace.NewNoopTracerProvider().Tracer("noop"),
+		Registerer: prometheus.NewPedanticRegistry(),
+		Tracer:     noop.NewTracerProvider().Tracer("noop"),
 	}
 }
 
@@ -72,7 +73,6 @@ func ContextWithLogger(logger log.Logger, parent *Context) *Context {
 func ScopedContext(team, domain, component string, parent *Context) *Context {
 	return ContextWithLogger(log.Scoped(
 		fmt.Sprintf("%s.%s.%s", team, domain, component),
-		fmt.Sprintf("%s %s %s", team, domain, component),
 	), parent)
 }
 
@@ -82,10 +82,10 @@ func (c *Context) Operation(args Op) *Operation {
 	var logger log.Logger
 	if c.Logger != nil {
 		// Create a child logger, if a parent is provided.
-		logger = c.Logger.Scoped(args.Name, args.Description)
+		logger = c.Logger.Scoped(args.Name)
 	} else {
 		// Create a new logger.
-		logger = log.Scoped(args.Name, args.Description)
+		logger = log.Scoped(args.Name)
 	}
 	return &Operation{
 		context:      c,

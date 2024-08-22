@@ -2,6 +2,7 @@ package shared
 
 import (
 	"context"
+	"database/sql"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -12,22 +13,15 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/graph-gophers/graphql-go/relay"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/sourcegraph/log"
-	"go.opentelemetry.io/otel"
-	"golang.org/x/time/rate"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/reflection"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/envvar"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/globals"
-	"github.com/sourcegraph/sourcegraph/cmd/repo-updater/internal/authz"
+	repogitserver "github.com/sourcegraph/sourcegraph/cmd/repo-updater/internal/gitserver"
+	"github.com/sourcegraph/sourcegraph/cmd/repo-updater/internal/purge"
 	"github.com/sourcegraph/sourcegraph/cmd/repo-updater/internal/repoupdater"
+	"github.com/sourcegraph/sourcegraph/cmd/repo-updater/internal/scheduler"
 	"github.com/sourcegraph/sourcegraph/internal/actor"
-	"github.com/sourcegraph/sourcegraph/internal/api"
-	ossAuthz "github.com/sourcegraph/sourcegraph/internal/authz"
-	"github.com/sourcegraph/sourcegraph/internal/authz/providers"
 	"github.com/sourcegraph/sourcegraph/internal/batches"
 	"github.com/sourcegraph/sourcegraph/internal/batches/syncer"
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/dependencies"
@@ -35,25 +29,20 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/conf/conftypes"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	connections "github.com/sourcegraph/sourcegraph/internal/database/connections/live"
+	"github.com/sourcegraph/sourcegraph/internal/database/dbutil"
 	"github.com/sourcegraph/sourcegraph/internal/debugserver"
 	"github.com/sourcegraph/sourcegraph/internal/encryption/keyring"
 	"github.com/sourcegraph/sourcegraph/internal/env"
-	"github.com/sourcegraph/sourcegraph/internal/extsvc"
-	"github.com/sourcegraph/sourcegraph/internal/extsvc/github/auth"
-	ghaauth "github.com/sourcegraph/sourcegraph/internal/github_apps/auth"
+	"github.com/sourcegraph/sourcegraph/internal/gitserver"
 	"github.com/sourcegraph/sourcegraph/internal/goroutine"
-	internalgrpc "github.com/sourcegraph/sourcegraph/internal/grpc"
+	"github.com/sourcegraph/sourcegraph/internal/goroutine/recorder"
 	"github.com/sourcegraph/sourcegraph/internal/grpc/defaults"
+	"github.com/sourcegraph/sourcegraph/internal/grpc/grpcserver"
 	"github.com/sourcegraph/sourcegraph/internal/httpcli"
-	"github.com/sourcegraph/sourcegraph/internal/httpserver"
-	"github.com/sourcegraph/sourcegraph/internal/instrumentation"
 	"github.com/sourcegraph/sourcegraph/internal/observation"
-	"github.com/sourcegraph/sourcegraph/internal/ratelimit"
 	"github.com/sourcegraph/sourcegraph/internal/repos"
 	proto "github.com/sourcegraph/sourcegraph/internal/repoupdater/v1"
 	"github.com/sourcegraph/sourcegraph/internal/service"
-	"github.com/sourcegraph/sourcegraph/internal/timeutil"
-	"github.com/sourcegraph/sourcegraph/internal/trace"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
@@ -64,11 +53,8 @@ const port = "3182"
 var stateHTMLTemplate string
 
 type LazyDebugserverEndpoint struct {
-	repoUpdaterStateEndpoint     http.HandlerFunc
-	listAuthzProvidersEndpoint   http.HandlerFunc
-	gitserverReposStatusEndpoint http.HandlerFunc
-	rateLimiterStateEndpoint     http.HandlerFunc
-	manualPurgeEndpoint          http.HandlerFunc
+	repoUpdaterStateEndpoint http.HandlerFunc
+	manualPurgeEndpoint      http.HandlerFunc
 }
 
 func Main(ctx context.Context, observationCtx *observation.Context, ready service.ReadyFunc, debugserverEndpoints *LazyDebugserverEndpoint) error {
@@ -78,19 +64,14 @@ func Main(ctx context.Context, observationCtx *observation.Context, ready servic
 
 	logger := observationCtx.Logger
 
-	clock := func() time.Time { return time.Now().UTC() }
 	if err := keyring.Init(ctx); err != nil {
 		return errors.Wrap(err, "initializing encryption keyring")
 	}
 
-	dsn := conf.GetServiceConnectionValueAndRestartOnChange(func(serviceConnections conftypes.ServiceConnections) string {
-		return serviceConnections.PostgresDSN
-	})
-	sqlDB, err := connections.EnsureNewFrontendDB(observationCtx, dsn, "repo-updater")
+	db, err := getDB(observationCtx)
 	if err != nil {
-		return errors.Wrap(err, "initializing database store")
+		return err
 	}
-	db := database.NewDB(logger, sqlDB)
 
 	// Generally we'll mark the service as ready sometime after the database has been
 	// connected; migrations may take a while and we don't want to start accepting
@@ -98,169 +79,88 @@ func Main(ctx context.Context, observationCtx *observation.Context, ready servic
 	// bit more to do in this method, though, and the process will be marked ready
 	// further down this function.
 
-	repos.MustRegisterMetrics(log.Scoped("MustRegisterMetrics", ""), db, envvar.SourcegraphDotComMode())
+	mustRegisterMetrics(log.Scoped("MustRegisterMetrics"), db)
 
-	store := repos.NewStore(logger.Scoped("store", "repo store"), db)
+	store := repos.NewStore(logger.Scoped("store"), db)
 	{
 		m := repos.NewStoreMetrics()
 		m.MustRegister(prometheus.DefaultRegisterer)
 		store.SetMetrics(m)
 	}
 
-	sourcerLogger := logger.Scoped("repos.Sourcer", "repositories source")
+	sourcerLogger := logger.Scoped("repos.Sourcer")
 	cf := httpcli.NewExternalClientFactory(
 		httpcli.NewLoggingMiddleware(sourcerLogger),
 	)
 
-	var src repos.Sourcer
-	{
-		m := repos.NewSourceMetrics()
-		m.MustRegister(prometheus.DefaultRegisterer)
-
-		src = repos.NewSourcer(sourcerLogger, db, cf, repos.WithDependenciesService(dependencies.NewService(observationCtx, db)), repos.ObservedSource(sourcerLogger, m))
-	}
-
-	updateScheduler := repos.NewUpdateScheduler(logger, db)
+	sourceMetrics := repos.NewSourceMetrics()
+	sourceMetrics.MustRegister(prometheus.DefaultRegisterer)
+	src := repos.NewSourcer(
+		sourcerLogger,
+		db,
+		cf,
+		gitserver.NewClient("repo-updater.sourcer"),
+		repos.WithDependenciesService(dependencies.NewService(observationCtx, db)),
+		repos.ObservedSource(sourcerLogger, sourceMetrics),
+	)
+	syncer := repos.NewSyncer(observationCtx, store, src)
+	updateScheduler := scheduler.NewUpdateScheduler(logger, db, repogitserver.NewRepositoryServiceClient("repoupdater.scheduler"))
 	server := &repoupdater.Server{
-		Logger:                logger,
-		ObservationCtx:        observationCtx,
-		Store:                 store,
-		Scheduler:             updateScheduler,
-		SourcegraphDotComMode: envvar.SourcegraphDotComMode(),
-		RateLimitSyncer:       repos.NewRateLimitSyncer(ratelimit.DefaultRegistry, store.ExternalServiceStore(), repos.RateLimitSyncerOpts{}),
+		Logger:    logger,
+		Store:     store,
+		Syncer:    syncer,
+		Scheduler: updateScheduler,
 	}
 
-	serviceServer := &repoupdater.RepoUpdaterServiceServer{
-		Server: server,
+	if batches.IsEnabled() {
+		syncRegistry := batches.InitBackgroundJobs(ctx, db, keyring.Default().BatchChangesCredentialKey, cf)
+		server.ChangesetSyncRegistry = syncRegistry
 	}
-
-	// Attempt to perform an initial sync with all external services
-	if err := server.RateLimitSyncer.SyncRateLimiters(ctx); err != nil {
-		// This is not a fatal error since the syncer has been added to the server above
-		// and will still be run whenever an external service is added or updated
-		logger.Error("Performing initial rate limit sync", log.Error(err))
-	}
-
-	syncer := &repos.Syncer{
-		Sourcer: src,
-		Store:   store,
-		// We always want to listen on the Synced channel since external service syncing
-		// happens on both Cloud and non Cloud instances.
-		Synced:               make(chan repos.Diff),
-		Now:                  clock,
-		ObsvCtx:              observation.ContextWithLogger(logger.Scoped("syncer", "repo syncer"), observationCtx),
-		DeduplicatedForksSet: types.NewRepoURICache(conf.GetDeduplicatedForksIndex()),
-	}
-
-	conf.Watch(func() {
-		syncer.DeduplicatedForksSet.Overwrite(conf.GetDeduplicatedForksIndex())
-	})
-
-	server.Syncer = syncer
-
-	// All dependencies ready
-	debugDumpers := make(map[string]debugserver.Dumper)
-
-	debug, _ := strconv.ParseBool(os.Getenv("DEBUG"))
-	if debug {
-		observationCtx.Logger.Info("enterprise edition")
-	}
-
-	kr := keyring.Default()
-
-	// No Batch Changes on dotcom, so we don't need to spawn the
-	// background jobs for this feature.
-	if !envvar.SourcegraphDotComMode() {
-		syncRegistry := batches.InitBackgroundJobs(ctx, db, kr.BatchChangesCredentialKey, cf)
-		if server != nil {
-			server.ChangesetSyncRegistry = syncRegistry
-		}
-	}
-
-	ghAppsStore := db.GitHubApps().WithEncryptionKey(kr.GitHubAppKey)
-	auth.FromConnection = ghaauth.CreateEnterpriseFromConnection(ghAppsStore, kr.GitHubAppKey)
-
-	permsStore := database.Perms(observationCtx.Logger, db, timeutil.Now)
-	permsSyncer := authz.NewPermsSyncer(observationCtx.Logger.Scoped("PermsSyncer", "repository and user permissions syncer"), db, store, permsStore, timeutil.Now)
-
-	if server != nil {
-		if server.Syncer != nil {
-			server.Syncer.EnterpriseCreateRepoHook = enterpriseCreateRepoHook
-			server.Syncer.EnterpriseUpdateRepoHook = enterpriseUpdateRepoHook
-		}
-	}
-
-	repoWorkerStore := authz.MakeStore(observationCtx, db.Handle(), authz.SyncTypeRepo)
-	userWorkerStore := authz.MakeStore(observationCtx, db.Handle(), authz.SyncTypeUser)
-	permissionSyncJobStore := database.PermissionSyncJobsWith(observationCtx.Logger, db)
-	repoSyncWorker := authz.MakeWorker(ctx, observationCtx, repoWorkerStore, permsSyncer, authz.SyncTypeRepo, permissionSyncJobStore)
-	userSyncWorker := authz.MakeWorker(ctx, observationCtx, userWorkerStore, permsSyncer, authz.SyncTypeUser, permissionSyncJobStore)
-	// Type of store (repo/user) for resetter doesn't matter, because it has its
-	// separate name for logging and metrics.
-	resetter := authz.MakeResetter(observationCtx, repoWorkerStore)
-
-	go goroutine.MonitorBackgroundRoutines(ctx, repoSyncWorker, userSyncWorker, resetter)
-	go watchAuthzProviders(ctx, db)
 
 	go watchSyncer(ctx, logger, syncer, updateScheduler, server.ChangesetSyncRegistry)
-	go func() {
-		err := syncer.Run(ctx, store, repos.RunOptions{
-			EnqueueInterval: repos.ConfRepoListUpdateInterval,
-			IsCloud:         envvar.SourcegraphDotComMode(),
-			MinSyncInterval: repos.ConfRepoListUpdateInterval,
-		})
-		if err != nil {
-			logger.Fatal("syncer.Run failure", log.Error(err))
-		}
-	}()
 
-	go manageUnclonedRepos(ctx, logger, updateScheduler, store)
-
-	if envvar.SourcegraphDotComMode() {
-		rateLimiter := ratelimit.NewInstrumentedLimiter("SyncReposWithLastErrors", rate.NewLimiter(.05, 1))
-		go syncer.RunSyncReposWithLastErrorsWorker(ctx, rateLimiter)
+	routines := []goroutine.BackgroundRoutine{
+		makeGRPCServer(logger, server),
+		newUnclonedReposManager(ctx, logger, updateScheduler, store),
+		// Run git fetches scheduler
+		updateScheduler,
 	}
 
-	go repos.RunPhabricatorRepositorySyncWorker(ctx, db, log.Scoped("PhabricatorRepositorySyncWorker", ""), store)
+	routines = append(routines,
+		syncer.Routines(ctx, store, repos.RunOptions{
+			EnqueueInterval: conf.RepoListUpdateInterval,
+			MinSyncInterval: conf.RepoListUpdateInterval,
+		})...,
+	)
+
+	if server.ChangesetSyncRegistry != nil {
+		routines = append(routines, server.ChangesetSyncRegistry)
+	}
 
 	// git-server repos purging thread
-	go repos.RunRepositoryPurgeWorker(ctx, log.Scoped("repoPurgeWorker", "remove deleted repositories"),
-		db, conf.DefaultClient())
-
-	// Git fetches scheduler
-	go repos.RunScheduler(ctx, logger, updateScheduler)
-	logger.Debug("started scheduler")
-
-	host := ""
-	if env.InsecureDev {
-		host = "127.0.0.1"
+	// Temporary escape hatch if this feature proves to be dangerous
+	// TODO: Move to config.
+	if disabled, _ := strconv.ParseBool(os.Getenv("DISABLE_REPO_PURGE")); disabled {
+		logger.Info("repository purger is disabled via env DISABLE_REPO_PURGE")
+	} else {
+		routines = append(routines, purge.NewRepositoryPurgeWorker(ctx, log.Scoped("repoPurgeWorker"), db, conf.DefaultClient()))
 	}
 
-	addr := net.JoinHostPort(host, port)
-	logger.Info("listening", log.String("addr", addr))
+	// Register recorder in all routines that support it.
+	recorderCache := recorder.GetCache()
+	rec := recorder.New(observationCtx.Logger, env.MyName, recorderCache)
+	for _, r := range routines {
+		if recordable, ok := r.(recorder.Recordable); ok {
+			recordable.SetJobName("repo-updater")
+			recordable.RegisterRecorder(rec)
+			rec.Register(recordable)
+		}
+	}
+	rec.RegistrationDone()
 
-	m := repoupdater.NewHandlerMetrics()
-	m.MustRegister(prometheus.DefaultRegisterer)
-
-	handler := repoupdater.ObservedHandler(
-		logger,
-		m,
-		otel.GetTracerProvider(),
-	)(server.Handler())
-
-	grpcServer := grpc.NewServer(defaults.ServerOptions(logger)...)
-	proto.RegisterRepoUpdaterServiceServer(grpcServer, serviceServer)
-	reflection.Register(grpcServer)
-
-	handler = internalgrpc.MultiplexHandlers(grpcServer, handler)
-
-	globals.WatchExternalURL()
-
+	debugDumpers := make(map[string]debugserver.Dumper)
 	debugDumpers["repos"] = updateScheduler
 	debugserverEndpoints.repoUpdaterStateEndpoint = repoUpdaterStatsHandler(debugDumpers)
-	debugserverEndpoints.listAuthzProvidersEndpoint = listAuthzProvidersHandler()
-	debugserverEndpoints.gitserverReposStatusEndpoint = gitserverReposStatusHandler(db)
-	debugserverEndpoints.rateLimiterStateEndpoint = rateLimiterStateHandler
 	debugserverEndpoints.manualPurgeEndpoint = manualPurgeHandler(db)
 
 	// We mark the service as ready now AFTER assigning the additional endpoints in
@@ -269,96 +169,33 @@ func Main(ctx context.Context, observationCtx *observation.Context, ready servic
 	// after being unblocked.
 	ready()
 
-	// NOTE: Internal actor is required to have full visibility of the repo table
-	// 	(i.e. bypass repository authorization).
-	authzBypass := func(f http.Handler) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			r = r.WithContext(actor.WithInternalActor(r.Context()))
-			f.ServeHTTP(w, r)
-		}
-	}
-	httpSrv := httpserver.NewFromAddr(addr, &http.Server{
-		ReadTimeout:  75 * time.Second,
-		WriteTimeout: 10 * time.Minute,
-		Handler: instrumentation.HTTPMiddleware("",
-			trace.HTTPMiddleware(logger, authzBypass(handler), conf.DefaultClient())),
+	return goroutine.MonitorBackgroundRoutines(ctx, routines...)
+}
+
+func getDB(observationCtx *observation.Context) (database.DB, error) {
+	dsn := conf.GetServiceConnectionValueAndRestartOnChange(func(serviceConnections conftypes.ServiceConnections) string {
+		return serviceConnections.PostgresDSN
 	})
-	goroutine.MonitorBackgroundRoutines(ctx, httpSrv)
-
-	return nil
+	sqlDB, err := connections.EnsureNewFrontendDB(observationCtx, dsn, "repo-updater")
+	if err != nil {
+		return nil, errors.Wrap(err, "initializing database store")
+	}
+	return database.NewDB(observationCtx.Logger, sqlDB), nil
 }
 
-func createDebugServerEndpoints(ready chan struct{}, debugserverEndpoints *LazyDebugserverEndpoint) []debugserver.Endpoint {
-	return []debugserver.Endpoint{
-		{
-			Name: "Repo Updater State",
-			Path: "/repo-updater-state",
-			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				// wait until we're healthy to respond
-				<-ready
-				// repoUpdaterStateEndpoint is guaranteed to be assigned now
-				debugserverEndpoints.repoUpdaterStateEndpoint(w, r)
-			}),
-		},
-		{
-			Name: "List Authz Providers",
-			Path: "/list-authz-providers",
-			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				// wait until we're healthy to respond
-				<-ready
-				// listAuthzProvidersEndpoint is guaranteed to be assigned now
-				debugserverEndpoints.listAuthzProvidersEndpoint(w, r)
-			}),
-		},
-		{
-			Name: "Gitserver Repo Status",
-			Path: "/gitserver-repo-status",
-			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				<-ready
-				debugserverEndpoints.gitserverReposStatusEndpoint(w, r)
-			}),
-		},
-		{
-			Name: "Rate Limiter State",
-			Path: "/rate-limiter-state",
-			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				<-ready
-				debugserverEndpoints.rateLimiterStateEndpoint(w, r)
-			}),
-		},
-		{
-			Name: "Manual Repo Purge",
-			Path: "/manual-purge",
-			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				<-ready
-				debugserverEndpoints.manualPurgeEndpoint(w, r)
-			}),
-		},
+func makeGRPCServer(logger log.Logger, server *repoupdater.Server) goroutine.BackgroundRoutine {
+	host := ""
+	if env.InsecureDev {
+		host = "127.0.0.1"
 	}
-}
 
-func gitserverReposStatusHandler(db database.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		repo := r.FormValue("repo")
-		if repo == "" {
-			http.Error(w, "missing 'repo' param", http.StatusBadRequest)
-			return
-		}
+	addr := net.JoinHostPort(host, port)
+	logger.Info("listening", log.String("addr", addr))
 
-		status, err := db.GitserverRepos().GetByName(r.Context(), api.RepoName(repo))
-		if err != nil {
-			http.Error(w, fmt.Sprintf("fetching repository status: %q", err), http.StatusInternalServerError)
-			return
-		}
+	grpcServer := defaults.NewServer(logger)
+	proto.RegisterRepoUpdaterServiceServer(grpcServer, server)
 
-		resp, err := json.MarshalIndent(status, "", "  ")
-		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to marshal status: %q", err.Error()), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(resp)
-	}
+	return grpcserver.NewFromAddr(logger.Scoped("repo-updater.grpcserver"), addr, grpcServer)
 }
 
 func manualPurgeHandler(db database.DB) http.HandlerFunc {
@@ -390,55 +227,12 @@ func manualPurgeHandler(db database.DB) http.HandlerFunc {
 				return
 			}
 		}
-		err = repos.PurgeOldestRepos(log.Scoped("PurgeOldestRepos", ""), db, limit, perSecond)
+		err = purge.PurgeOldestRepos(log.Scoped("PurgeOldestRepos"), db, limit, perSecond)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("starting manual purge: %v", err), http.StatusInternalServerError)
 			return
 		}
-		_, _ = w.Write([]byte(fmt.Sprintf("manual purge started with limit of %d and rate of %f", limit, perSecond)))
-	}
-}
-
-func rateLimiterStateHandler(w http.ResponseWriter, _ *http.Request) {
-	info := ratelimit.DefaultRegistry.LimitInfo()
-	resp, err := json.MarshalIndent(info, "", "  ")
-	if err != nil {
-		http.Error(w, fmt.Sprintf("failed to marshal rate limiter state: %q", err.Error()), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write(resp)
-}
-
-func listAuthzProvidersHandler() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		type providerInfo struct {
-			ServiceType        string `json:"service_type"`
-			ServiceID          string `json:"service_id"`
-			ExternalServiceURL string `json:"external_service_url"`
-		}
-
-		_, providers := ossAuthz.GetProviders()
-		infos := make([]providerInfo, len(providers))
-		for i, p := range providers {
-			_, id := extsvc.DecodeURN(p.URN())
-
-			// Note that the ID marshalling below replicates code found in `graphqlbackend`.
-			// We cannot import that package's code into this one (see /dev/check/go-dbconn-import.sh).
-			infos[i] = providerInfo{
-				ServiceType:        p.ServiceType(),
-				ServiceID:          p.ServiceID(),
-				ExternalServiceURL: fmt.Sprintf("%s/site-admin/external-services/%s", globals.ExternalURL(), relay.MarshalID("ExternalService", id)),
-			}
-		}
-
-		resp, err := json.MarshalIndent(infos, "", "  ")
-		if err != nil {
-			http.Error(w, "failed to marshal infos: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(resp)
+		fmt.Fprintf(w, "manual purge started with limit of %d and rate of %f", limit, perSecond)
 	}
 }
 
@@ -450,7 +244,7 @@ func repoUpdaterStatsHandler(debugDumpers map[string]debugserver.Dumper) http.Ha
 		// Showing the HTML version of repository syncing schedule as the default,
 		// also the only dumper that supports rendering the HTML version.
 		if (wantDumper == "" || wantDumper == "repos") && wantFormat != "json" {
-			reposDumper, ok := debugDumpers["repos"].(*repos.UpdateScheduler)
+			reposDumper, ok := debugDumpers["repos"].(*scheduler.UpdateScheduler)
 			if !ok {
 				http.Error(w, "No debug dumper for repos found", http.StatusInternalServerError)
 				return
@@ -495,7 +289,7 @@ func watchSyncer(
 	ctx context.Context,
 	logger log.Logger,
 	syncer *repos.Syncer,
-	sched *repos.UpdateScheduler,
+	sched *scheduler.UpdateScheduler,
 	changesetSyncer syncer.UnarchivedChangesetSyncRegistry,
 ) {
 	logger.Debug("started new repo syncer updates scheduler relay thread")
@@ -522,69 +316,170 @@ func watchSyncer(
 	}
 }
 
-// manageUnclonedRepos will periodically list the uncloned repositories on gitserver
-// and update the scheduler with the list. It also ensures that if any of our
-// indexable repos are missing from the cloned list they will be added for
-// cloning ASAP.
-func manageUnclonedRepos(ctx context.Context, logger log.Logger, sched *repos.UpdateScheduler, store repos.Store) {
-	baseRepoStore := database.ReposWith(logger, store)
-
-	doSync := func() {
-		// Don't modify the scheduler if we're not performing auto updates
-		if conf.Get().DisableAutoGitUpdates {
-			return
-		}
-
-		if envvar.SourcegraphDotComMode() {
-			// Fetch ALL indexable repos that are NOT cloned so that we can add them to the
-			// scheduler
-			opts := database.ListSourcegraphDotComIndexableReposOptions{
-				CloneStatus: types.CloneStatusNotCloned,
+// newUnclonedReposManager creates a background routine that will periodically list
+// the uncloned repositories on gitserver and update the scheduler with the list.
+func newUnclonedReposManager(ctx context.Context, logger log.Logger, sched *scheduler.UpdateScheduler, store repos.Store) goroutine.BackgroundRoutine {
+	return goroutine.NewPeriodicGoroutine(
+		actor.WithInternalActor(ctx),
+		goroutine.HandlerFunc(func(ctx context.Context) error {
+			// Don't modify the scheduler if we're not performing auto updates.
+			if conf.Get().DisableAutoGitUpdates {
+				return nil
 			}
-			indexable, err := baseRepoStore.ListSourcegraphDotComIndexableRepos(ctx, opts)
+
+			baseRepoStore := database.ReposWith(logger, store)
+
+			uncloned, err := baseRepoStore.ListMinimalRepos(ctx, database.ReposListOptions{NoCloned: true})
 			if err != nil {
-				logger.Error("listing indexable repos", log.Error(err))
-				return
+				return errors.Wrap(err, "failed to fetch list of uncloned repositories")
 			}
-			// Ensure that uncloned indexable repos are known to the scheduler
-			sched.EnsureScheduled(indexable)
-		}
 
-		// Next, move any repos managed by the scheduler that are uncloned to the front
-		// of the queue
-		managed := sched.ListRepoIDs()
+			sched.PrioritiseUncloned(uncloned)
 
-		uncloned, err := baseRepoStore.ListMinimalRepos(ctx, database.ReposListOptions{IDs: managed, NoCloned: true})
-		if err != nil {
-			logger.Warn("failed to fetch list of uncloned repositories", log.Error(err))
-			return
-		}
-
-		sched.PrioritiseUncloned(uncloned)
-	}
-
-	for ctx.Err() == nil {
-		doSync()
-		select {
-		case <-ctx.Done():
-		case <-time.After(30 * time.Second):
-		}
-	}
+			return nil
+		}),
+		goroutine.WithName("repo-updater.uncloned-repo-manager"),
+		goroutine.WithDescription("periodically lists uncloned repos and schedules them as high priority in the repo updater update queue"),
+		goroutine.WithInterval(30*time.Second),
+	)
 }
 
-// watchAuthzProviders updates authz providers if config changes.
-func watchAuthzProviders(ctx context.Context, db database.DB) {
-	globals.WatchPermissionsUserMapping()
-	go func() {
-		t := time.NewTicker(providers.RefreshInterval())
-		for range t.C {
-			allowAccessByDefault, authzProviders, _, _, _ := providers.ProvidersFromConfig(
-				ctx,
-				conf.Get(),
-				db.ExternalServices(),
-				db,
-			)
-			ossAuthz.SetProviders(allowAccessByDefault, authzProviders)
+func mustRegisterMetrics(logger log.Logger, db dbutil.DB) {
+	scanCount := func(sql string) (float64, error) {
+		row := db.QueryRowContext(context.Background(), sql)
+		var count int64
+		err := row.Scan(&count)
+		if err != nil {
+			return 0, err
 		}
-	}()
+		return float64(count), nil
+	}
+
+	scanNullFloat := func(q string) (sql.NullFloat64, error) {
+		row := db.QueryRowContext(context.Background(), q)
+		var v sql.NullFloat64
+		err := row.Scan(&v)
+		return v, err
+	}
+
+	promauto.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "src_repoupdater_external_services_total",
+		Help: "The total number of external services added",
+	}, func() float64 {
+		count, err := scanCount(`
+SELECT COUNT(*) FROM external_services
+WHERE deleted_at IS NULL
+`)
+		if err != nil {
+			logger.Error("Failed to get total external services", log.Error(err))
+			return 0
+		}
+		return count
+	})
+
+	promauto.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "src_repoupdater_queued_sync_jobs_total",
+		Help: "The total number of queued sync jobs",
+	}, func() float64 {
+		count, err := scanCount(`
+SELECT COUNT(*) FROM external_service_sync_jobs WHERE state = 'queued'
+`)
+		if err != nil {
+			logger.Error("Failed to get total queued sync jobs", log.Error(err))
+			return 0
+		}
+		return count
+	})
+
+	promauto.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "src_repoupdater_completed_sync_jobs_total",
+		Help: "The total number of completed sync jobs",
+	}, func() float64 {
+		count, err := scanCount(`
+SELECT COUNT(*) FROM external_service_sync_jobs WHERE state = 'completed'
+`)
+		if err != nil {
+			logger.Error("Failed to get total completed sync jobs", log.Error(err))
+			return 0
+		}
+		return count
+	})
+
+	promauto.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "src_repoupdater_errored_sync_jobs_percentage",
+		Help: "The percentage of external services that have failed their most recent sync",
+	}, func() float64 {
+		percentage, err := scanNullFloat(`
+with latest_state as (
+    -- Get the most recent state per external service
+    select distinct on (external_service_id) external_service_id, state
+    from external_service_sync_jobs
+    order by external_service_id, finished_at desc
+)
+select round((select cast(count(*) as float) from latest_state where state = 'errored') /
+             nullif((select cast(count(*) as float) from latest_state), 0) * 100)
+`)
+		if err != nil {
+			logger.Error("Failed to get total errored sync jobs", log.Error(err))
+			return 0
+		}
+		if !percentage.Valid {
+			return 0
+		}
+		return percentage.Float64
+	})
+
+	backoffQuery := `
+SELECT extract(epoch from max(now() - last_sync_at))
+FROM external_services AS es
+WHERE deleted_at IS NULL
+AND last_sync_at IS NOT NULL
+-- Exclude any external services that are currently syncing since it's possible they may sync for more
+-- than our max backoff time.
+AND NOT EXISTS(SELECT FROM external_service_sync_jobs WHERE external_service_id = es.id AND finished_at IS NULL)
+`
+
+	promauto.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "src_repoupdater_max_sync_backoff",
+		Help: "The maximum number of seconds since any external service synced",
+	}, func() float64 {
+		seconds, err := scanNullFloat(backoffQuery)
+		if err != nil {
+			logger.Error("Failed to get max sync backoff", log.Error(err))
+			return 0
+		}
+		if !seconds.Valid {
+			// This can happen when no external services have been synced and they all
+			// have last_sync_at as null.
+			return 0
+		}
+		return seconds.Float64
+	})
+
+	// Count the number of repos owned by site level external services that haven't
+	// been fetched in 8 hours.
+	promauto.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "src_repoupdater_stale_repos",
+		Help: "The number of repos that haven't been fetched in at least 8 hours",
+	}, func() float64 {
+		count, err := scanCount(`
+select count(*)
+from gitserver_repos
+where last_fetched < now() - interval '8 hours'
+  and last_error != ''
+  and exists(select
+             from external_service_repos
+                      join external_services es on external_service_repos.external_service_id = es.id
+                      join repo r on external_service_repos.repo_id = r.id
+             where gitserver_repos.repo_id = repo_id
+               and es.deleted_at is null
+               and r.deleted_at is null
+    )
+`)
+		if err != nil {
+			logger.Error("Failed to count stale repos", log.Error(err))
+			return 0
+		}
+		return count
+	})
 }

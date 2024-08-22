@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/sourcegraph/sourcegraph/internal/api"
-	"github.com/sourcegraph/sourcegraph/internal/authz"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver/gitdomain"
 )
@@ -26,11 +25,13 @@ func (g *GitCommitClient) FirstCommit(ctx context.Context, repoName api.RepoName
 	return g.cachedFirstCommit.GitFirstEverCommit(ctx, g.gitserverClient, repoName)
 }
 func (g *GitCommitClient) RecentCommits(ctx context.Context, repoName api.RepoName, target time.Time, revision string) ([]*gitdomain.Commit, error) {
-	options := gitserver.CommitsOptions{N: 1, Before: target.Format(time.RFC3339), DateOrder: true}
+	options := gitserver.CommitsOptions{N: 1, Before: target, Order: gitserver.CommitsOrderCommitDate}
 	if len(revision) > 0 {
-		options.Range = revision
+		options.Ranges = []string{revision}
+	} else {
+		options.Ranges = []string{"HEAD"}
 	}
-	return g.gitserverClient.Commits(ctx, authz.DefaultSubRepoPermsChecker, repoName, options)
+	return g.gitserverClient.Commits(ctx, repoName, options)
 }
 
 func (g *GitCommitClient) GitserverClient() gitserver.Client {

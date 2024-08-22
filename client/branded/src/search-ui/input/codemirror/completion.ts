@@ -1,20 +1,20 @@
 import { basename } from 'path'
 
 import {
-    autocompletion,
-    startCompletion,
-    completionKeymap,
-    CompletionResult,
-    Completion,
-    snippet,
-    CompletionSource,
     acceptCompletion,
-    selectedCompletion,
+    autocompletion,
+    completionKeymap,
     currentCompletions,
+    selectedCompletion,
     setSelectedCompletion,
+    snippet,
+    startCompletion,
+    type Completion,
+    type CompletionResult,
+    type CompletionSource,
 } from '@codemirror/autocomplete'
-import { Extension, Prec } from '@codemirror/state'
-import { keymap, EditorView } from '@codemirror/view'
+import { Prec, type Extension } from '@codemirror/state'
+import { EditorView, keymap } from '@codemirror/view'
 import {
     mdiCodeArray,
     mdiCodeBraces,
@@ -46,7 +46,7 @@ import {
     mdiWrench,
 } from '@mdi/js'
 import { isEqual, startCase } from 'lodash'
-import { NavigateFunction } from 'react-router-dom'
+import type { NavigateFunction } from 'react-router-dom'
 
 import { isDefined } from '@sourcegraph/common'
 import { SymbolKind } from '@sourcegraph/shared/src/graphql-operations'
@@ -56,12 +56,12 @@ import {
     regexInsertText,
     repositoryInsertText,
 } from '@sourcegraph/shared/src/search/query/completion-utils'
-import { decorate, DecoratedToken, toDecoration } from '@sourcegraph/shared/src/search/query/decoratedToken'
-import { FILTERS, FilterType, filterTypeKeys, resolveFilter } from '@sourcegraph/shared/src/search/query/filters'
+import { decorate, toDecoration, type DecoratedToken } from '@sourcegraph/shared/src/search/query/decoratedToken'
+import { FILTERS, filterTypeKeys, resolveFilter, type FilterType } from '@sourcegraph/shared/src/search/query/filters'
 import { getSuggestionQuery } from '@sourcegraph/shared/src/search/query/providers-utils'
 import { scanSearchQuery } from '@sourcegraph/shared/src/search/query/scanner'
-import { Filter, Token } from '@sourcegraph/shared/src/search/query/token'
-import { SearchMatch } from '@sourcegraph/shared/src/search/stream'
+import type { Filter, Token } from '@sourcegraph/shared/src/search/query/token'
+import type { SearchMatch } from '@sourcegraph/shared/src/search/stream'
 import { createSVGIcon } from '@sourcegraph/shared/src/util/dom'
 import { toPrettyBlobURL } from '@sourcegraph/shared/src/util/url'
 
@@ -156,10 +156,8 @@ const theme = EditorView.theme({
  */
 export function searchQueryAutocompletion(
     sources: StandardSuggestionSource[],
-    navigate?: NavigateFunction,
-    // By default we do not enable suggestion selection with enter because that
-    // interferes with the query submission logic.
-    applyOnEnter = false
+    enableJumpToSuggestion: boolean,
+    navigate?: NavigateFunction
 ): Extension {
     const override: CompletionSource[] = sources.map(source => context => {
         const position = context.pos
@@ -177,8 +175,8 @@ export function searchQueryAutocompletion(
         // This renders the completion icon
         {
             render(completion) {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
-                if (applyOnEnter && (completion as any)?.url) {
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+                if (enableJumpToSuggestion && navigate && (completion as any)?.url) {
                     return createSVGIcon(mdiLightningBoltCircle, '')
                 }
                 const icon = createSVGIcon(
@@ -235,61 +233,53 @@ export function searchQueryAutocompletion(
 
     return [
         Prec.highest(
-            keymap.of(
-                applyOnEnter
-                    ? [
-                          ...completionKeymap.map(keybinding => {
-                              const { run } = keybinding
-                              if (keybinding.key !== 'Enter' || run === undefined) {
-                                  return keybinding
-                              }
-                              // Override `Enter` into `Tab` and automatically
-                              // accept the first suggestion without an explicit
-                              // `DownArrow` to mirror the behavior of the old
-                              // "Tab to complete" behavior.
-                              return {
-                                  ...keybinding,
-                                  key: 'Tab',
-                                  run(view: EditorView) {
-                                      if (selectedCompletion(view.state) === null) {
-                                          // No completion is selected because we
-                                          // disable the `selectOnOpen` option
-                                          // when applyOnEnter is true.
-                                          if (currentCompletions(view.state).length > 0) {
-                                              view.dispatch({ effects: setSelectedCompletion(0) })
-                                              acceptCompletion(view)
-                                              return true
-                                          }
-                                          return false
-                                      }
-                                      return run(view)
-                                  },
-                              }
-                          }),
-                          {
-                              key: 'Enter',
-                              run(view) {
-                                  const selected = selectedCompletion(view.state)
-                                  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any
-                                  const url = (selected as any)?.url
-                                  if (navigate && typeof url === 'string') {
-                                      navigate(url)
-                                      return true
-                                  }
-                                  // Otherwise apply the selected completion item
-                                  const hasUserPressedDownArrow = selectedCompletion(view.state) !== null
-                                  if (hasUserPressedDownArrow) {
-                                      return acceptCompletion(view)
-                                  }
-                                  return false
-                              },
-                          },
-                      ]
-                    : // Uses the default keymapping but changes accepting suggestions from Enter to Tab
-                      completionKeymap.map(keybinding =>
-                          keybinding.key === 'Enter' ? { ...keybinding, key: 'Tab' } : keybinding
-                      )
-            )
+            keymap.of([
+                ...completionKeymap.map(keybinding => {
+                    const { run } = keybinding
+                    if (keybinding.key !== 'Enter' || run === undefined) {
+                        return keybinding
+                    }
+                    // Override `Enter` into `Tab` and automatically
+                    // accept the first suggestion without an explicit
+                    // `DownArrow` to mirror the behavior of the old
+                    // "Tab to complete" behavior.
+                    return {
+                        ...keybinding,
+                        key: 'Tab',
+                        run(view: EditorView) {
+                            if (selectedCompletion(view.state) === null) {
+                                // No completion is selected because we
+                                // disable the `selectOnOpen` option.
+                                if (currentCompletions(view.state).length > 0) {
+                                    view.dispatch({ effects: setSelectedCompletion(0) })
+                                    acceptCompletion(view)
+                                    return true
+                                }
+                                return false
+                            }
+                            return run(view)
+                        },
+                    }
+                }),
+                {
+                    key: 'Enter',
+                    run(view) {
+                        const selected = selectedCompletion(view.state)
+                        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+                        const url = (selected as any)?.url
+                        if (enableJumpToSuggestion && navigate && typeof url === 'string') {
+                            navigate(url)
+                            return true
+                        }
+                        // Otherwise apply the selected completion item
+                        const hasUserPressedDownArrow = selectedCompletion(view.state) !== null
+                        if (hasUserPressedDownArrow) {
+                            return acceptCompletion(view)
+                        }
+                        return false
+                    },
+                },
+            ])
         ),
         theme,
         EditorView.updateListener.of(update => {
@@ -310,7 +300,7 @@ export function searchQueryAutocompletion(
             optionClass: completionItem => 'completion-type-' + (completionItem.type ?? ''),
             icons: false,
             closeOnBlur: true,
-            selectOnOpen: !applyOnEnter,
+            selectOnOpen: false,
             addToOptions,
         }),
     ]
@@ -319,7 +309,6 @@ export function searchQueryAutocompletion(
 export interface DefaultSuggestionSourcesOptions {
     fetchSuggestions: (query: string, onAbort: (listener: () => void) => void) => Promise<SearchMatch[]>
     isSourcegraphDotCom: boolean
-    applyOnEnter?: boolean
     disableFilterCompletion?: true
     disableSymbolCompletion?: true
     showWhenEmpty?: boolean
@@ -479,7 +468,7 @@ export function createDefaultSuggestionSources(
                 }
 
                 const results: SearchMatch[] = await options.fetchSuggestions(
-                    getSuggestionQuery(tokens, token, suggestionTypeFromTokens(tokens, options)),
+                    getSuggestionQuery(tokens, token, suggestionTypeFromTokens(tokens)),
                     context.onAbort
                 )
                 if (results.length === 0) {
@@ -504,10 +493,7 @@ export function createDefaultSuggestionSources(
 }
 
 // Returns what kind of type to query for based on existing tokens in the query
-export function suggestionTypeFromTokens(
-    tokens: Token[],
-    options: Pick<DefaultSuggestionSourcesOptions, 'applyOnEnter'>
-): SearchMatch['type'] {
+export function suggestionTypeFromTokens(tokens: Token[]): SearchMatch['type'] {
     let isWithinRepo = false
     let isWithinFile = false
     for (const token of tokens) {
@@ -515,33 +501,37 @@ export function suggestionTypeFromTokens(
             continue
         }
         switch (token.field.value) {
-            case 'type':
+            case 'type': {
                 switch (token.value?.value) {
-                    case 'symbol':
+                    case 'symbol': {
                         return 'symbol'
+                    }
                     case 'path':
-                    case 'file':
+                    case 'file': {
                         return 'path'
-                    case 'repo':
+                    }
+                    case 'repo': {
                         return 'repo'
+                    }
                     case 'diff':
-                    case 'commit':
+                    case 'commit': {
                         return 'commit'
+                    }
                 }
                 break
+            }
             case 'repo':
-            case 'r':
+            case 'r': {
                 isWithinRepo = true
                 break
+            }
             case 'path':
             case 'file':
-            case 'f':
+            case 'f': {
                 isWithinFile = true
                 break
+            }
         }
-    }
-    if (!options.applyOnEnter) {
-        return 'symbol'
     }
     // We don't suggest paths because it's easier to get completions for files
     // with the `file:QUERY` filter compared to `type:symbol QUERY`.
@@ -566,7 +556,7 @@ function completionFromSearchMatch(
     const hasNonActivePatternTokens =
         tokens.find(token => token.type === 'pattern' && !isEqual(token.range, activeToken.range)) !== undefined
     switch (match.type) {
-        case 'path':
+        case 'path': {
             return [
                 {
                     label: match.path,
@@ -582,7 +572,8 @@ function completionFromSearchMatch(
                     info: match.repository,
                 },
             ]
-        case 'repo':
+        }
+        case 'repo': {
             return [
                 {
                     label: match.repository,
@@ -592,22 +583,22 @@ function completionFromSearchMatch(
                     apply: (params?.isDefaultSource ? 'repo:' : '') + repositoryInsertText(match) + ' ',
                 },
             ]
-        case 'symbol':
+        }
+        case 'symbol': {
             return match.symbols.map(symbol => ({
-                label:
-                    (options.applyOnEnter && params?.isDefaultSource ? `${symbol.kind.toLowerCase()} ` : '') +
-                    symbol.name,
+                label: (params?.isDefaultSource ? `${symbol.kind.toLowerCase()} ` : '') + symbol.name,
                 type: symbol.kind,
                 url: hasNonActivePatternTokens ? undefined : symbol.url,
                 apply: symbol.name + ' ',
-                detail:
-                    options.applyOnEnter && params?.isDefaultSource
-                        ? basename(match.path)
-                        : `${startCase(symbol.kind.toLowerCase())} | ${basename(match.path)}`,
+                detail: params?.isDefaultSource
+                    ? basename(match.path)
+                    : `${startCase(symbol.kind.toLowerCase())} | ${basename(match.path)}`,
                 info: match.repository,
             }))
-        default:
+        }
+        default: {
             return []
+        }
     }
 }
 

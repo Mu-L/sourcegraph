@@ -1,18 +1,18 @@
-import { proxy, Remote } from 'comlink'
+import { proxy, type Remote } from 'comlink'
 import { noop, sortBy } from 'lodash'
-import { BehaviorSubject, EMPTY, Unsubscribable } from 'rxjs'
-import { mapTo } from 'rxjs/operators'
-import * as sourcegraph from 'sourcegraph'
+import { BehaviorSubject, EMPTY, type Unsubscribable } from 'rxjs'
+import { map } from 'rxjs/operators'
+import type * as sourcegraph from 'sourcegraph'
 
 import { logger } from '@sourcegraph/common'
 import { Location, MarkupKind, Position, Range, Selection } from '@sourcegraph/extension-api-classes'
 
-import { ClientAPI } from '../client/api/api'
+import type { ClientAPI } from '../client/api/api'
 import { syncRemoteSubscription } from '../util'
 
 import { DocumentHighlightKind } from './api/documentHighlights'
-import { InitData, updateContext } from './extensionHost'
-import { ExtensionHostState } from './extensionHostState'
+import { type InitData, updateContext } from './extensionHost'
+import type { ExtensionHostState } from './extensionHostState'
 import { addWithRollback } from './util'
 
 export interface InitResult {
@@ -60,9 +60,12 @@ export function createExtensionAPIFactory(
         }
         return configuration
     }
-    const configuration: typeof sourcegraph['configuration'] = Object.assign(state.settings.pipe(mapTo(undefined)), {
-        get: getConfiguration,
-    })
+    const configuration: typeof sourcegraph['configuration'] = Object.assign(
+        state.settings.pipe(map(() => undefined)),
+        {
+            get: getConfiguration,
+        }
+    )
 
     // Workspace
     const workspace: typeof sourcegraph['workspace'] = {
@@ -80,7 +83,7 @@ export function createExtensionAPIFactory(
         },
         onDidOpenTextDocument: state.openedTextDocuments.asObservable(),
         openedTextDocuments: state.openedTextDocuments.asObservable(),
-        onDidChangeRoots: state.roots.pipe(mapTo(undefined)),
+        onDidChangeRoots: state.roots.pipe(map(() => undefined)),
         rootChanges: state.rootChanges.asObservable(),
         versionContextChanges: EMPTY,
         searchContextChanges: state.searchContextChanges.asObservable(),

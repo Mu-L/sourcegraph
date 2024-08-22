@@ -1,4 +1,4 @@
-import React, { FC, ReactElement, ReactNode, useCallback, useMemo } from 'react'
+import React, { type FC, type ReactElement, type ReactNode, useCallback, useMemo } from 'react'
 
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useDeepCompareEffectNoCheck } from 'use-deep-compare-effect'
@@ -11,26 +11,28 @@ import {
     getRepoFilterLinks,
     getSearchReferenceFactory,
     getSearchSnippetLinks,
-    SearchSidebar,
+    StickySearchSidebar,
     SearchSidebarSection,
+    PersistSidebarStoreProvider,
 } from '@sourcegraph/branded'
 import { wrapRemoteObservable } from '@sourcegraph/shared/src/api/client/api/common'
 import {
     InitialParametersSource,
-    QueryUpdate,
+    type QueryUpdate,
     SearchMode,
-    SearchQueryState,
-    SearchQueryStateStore,
+    type SearchQueryState,
+    type SearchQueryStateStore,
     updateQuery,
 } from '@sourcegraph/shared/src/search'
 import { FilterType } from '@sourcegraph/shared/src/search/query/filters'
-import { Filter, LATEST_VERSION } from '@sourcegraph/shared/src/search/stream'
+import { type Filter, LATEST_VERSION } from '@sourcegraph/shared/src/search/stream'
 import { SectionID } from '@sourcegraph/shared/src/settings/temporary/searchSidebar'
 import { useTemporarySetting } from '@sourcegraph/shared/src/settings/temporary/useTemporarySetting'
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { Code, useObservable } from '@sourcegraph/wildcard'
 
 import { SearchPatternType } from '../../../graphql-operations'
-import { WebviewPageProps } from '../../platform/context'
+import type { WebviewPageProps } from '../../platform/context'
 
 import styles from './SearchSidebarView.module.scss'
 
@@ -57,6 +59,7 @@ export const SearchSidebarView: FC<SearchSidebarViewProps> = React.memo(function
                 queryState: { query: '' },
                 searchCaseSensitivity: false,
                 searchPatternType: SearchPatternType.standard,
+                defaultPatternType: SearchPatternType.standard, // Not used here
                 searchQueryFromURL: '',
                 searchMode: SearchMode.Precise,
 
@@ -140,6 +143,7 @@ export const SearchSidebarView: FC<SearchSidebarViewProps> = React.memo(function
                     historyOrNavigate: navigate,
                     location,
                     source: 'filter',
+                    telemetryRecorder: noOpTelemetryRecorder,
                 },
                 updates
             ),
@@ -147,7 +151,7 @@ export const SearchSidebarView: FC<SearchSidebarViewProps> = React.memo(function
     )
 
     const onDynamicFilterClicked = useCallback(
-        (value: string, kind?: string) => {
+        (value: string, kind?: Filter['kind']) => {
             platformContext.telemetryService.log('DynamicFilterClicked', { search_filter: { kind } })
             handleSidebarSearchSubmit([{ type: 'toggleSubquery', value }])
         },
@@ -165,53 +169,56 @@ export const SearchSidebarView: FC<SearchSidebarViewProps> = React.memo(function
     const repoFilters = useMemo(() => getFiltersOfKind(filters, FilterType.repo), [filters])
 
     return (
-        <SearchSidebar onClose={() => setCollapsed(true)} className={styles.sidebarContainer}>
-            <SearchSidebarSection sectionId={SectionID.DYNAMIC_FILTERS} header="Dynamic Filters">
-                {getDynamicFilterLinks(
-                    filters,
-                    ['lang', 'file', 'utility'],
-                    onDynamicFilterClicked,
-                    (label, value) => `Filter by ${value}`,
-                    (label, value) => value
-                )}
-            </SearchSidebarSection>
+        <StickySearchSidebar onClose={() => setCollapsed(true)} className={styles.sidebarContainer}>
+            <PersistSidebarStoreProvider>
+                <SearchSidebarSection sectionId={SectionID.DYNAMIC_FILTERS} header="Dynamic Filters">
+                    {getDynamicFilterLinks(
+                        filters,
+                        ['lang', 'file', 'utility'],
+                        onDynamicFilterClicked,
+                        (label, value) => `Filter by ${value}`,
+                        (label, value) => value
+                    )}
+                </SearchSidebarSection>
 
-            <SearchSidebarSection
-                sectionId={SectionID.REPOSITORIES}
-                header="Repositories"
-                searchOptions={{
-                    ariaLabel: 'Find repositories',
-                    noResultText: getRepoFilterNoResultText,
-                }}
-                minItems={1}
-            >
-                {getRepoFilterLinks(repoFilters, onDynamicFilterClicked)}
-            </SearchSidebarSection>
+                <SearchSidebarSection
+                    sectionId={SectionID.REPOSITORIES}
+                    header="Repositories"
+                    searchOptions={{
+                        ariaLabel: 'Find repositories',
+                        noResultText: getRepoFilterNoResultText,
+                    }}
+                    minItems={1}
+                >
+                    {getRepoFilterLinks(repoFilters, onDynamicFilterClicked)}
+                </SearchSidebarSection>
 
-            <SearchSidebarSection
-                sectionId={SectionID.SEARCH_REFERENCE}
-                header="Search reference"
-                searchOptions={{
-                    ariaLabel: 'Find filters',
-                    // search reference should always preserve the filter
-                    // (false is just an arbitrary but static value)
-                    clearSearchOnChange: false,
-                }}
-            >
-                {getSearchReferenceFactory({
-                    telemetryService: platformContext.telemetryService,
-                    setQueryState,
-                })}
-            </SearchSidebarSection>
+                <SearchSidebarSection
+                    sectionId={SectionID.SEARCH_REFERENCE}
+                    header="Search reference"
+                    searchOptions={{
+                        ariaLabel: 'Find filters',
+                        // search reference should always preserve the filter
+                        // (false is just an arbitrary but static value)
+                        clearSearchOnChange: false,
+                    }}
+                >
+                    {getSearchReferenceFactory({
+                        telemetryService: platformContext.telemetryService,
+                        telemetryRecorder: platformContext.telemetryRecorder,
+                        setQueryState,
+                    })}
+                </SearchSidebarSection>
 
-            <SearchSidebarSection sectionId={SectionID.SEARCH_SNIPPETS} header="Search snippets">
-                {getSearchSnippetLinks(settingsCascade, onSnippetClicked)}
-            </SearchSidebarSection>
+                <SearchSidebarSection sectionId={SectionID.SEARCH_SNIPPETS} header="Search snippets">
+                    {getSearchSnippetLinks(settingsCascade, onSnippetClicked)}
+                </SearchSidebarSection>
 
-            <SearchSidebarSection sectionId={SectionID.QUICK_LINKS} header="Quicklinks">
-                {getQuickLinks(settingsCascade)}
-            </SearchSidebarSection>
-        </SearchSidebar>
+                <SearchSidebarSection sectionId={SectionID.QUICK_LINKS} header="Quicklinks">
+                    {getQuickLinks(settingsCascade)}
+                </SearchSidebarSection>
+            </PersistSidebarStoreProvider>
+        </StickySearchSidebar>
     )
 })
 

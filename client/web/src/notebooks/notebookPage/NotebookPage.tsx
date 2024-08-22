@@ -1,40 +1,26 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { mdiClose, mdiCheckCircle, mdiBookOutline } from '@mdi/js'
+import { mdiCheckCircle, mdiBookOutline } from '@mdi/js'
 import classNames from 'classnames'
 import { useParams } from 'react-router-dom'
 import { useStickyBox } from 'react-sticky-box'
-import { Observable } from 'rxjs'
+import type { Observable } from 'rxjs'
 import { catchError, delay, startWith, switchMap } from 'rxjs/operators'
 
-import { StreamingSearchResultsListProps } from '@sourcegraph/branded'
+import type { StreamingSearchResultsListProps } from '@sourcegraph/branded'
 import { Timestamp } from '@sourcegraph/branded/src/components/Timestamp'
 import { asError, isErrorLike } from '@sourcegraph/common'
-import { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
-import { useTemporarySetting } from '@sourcegraph/shared/src/settings/temporary/useTemporarySetting'
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
-import { useIsLightTheme } from '@sourcegraph/shared/src/theme'
-import {
-    LoadingSpinner,
-    PageHeader,
-    useEventObservable,
-    useObservable,
-    Alert,
-    ProductStatusBadge,
-    Button,
-    Icon,
-    H3,
-    Text,
-} from '@sourcegraph/wildcard'
+import type { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
+import { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import { LoadingSpinner, PageHeader, useEventObservable, useObservable, Alert, Icon } from '@sourcegraph/wildcard'
 
-import { Block } from '..'
-import { AuthenticatedUser } from '../../auth'
-import { MarketingBlock } from '../../components/MarketingBlock'
+import type { Block } from '..'
+import type { AuthenticatedUser } from '../../auth'
 import { PageTitle } from '../../components/PageTitle'
-import { NotebookFields, NotebookInput } from '../../graphql-operations'
-import { OwnConfigProps } from '../../own/OwnConfigProps'
-import { SearchStreamingProps } from '../../search'
-import { NotepadIcon } from '../../search/Notepad'
+import type { NotebookFields, NotebookInput } from '../../graphql-operations'
+import type { OwnConfigProps } from '../../own/OwnConfigProps'
+import type { SearchStreamingProps } from '../../search'
 import {
     fetchNotebook as _fetchNotebook,
     updateNotebook as _updateNotebook,
@@ -42,8 +28,7 @@ import {
     createNotebookStar as _createNotebookStar,
     deleteNotebookStar as _deleteNotebookStar,
 } from '../backend'
-import { NOTEPAD_ENABLED_EVENT } from '../listPage/NotebooksListPageHeader'
-import { copyNotebook as _copyNotebook, CopyNotebookProps } from '../notebook'
+import { copyNotebook as _copyNotebook, type CopyNotebookProps } from '../notebook'
 import { blockToGQLInput, convertNotebookTitleToFileName, GQLBlockToGQLInput } from '../serialize'
 
 import { NotebookContent } from './NotebookContent'
@@ -55,10 +40,8 @@ import styles from './NotebookPage.module.scss'
 interface NotebookPageProps
     extends SearchStreamingProps,
         TelemetryProps,
-        Omit<
-            StreamingSearchResultsListProps,
-            'allExpanded' | 'platformContext' | 'executedQuery' | 'enableOwnershipSearch'
-        >,
+        TelemetryV2Props,
+        Omit<StreamingSearchResultsListProps, 'allExpanded' | 'platformContext' | 'executedQuery'>,
         PlatformContextProps<'sourcegraphURL' | 'requestGraphQL' | 'urlToFile' | 'settings'>,
         OwnConfigProps {
     authenticatedUser: AuthenticatedUser | null
@@ -85,6 +68,7 @@ export const NotebookPage: React.FunctionComponent<React.PropsWithChildren<Noteb
     copyNotebook = _copyNotebook,
     streamSearch,
     telemetryService,
+    telemetryRecorder,
     searchContextsEnabled,
     ownEnabled,
     isSourcegraphDotCom,
@@ -95,13 +79,14 @@ export const NotebookPage: React.FunctionComponent<React.PropsWithChildren<Noteb
 }) => {
     const { id: notebookId } = useParams()
 
-    useEffect(() => telemetryService.logPageView('SearchNotebookPage'), [telemetryService])
+    useEffect(() => {
+        telemetryService.logPageView('SearchNotebookPage')
+        telemetryRecorder.recordEvent('notebook', 'view')
+    }, [telemetryService, telemetryRecorder])
 
     const [notebookTitle, setNotebookTitle] = useState('')
     const [updateQueue, setUpdateQueue] = useState<Partial<NotebookInput>[]>([])
     const outlineContainerElement = useRef<HTMLDivElement | null>(null)
-    const [notepadCTASeen, setNotepadCTASeen] = useTemporarySetting('search.notepad.ctaSeen')
-    const [notepadEnabled, setNotepadEnabled] = useTemporarySetting('search.notepad.enabled')
 
     const exportedFileName = useMemo(
         () => `${notebookTitle ? convertNotebookTitleToFileName(notebookTitle) : 'notebook'}.snb.md`,
@@ -184,15 +169,6 @@ export const NotebookPage: React.FunctionComponent<React.PropsWithChildren<Noteb
         [notebookTitle, copyNotebook]
     )
 
-    const showNotepadCTA = useMemo(
-        () =>
-            !notepadEnabled &&
-            !notepadCTASeen &&
-            isNotebookLoaded(latestNotebook) &&
-            latestNotebook.blocks.length === 0,
-        [latestNotebook, notepadCTASeen, notepadEnabled]
-    )
-
     const stickyBox = useStickyBox()
 
     return (
@@ -242,6 +218,7 @@ export const NotebookPage: React.FunctionComponent<React.PropsWithChildren<Noteb
                                         createNotebookStar={createNotebookStar}
                                         deleteNotebookStar={deleteNotebookStar}
                                         telemetryService={telemetryService}
+                                        telemetryRecorder={telemetryRecorder}
                                     />
                                 }
                             >
@@ -257,6 +234,7 @@ export const NotebookPage: React.FunctionComponent<React.PropsWithChildren<Noteb
                                             viewerCanManage={notebookOrError.viewerCanManage}
                                             onUpdateTitle={onUpdateTitle}
                                             telemetryService={telemetryService}
+                                            telemetryRecorder={telemetryRecorder}
                                         />
                                     </PageHeader.Breadcrumb>
                                 </PageHeader.Heading>
@@ -312,6 +290,7 @@ export const NotebookPage: React.FunctionComponent<React.PropsWithChildren<Noteb
                                 exportedFileName={exportedFileName}
                                 streamSearch={streamSearch}
                                 telemetryService={telemetryService}
+                                telemetryRecorder={telemetryRecorder}
                                 searchContextsEnabled={searchContextsEnabled}
                                 ownEnabled={ownEnabled}
                                 isSourcegraphDotCom={isSourcegraphDotCom}
@@ -320,69 +299,12 @@ export const NotebookPage: React.FunctionComponent<React.PropsWithChildren<Noteb
                                 settingsCascade={settingsCascade}
                                 platformContext={platformContext}
                                 outlineContainerElement={outlineContainerElement.current}
+                                patternType={notebookOrError.patternType}
                             />
                         </>
                     )}
                 </div>
-                <div className={styles.spacer}>
-                    {showNotepadCTA && (
-                        <NotepadCTA
-                            onEnable={() => {
-                                telemetryService.log(NOTEPAD_ENABLED_EVENT)
-                                setNotepadCTASeen(true)
-                                setNotepadEnabled(true)
-                            }}
-                            onClose={() => setNotepadCTASeen(true)}
-                        />
-                    )}
-                </div>
             </div>
         </div>
-    )
-}
-
-interface NotepadCTAProps {
-    onEnable: () => void
-    onClose: () => void
-}
-
-const NotepadCTA: React.FunctionComponent<React.PropsWithChildren<NotepadCTAProps>> = ({ onEnable, onClose }) => {
-    const assetsRoot = window.context?.assetsRoot || ''
-    const isLightTheme = useIsLightTheme()
-
-    return (
-        <MarketingBlock wrapperClassName={classNames(styles.notepadCta, 'd-none d-md-block')}>
-            <aside className={styles.notepadCtaContent}>
-                <Button
-                    aria-label="Hide"
-                    variant="icon"
-                    onClick={onClose}
-                    size="sm"
-                    className={styles.notepadCtaCloseButton}
-                >
-                    <Icon aria-hidden={true} svgPath={mdiClose} />
-                </Button>
-                <img
-                    className="flex-shrink-0 mr-3"
-                    src={`${assetsRoot}/img/notepad-illustration-${isLightTheme ? 'light' : 'dark'}.svg`}
-                    alt=""
-                />
-                <div>
-                    <H3 className="d-inline-block">
-                        <NotepadIcon /> Enable notepad
-                    </H3>{' '}
-                    <ProductStatusBadge status="beta" />
-                    <Text>
-                        The notepad adds a toolbar to the bottom right of search results and file pages to help you
-                        create notebooks from your code navigation activities.
-                    </Text>
-                    <Text>
-                        <Button variant="primary" onClick={onEnable} size="sm">
-                            Enable notepad
-                        </Button>
-                    </Text>
-                </div>
-            </aside>
-        </MarketingBlock>
     )
 }

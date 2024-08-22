@@ -1,37 +1,40 @@
-import { EditorState } from '@codemirror/state'
+import type { EditorState } from '@codemirror/state'
 import { mdiFilterOutline, mdiSourceRepository, mdiStar, mdiFileOutline } from '@mdi/js'
-import { byLengthAsc, extendedMatch, Fzf, FzfOptions, FzfResultItem } from 'fzf'
+import { byLengthAsc, extendedMatch, Fzf, type FzfOptions, type FzfResultItem } from 'fzf'
 
 // This module implements suggestions for the experimental search input
+
 // eslint-disable-next-line no-restricted-imports
 import {
-    Group,
-    Option,
-    Source,
-    SuggestionResult,
-    filterRenderer,
-    filterValueRenderer,
+    type Group,
+    type Option,
+    type Source,
+    type SuggestionResult,
     combineResults,
     defaultLanguages,
-    queryRenderer,
+    RenderAs,
 } from '@sourcegraph/branded/src/search-ui/experimental'
 import { getQueryInformation } from '@sourcegraph/branded/src/search-ui/input/codemirror/parsedQuery'
 import { gql } from '@sourcegraph/http-client'
-import { PlatformContext } from '@sourcegraph/shared/src/platform/context'
-import { SearchContextProps } from '@sourcegraph/shared/src/search'
+import { getUserSearchContextNamespaces } from '@sourcegraph/shared/src/search/backend'
 import { getRelevantTokens } from '@sourcegraph/shared/src/search/query/analyze'
 import { regexInsertText } from '@sourcegraph/shared/src/search/query/completion-utils'
-import { FILTERS, FilterType, isNegatableFilter, ResolvedFilter } from '@sourcegraph/shared/src/search/query/filters'
-import { Node, Parameter } from '@sourcegraph/shared/src/search/query/parser'
+import {
+    FILTERS,
+    FilterType,
+    isNegatableFilter,
+    type ResolvedFilter,
+} from '@sourcegraph/shared/src/search/query/filters'
+import type { Node, Parameter } from '@sourcegraph/shared/src/search/query/parser'
 import { predicateCompletion } from '@sourcegraph/shared/src/search/query/predicates'
 import { stringHuman } from '@sourcegraph/shared/src/search/query/printer'
 import { selectorHasFields } from '@sourcegraph/shared/src/search/query/selectFilter'
-import { CharacterRange, Filter, KeywordKind, Token } from '@sourcegraph/shared/src/search/query/token'
+import { type CharacterRange, type Filter, KeywordKind, type Token } from '@sourcegraph/shared/src/search/query/token'
 import { isFilterOfType, resolveFilterMemoized } from '@sourcegraph/shared/src/search/query/utils'
 import { getSymbolIconSVGPath } from '@sourcegraph/shared/src/symbols/symbolIcons'
 
-import { AuthenticatedUser } from '../../auth'
-import {
+import type { AuthenticatedUser } from '../../auth'
+import type {
     SuggestionsRepoResult,
     SuggestionsRepoVariables,
     SuggestionsFileResult,
@@ -39,7 +42,10 @@ import {
     SuggestionsSymbolResult,
     SuggestionsSymbolVariables,
     SymbolKind,
+    SuggestionsSearchContextResult,
+    SuggestionsSearchContextVariables,
 } from '../../graphql-operations'
+import { CachedAsyncCompletionSource } from '../autocompletion/source'
 
 // The number of entries we want to show in various situations
 //
@@ -77,11 +83,13 @@ function contextTiebraker(a: { item: Context }, b: { item: Context }): number {
     return (b.item.starred || b.item.default ? 1 : 0) - (a.item.starred || a.item.default ? 1 : 0)
 }
 
+// `id` is used as cache key
 const REPOS_QUERY = gql`
     query SuggestionsRepo($query: String!) {
         search(patternType: regexp, query: $query) {
             results {
                 repositories {
+                    id
                     name
                     stars
                 }
@@ -90,6 +98,7 @@ const REPOS_QUERY = gql`
     }
 `
 
+// `canonicalURL` is used as cache key
 const FILE_QUERY = gql`
     query SuggestionsFile($query: String!) {
         search(patternType: regexp, query: $query) {
@@ -100,6 +109,7 @@ const FILE_QUERY = gql`
                         file {
                             path
                             url
+                            canonicalURL
                             repository {
                                 name
                                 stars
@@ -112,6 +122,7 @@ const FILE_QUERY = gql`
     }
 `
 
+// `canonicalURL` is used as cache key
 const SYMBOL_QUERY = gql`
     query SuggestionsSymbol($query: String!) {
         search(patternType: regexp, query: $query) {
@@ -121,10 +132,12 @@ const SYMBOL_QUERY = gql`
                         __typename
                         file {
                             path
+                            canonicalURL
                         }
                         symbols {
                             kind
                             url
+                            canonicalURL
                             name
                         }
                     }
@@ -134,7 +147,30 @@ const SYMBOL_QUERY = gql`
     }
 `
 
+const SEARCH_CONTEXT_QUERY = gql`
+    query SuggestionsSearchContext($first: Int!, $query: String, $namespaces: [ID]) {
+        searchContexts(
+            first: $first
+            query: $query
+            namespaces: $namespaces
+            after: null
+            orderBy: SEARCH_CONTEXT_SPEC
+            descending: false
+        ) {
+            nodes {
+                id
+                name
+                spec
+                description
+                viewerHasStarred
+                viewerHasAsDefault
+            }
+        }
+    }
+`
+
 interface Repo {
+    id: string
     name: string
     stars: number
 }
@@ -167,7 +203,7 @@ interface CodeSymbol {
  */
 function toRepoSuggestion(result: FzfResultItem<Repo>, from: number, to?: number): Option {
     const option = toRepoCompletion(result, from, to, 'repo:')
-    option.render = filterValueRenderer
+    option.render = RenderAs.FILTER
     return option
 }
 
@@ -180,6 +216,9 @@ function toRepoCompletion(
     to?: number,
     valuePrefix = ''
 ): Option {
+    if (valuePrefix) {
+        positions = shiftPositions(positions, valuePrefix.length)
+    }
     return {
         label: valuePrefix + item.name,
         matches: positions,
@@ -233,7 +272,7 @@ function toFilterCompletion(label: string, description: string | undefined, from
     return {
         label,
         icon: mdiFilterOutline,
-        render: filterRenderer,
+        render: RenderAs.FILTER,
         description,
         kind: 'filter',
         action: {
@@ -254,6 +293,9 @@ function toFileCompletion(
     to?: number,
     valuePrefix = ''
 ): Option {
+    if (valuePrefix) {
+        positions = shiftPositions(positions, valuePrefix.length)
+    }
     return {
         label: valuePrefix + item.path,
         icon: mdiFileOutline,
@@ -273,7 +315,7 @@ function toFileCompletion(
  */
 function toFileSuggestion(result: FzfResultItem<File>, from: number, to?: number): Option {
     const option = toFileCompletion(result, from, to, 'file:')
-    option.render = filterValueRenderer
+    option.render = RenderAs.FILTER
     return option
 }
 
@@ -320,8 +362,9 @@ const RELATED_FILTERS: Partial<Record<FilterType, (filter: Filter) => FilterType
     [FilterType.type]: filter => {
         switch (filter.value?.value) {
             case 'diff':
-            case 'commit':
+            case 'commit': {
                 return [FilterType.author, FilterType.before, FilterType.after, FilterType.message]
+            }
         }
         return []
     },
@@ -365,7 +408,7 @@ const defaultSuggestions: InternalSource = ({ tokens, token, position }) => {
         options.push({
             label: 'OR',
             description: 'Matches the left or the right side',
-            render: queryRenderer,
+            render: RenderAs.QUERY,
             kind: 'keyword',
             icon: ' ', // for alignment
             action: {
@@ -472,9 +515,9 @@ function filterValueSuggestions(caches: Caches): InternalSource {
         const from = token.value?.range.start ?? token.range.end
         const to = token.value?.range.end ?? token.range.end
 
+        const predicates = staticFilterPredicateOptions(resolvedFilter.type, token, from, to)
         switch (resolvedFilter.definition.suggestions) {
             case 'repo': {
-                const predicates = staticFilterPredicateOptions('repo', token, from, to)
                 return caches.repo.query(
                     value,
                     entries => {
@@ -507,7 +550,6 @@ function filterValueSuggestions(caches: Caches): InternalSource {
             }
 
             case 'path': {
-                const predicates = staticFilterPredicateOptions('file', token, from, to)
                 return caches.file.query(
                     value,
                     entries => {
@@ -544,7 +586,7 @@ function filterValueSuggestions(caches: Caches): InternalSource {
                     // we need to handle these here explicitly. We can't change
                     // the filter definition without breaking the current
                     // search input.
-                    case FilterType.context:
+                    case FilterType.context: {
                         return caches.context.query(value, entries => {
                             entries = value.trim() === '' ? entries.slice(0, ALL_FILTER_VALUE_LIST_SIZE) : entries
                             return [
@@ -553,11 +595,21 @@ function filterValueSuggestions(caches: Caches): InternalSource {
                                     options: entries.map(entry => toContextCompletion(entry, from, to)),
                                 },
                                 contextActions,
+                                ...(predicates.length > 0 ? [{ title: 'Predicates', options: predicates }] : []),
                             ]
                         })
+                    }
                     default: {
                         const options = staticFilterValueOptions(token, resolvedFilter)
-                        return options.length > 0 ? { result: [{ title: '', options }] } : null
+                        if (options.length === 0 && predicates.length === 0) {
+                            return null
+                        }
+                        return {
+                            result: [
+                                ...(options.length > 0 ? [{ title: '', options }] : []),
+                                ...(predicates.length > 0 ? [{ title: 'Predicates', options: predicates }] : []),
+                            ],
+                        }
                     }
                 }
             }
@@ -667,7 +719,7 @@ const predicateFzfOption: PredicateFzfOptions = {
 /**
  * Returns predicate options for the provided filter type.
  */
-function staticFilterPredicateOptions(type: 'repo' | 'file', filter: Filter, from: number, to: number): Option[] {
+function staticFilterPredicateOptions(type: FilterType, filter: Filter, from: number, to: number): Option[] {
     const fzf = new Fzf(predicateCompletion(type), predicateFzfOption)
     return fzf.find(filter.value?.value || '').map(({ item, positions }) => ({
         label: item.label,
@@ -791,7 +843,7 @@ function symbolSuggestions(cache: Caches['symbol']): InternalSource {
                 parsedQuery,
                 token.range,
                 node => node.type === 'parameter' && resolveFilterMemoized(node.field)?.type === FilterType.type
-            ).length === 0
+            ).tokens.length === 0
 
         return cache.query(
             token.value,
@@ -813,20 +865,18 @@ function symbolSuggestions(cache: Caches['symbol']): InternalSource {
  * A contextual cache not only uses the provided value to find suggestions but
  * also the current (parsed) query input.
  */
-type ContextualCache<T, U> = Cache<T, U, [Node | null, number]>
+type ContextualCache<T, U> = CachedAsyncCompletionSource<T, U, [Node | null, number]>
 
 interface Caches {
     repo: ContextualCache<Repo, FzfResultItem<Repo>>
-    context: Cache<Context, FzfResultItem<Context>>
+    context: CachedAsyncCompletionSource<Context, FzfResultItem<Context>>
     file: ContextualCache<File, FzfResultItem<File>>
     symbol: ContextualCache<CodeSymbol, FzfResultItem<CodeSymbol>>
 }
 
-export interface SuggestionsSourceConfig
-    extends Pick<SearchContextProps, 'fetchSearchContexts' | 'getUserSearchContextNamespaces'> {
-    platformContext: Pick<PlatformContext, 'requestGraphQL'>
-    getSearchContext: () => string | undefined
-    authenticatedUser?: AuthenticatedUser | null
+export interface SuggestionsSourceConfig {
+    graphqlQuery: <T, V extends Record<string, any>>(query: string, variables: V) => Promise<T>
+    authenticatedUser: Pick<AuthenticatedUser, 'id' | 'organizations'> | null
     isSourcegraphDotCom?: boolean
 }
 
@@ -835,17 +885,12 @@ let sharedCaches: Caches | null = null
 /**
  * Initializes and persists suggestion caches.
  */
-function createCaches({
-    platformContext,
-    authenticatedUser,
-    fetchSearchContexts,
-    getUserSearchContextNamespaces,
-}: SuggestionsSourceConfig): Caches {
+function createCaches({ authenticatedUser, graphqlQuery }: SuggestionsSourceConfig): Caches {
     if (sharedCaches) {
         return sharedCaches
     }
 
-    const cleanRegex = (value: string): string => value.replace(/^\^|\\\.|\$$/g, '')
+    const cleanRegex = (value: string): string => value.replaceAll(/^\^|\\\.|\$$/g, '')
 
     const repoFzfOptions: FzfOptions<Repo> = {
         selector: item => item.name,
@@ -875,7 +920,7 @@ function createCaches({
 
     // TODO: Initialize outside to persist cache across page navigation
     return (sharedCaches = {
-        repo: new Cache({
+        repo: new CachedAsyncCompletionSource({
             // Repo queries are scoped to context: filters
             dataCacheKey: (parsedQuery, position) =>
                 parsedQuery
@@ -889,16 +934,10 @@ function createCaches({
                     : '',
             queryKey: (value, dataCacheKey = '') => `${dataCacheKey} type:repo count:50 repo:${value}`,
             async query(query) {
-                const response = await platformContext
-                    .requestGraphQL<SuggestionsRepoResult, SuggestionsRepoVariables>({
-                        request: REPOS_QUERY,
-                        variables: { query },
-                        mightContainPrivateInfo: true,
-                    })
-                    .toPromise()
-                return (
-                    response.data?.search?.results?.repositories.map(repository => [repository.name, repository]) || []
-                )
+                const response = await graphqlQuery<SuggestionsRepoResult, SuggestionsRepoVariables>(REPOS_QUERY, {
+                    query,
+                })
+                return response?.search?.results?.repositories.map(repository => [repository.name, repository]) ?? []
             },
             filter(repos, query) {
                 const fzf = new Fzf(repos, repoFzfOptions)
@@ -906,20 +945,22 @@ function createCaches({
             },
         }),
 
-        context: new Cache({
+        context: new CachedAsyncCompletionSource({
             queryKey: value => `context:${value}`,
             async query(_key, value) {
                 if (!authenticatedUser) {
                     return []
                 }
 
-                const response = await fetchSearchContexts({
-                    first: 20,
-                    query: value,
-                    platformContext,
-                    namespaces: getUserSearchContextNamespaces(authenticatedUser),
-                }).toPromise()
-                return response.nodes.map(node => [
+                const response = await graphqlQuery<SuggestionsSearchContextResult, SuggestionsSearchContextVariables>(
+                    SEARCH_CONTEXT_QUERY,
+                    {
+                        first: 20,
+                        query: value,
+                        namespaces: getUserSearchContextNamespaces(authenticatedUser),
+                    }
+                )
+                return response.searchContexts.nodes.map(node => [
                     node.name,
                     {
                         name: node.name,
@@ -943,7 +984,7 @@ function createCaches({
             },
         }),
         // File queries are scoped to context: and repo: filters
-        file: new Cache({
+        file: new CachedAsyncCompletionSource({
             dataCacheKey: (parsedQuery, position) =>
                 parsedQuery
                     ? buildSuggestionQuery(
@@ -954,15 +995,11 @@ function createCaches({
                     : '',
             queryKey: (value, dataCacheKey = '') => `${dataCacheKey} type:file count:50 file:${value}`,
             async query(query) {
-                const response = await platformContext
-                    .requestGraphQL<SuggestionsFileResult, SuggestionsFileVariables>({
-                        request: FILE_QUERY,
-                        variables: { query },
-                        mightContainPrivateInfo: true,
-                    })
-                    .toPromise()
+                const response = await graphqlQuery<SuggestionsFileResult, SuggestionsFileVariables>(FILE_QUERY, {
+                    query,
+                })
                 return (
-                    response.data?.search?.results?.results?.reduce((results, result) => {
+                    response.search?.results?.results?.reduce((results, result) => {
                         if (result.__typename === 'FileMatch') {
                             results.push([
                                 result.file.path,
@@ -983,7 +1020,7 @@ function createCaches({
                 return fzf.find(cleanRegex(query))
             },
         }),
-        symbol: new Cache({
+        symbol: new CachedAsyncCompletionSource({
             dataCacheKey: (parsedQuery, position) =>
                 parsedQuery
                     ? buildSuggestionQuery(
@@ -994,15 +1031,11 @@ function createCaches({
                     : '',
             queryKey: (value, dataCacheKey = '') => `${dataCacheKey} type:symbol count:50 ${value}`,
             async query(query) {
-                const response = await platformContext
-                    .requestGraphQL<SuggestionsSymbolResult, SuggestionsSymbolVariables>({
-                        request: SYMBOL_QUERY,
-                        variables: { query },
-                        mightContainPrivateInfo: true,
-                    })
-                    .toPromise()
+                const response = await graphqlQuery<SuggestionsSymbolResult, SuggestionsSymbolVariables>(SYMBOL_QUERY, {
+                    query,
+                })
                 return (
-                    response.data?.search?.results?.results?.reduce((results, result) => {
+                    response.search?.results?.results?.reduce((results, result) => {
                         if (result.__typename === 'FileMatch') {
                             for (const symbol of result.symbols) {
                                 results.push([
@@ -1060,84 +1093,8 @@ export const createSuggestionsSource = (config: SuggestionsSourceConfig): Source
     }
 }
 
-interface CacheConfig<T, U, E extends any[] = []> {
-    /**
-     * Returns a string that uniquely identifies this query (which is often just
-     * the query itself). If the same request is made again the existing result
-     * is reused.
-     */
-    queryKey(value: string, dataCacheKey?: string): string
-    /**
-     * Fetch data. queryKey is the value return by the queryKey function and
-     * value is the term that's currently completed. Returns a list of [key,
-     * value] tuples. The key of these tuples is used to uniquly identify a
-     * value the data cache.
-     */
-    query(queryKey: string, value: string): Promise<[string, T][]>
-    /**
-     * This function filters and ranks all cache values (entries) by value.
-     */
-    filter(entries: T[], value: string): U[]
-    /**
-     * If provided data values are bucketed into different "cache groups", keyed
-     * by the return value of this function.
-     */
-    dataCacheKey?(...extraArgs: E): string
-}
-
-/**
- * This class handles creating suggestion results that include cached values (if
- * available) and updates the cache with new results from new queries.
- */
-class Cache<T, U, E extends any[] = []> {
-    private queryCache = new Map<string, Promise<void>>()
-    private dataCache = new Map<string, T>()
-    private dataCacheByQuery = new Map<string, Map<string, T>>()
-
-    constructor(private config: CacheConfig<T, U, E>) {}
-
-    public query(value: string, mapper: (values: U[]) => Group[], ...extraArgs: E): ReturnType<InternalSource> {
-        // The dataCacheKey could possibly just be an argument to query. However
-        // that would require callsites to remember to pass the value. Doing it
-        // this way we get a bit more type safety.
-        const dataCacheKey = this.config.dataCacheKey?.(...extraArgs)
-        const queryKey = this.config.queryKey(value, dataCacheKey)
-        let dataCache = this.dataCache
-        if (dataCacheKey) {
-            dataCache = this.dataCacheByQuery.get(dataCacheKey) ?? new Map<string, T>()
-            if (!this.dataCacheByQuery.has(dataCacheKey)) {
-                this.dataCacheByQuery.set(dataCacheKey, dataCache)
-            }
-        }
-        return {
-            result: mapper(this.cachedData(value, dataCache)),
-            next: () => {
-                let result = this.queryCache.get(queryKey)
-
-                if (!result) {
-                    result = this.config.query(queryKey, value).then(entries => {
-                        for (const [key, entry] of entries) {
-                            if (!dataCache.has(key)) {
-                                dataCache.set(key, entry)
-                            }
-                        }
-                    })
-
-                    this.queryCache.set(queryKey, result)
-                }
-
-                return result.then(() => ({ result: mapper(this.cachedData(value, dataCache)) }))
-            },
-        }
-    }
-
-    private cachedData(value: string, cache = this.dataCache): U[] {
-        return this.config.filter(Array.from(cache.values()), value)
-    }
-}
-
 function buildSuggestionQuery(query: Node, target: CharacterRange, filter: (node: Node) => boolean): string {
-    return stringHuman(getRelevantTokens(query, target, filter))
+    return stringHuman(getRelevantTokens(query, target, filter).tokens)
 }
 
 function isNonEmptyParameter(node: Node): node is Parameter {

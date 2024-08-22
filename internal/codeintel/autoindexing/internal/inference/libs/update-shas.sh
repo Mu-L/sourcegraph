@@ -2,10 +2,21 @@
 
 set -u
 
-DOCKER_USER=${DOCKER_USER:?"No DOCKER_USER is set."}
-DOCKER_PASS=${DOCKER_PASS:?"No DOCKER_PASS is set."}
+if [ -z "${DOCKER_USER:-}" ]; then
+  echo "warning: DOCKER_USER is not set; may hit Docker rate limit"
+fi
 
-for indexer in lsif-clang scip-go lsif-rust scip-rust scip-java scip-python scip-typescript scip-ruby; do
+if [ -z "${DOCKER_PASS:-}" ]; then
+  if [ -n "${DOCKER_USER:-}" ]; then
+    echo "error: DOCKER_USER set but DOCKER_PASS was not set"
+    exit 1
+  fi
+fi
+
+SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
+
+# No scip-clang as that doesn't have a Docker image
+for indexer in scip-go scip-rust scip-java scip-python scip-typescript scip-ruby scip-dotnet; do
   tag="latest"
   if [[ "${indexer}" = "scip-python" ]] || [[ "${indexer}" = "scip-typescript" || "${indexer}" = "scip-ruby" ]]; then
     tag="autoindex"
@@ -15,10 +26,13 @@ for indexer in lsif-clang scip-go lsif-rust scip-rust scip-java scip-python scip
 
   sed -i.bak \
     "s|\("'"'"sourcegraph/${indexer}"'"'":\).*|\1${sha},|g" \
-    indexes.go
+    "$SCRIPT_DIR/indexes.go"
 
   echo "Updated tag for ${indexer}"
-  rm indexes.go.bak
+  rm "$SCRIPT_DIR/indexes.go.bak"
 done
 
-go fmt indexes.go
+go fmt "$SCRIPT_DIR/indexes.go"
+
+echo "Updating SHAs in test snapshots"
+go test "$SCRIPT_DIR/../..." -update

@@ -2,25 +2,25 @@ package graphqlbackend
 
 import (
 	"context"
+	"sync"
 
 	"github.com/graph-gophers/graphql-go"
 	"github.com/graph-gophers/graphql-go/relay"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/dependencies"
 	"github.com/sourcegraph/sourcegraph/internal/conf/reposource"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
+	"github.com/sourcegraph/sourcegraph/internal/gqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/observation"
-	"github.com/sourcegraph/sourcegraph/internal/syncx"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
 
 type PackageRepoReferenceConnectionArgs struct {
-	graphqlutil.ConnectionArgs
+	gqlutil.ConnectionArgs
 	After *string
 	Kind  *string
 	Name  *string
@@ -87,7 +87,7 @@ type packageRepoReferenceConnectionResolver struct {
 }
 
 func (r *packageRepoReferenceConnectionResolver) Nodes(ctx context.Context) ([]*packageRepoReferenceResolver, error) {
-	once := syncx.OnceValues(func() (map[api.RepoName]*types.Repo, error) {
+	once := sync.OnceValues(func() (map[api.RepoName]*types.Repo, error) {
 		allNames := make([]string, 0, len(r.deps))
 		for _, dep := range r.deps {
 			name, err := dependencyRepoToRepoName(dep)
@@ -123,14 +123,14 @@ func (r *packageRepoReferenceConnectionResolver) TotalCount(ctx context.Context)
 	return int32(r.total), nil
 }
 
-func (r *packageRepoReferenceConnectionResolver) PageInfo(ctx context.Context) (*graphqlutil.PageInfo, error) {
+func (r *packageRepoReferenceConnectionResolver) PageInfo(ctx context.Context) (*gqlutil.PageInfo, error) {
 	if len(r.deps) == 0 || !r.hasMore {
-		return graphqlutil.HasNextPage(false), nil
+		return gqlutil.HasNextPage(false), nil
 	}
 
 	next := r.deps[len(r.deps)-1].ID
 	cursor := string(relay.MarshalID("PackageRepoReference", next))
-	return graphqlutil.NextPageCursor(cursor), nil
+	return gqlutil.NextPageCursor(cursor), nil
 }
 
 type packageRepoReferenceVersionConnectionResolver struct {
@@ -152,14 +152,14 @@ func (r *packageRepoReferenceVersionConnectionResolver) TotalCount(ctx context.C
 	return int32(r.total), nil
 }
 
-func (r *packageRepoReferenceVersionConnectionResolver) PageInfo(ctx context.Context) (*graphqlutil.PageInfo, error) {
+func (r *packageRepoReferenceVersionConnectionResolver) PageInfo(ctx context.Context) (*gqlutil.PageInfo, error) {
 	if len(r.versions) == 0 || !r.hasMore {
-		return graphqlutil.HasNextPage(false), nil
+		return gqlutil.HasNextPage(false), nil
 	}
 
 	next := r.versions[len(r.versions)-1].ID
 	cursor := string(relay.MarshalID("PackageRepoReferenceVersion", next))
-	return graphqlutil.NextPageCursor(cursor), nil
+	return gqlutil.NextPageCursor(cursor), nil
 }
 
 type packageRepoReferenceResolver struct {
@@ -204,7 +204,7 @@ func (r *packageRepoReferenceResolver) Repository(ctx context.Context) (*Reposit
 	}
 
 	if repo, ok := repos[repoName]; ok {
-		return NewRepositoryResolver(r.db, gitserver.NewClient(r.db), repo), nil
+		return NewRepositoryResolver(r.db, gitserver.NewClient("graphql.packagerepo"), repo), nil
 	}
 
 	return nil, nil

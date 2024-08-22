@@ -1,4 +1,4 @@
-import { Observable } from 'rxjs'
+import type { Observable } from 'rxjs'
 import { map } from 'rxjs/operators'
 
 import { createAggregateError, memoizeObservable } from '@sourcegraph/common'
@@ -10,15 +10,15 @@ import {
     RevisionNotFoundError,
 } from '@sourcegraph/shared/src/backend/errors'
 import {
-    makeRepoURI,
-    RepoRevision,
-    RepoSpec,
-    ResolvedRevisionSpec,
-    RevisionSpec,
+    makeRepoGitURI,
+    type RepoRevision,
+    type RepoSpec,
+    type ResolvedRevisionSpec,
+    type RevisionSpec,
 } from '@sourcegraph/shared/src/util/url'
 
 import { queryGraphQL, requestGraphQL } from '../backend/graphql'
-import {
+import type {
     ExternalLinkFields,
     FileExternalLinksResult,
     RepositoryFields,
@@ -57,6 +57,7 @@ export const repositoryFragment = gql`
             key
             value
         }
+        topics
     }
 `
 
@@ -163,7 +164,7 @@ export const resolveRepoRevision = memoizeObservable(
                 }
             })
         ),
-    makeRepoURI
+    makeRepoGitURI
 )
 
 export const fetchFileExternalLinks = memoizeObservable(
@@ -193,7 +194,7 @@ export const fetchFileExternalLinks = memoizeObservable(
                 return data.repository.commit.file.externalURLs
             })
         ),
-    makeRepoURI
+    makeRepoGitURI
 )
 
 interface FetchCommitMessageResult {
@@ -222,5 +223,5 @@ export const fetchCommitMessage = memoizeObservable(
             map(dataOrThrowErrors),
             map(data => data.repository.commit.message)
         ),
-    makeRepoURI
+    makeRepoGitURI
 )

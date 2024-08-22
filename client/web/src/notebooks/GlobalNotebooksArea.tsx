@@ -1,21 +1,22 @@
-import React, { FC } from 'react'
+import React, { type FC } from 'react'
 
 import { Routes, Route, Navigate } from 'react-router-dom'
 import type { Observable } from 'rxjs'
 
-import { FetchFileParameters } from '@sourcegraph/shared/src/backend/file'
-import { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
-import { SearchContextProps } from '@sourcegraph/shared/src/search'
-import { SettingsCascadeProps } from '@sourcegraph/shared/src/settings/settings'
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import type { FetchFileParameters } from '@sourcegraph/shared/src/backend/file'
+import type { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
+import type { SearchContextProps } from '@sourcegraph/shared/src/search'
+import type { SettingsCascadeProps } from '@sourcegraph/shared/src/settings/settings'
+import { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { lazyComponent } from '@sourcegraph/shared/src/util/lazyComponent'
 
-import { AuthenticatedUser } from '../auth'
-import { OwnConfigProps } from '../own/OwnConfigProps'
-import { EnterprisePageRoutes } from '../routes.constants'
-import { SearchStreamingProps } from '../search'
+import type { AuthenticatedUser } from '../auth'
+import type { OwnConfigProps } from '../own/OwnConfigProps'
+import { PageRoutes } from '../routes.constants'
+import type { SearchStreamingProps } from '../search'
 
-import { NotebookProps } from '.'
+import type { NotebookProps } from '.'
 
 const NotebookPage = lazyComponent(() => import('./notebookPage/NotebookPage'), 'NotebookPage')
 const CreateNotebookPage = lazyComponent(() => import('./createPage/CreateNotebookPage'), 'CreateNotebookPage')
@@ -23,6 +24,7 @@ const NotebooksListPage = lazyComponent(() => import('./listPage/NotebooksListPa
 
 export interface GlobalNotebooksAreaProps
     extends TelemetryProps,
+        TelemetryV2Props,
         PlatformContextProps,
         SettingsCascadeProps,
         NotebookProps,
@@ -31,7 +33,6 @@ export interface GlobalNotebooksAreaProps
         OwnConfigProps {
     authenticatedUser: AuthenticatedUser | null
     isSourcegraphDotCom: boolean
-    isSourcegraphApp: boolean
     fetchHighlightedFileLineRanges: (parameters: FetchFileParameters, force?: boolean) => Observable<string[][]>
 }
 /**
@@ -49,7 +50,7 @@ export const GlobalNotebooksArea: FC<React.PropsWithChildren<GlobalNotebooksArea
                 authenticatedUser ? (
                     <CreateNotebookPage authenticatedUser={authenticatedUser} {...outerProps} />
                 ) : (
-                    <Navigate to={EnterprisePageRoutes.Notebooks} replace={true} />
+                    <Navigate to={PageRoutes.Notebooks} replace={true} />
                 )
             }
         />

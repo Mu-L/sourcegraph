@@ -1,23 +1,26 @@
 import { useEffect, useMemo, useState } from 'react'
 
-import { ApolloError, gql, useApolloClient } from '@apollo/client'
-import { Duration } from 'date-fns'
+import { type ApolloError, gql, useApolloClient } from '@apollo/client'
+import type { Duration } from 'date-fns'
 import { noop } from 'lodash'
 
 import { HTTPStatusError } from '@sourcegraph/http-client'
-import { RepositoryScopeInput } from '@sourcegraph/shared/src/graphql-operations'
-import { Series } from '@sourcegraph/wildcard'
+import type { RepositoryScopeInput } from '@sourcegraph/shared/src/graphql-operations'
+import { SearchPatternType } from '@sourcegraph/shared/src/graphql-operations'
+import { useSettingsCascade } from '@sourcegraph/shared/src/settings/settings'
+import type { Series } from '@sourcegraph/wildcard'
 
-import {
+import type {
     GetInsightPreviewResult,
     GetInsightPreviewVariables,
     SearchSeriesPreviewInput,
 } from '../../../../../graphql-operations'
+import { defaultPatternTypeFromSettings } from '../../../../../util/settings'
 import { DATA_SERIES_COLORS_LIST, MAX_NUMBER_OF_SERIES } from '../../../constants'
 import { getStepInterval } from '../../backend/gql-backend/utils/get-step-interval'
-import { generateLinkURL, InsightDataSeriesData } from '../../backend/utils/create-line-chart-content'
+import { generateLinkURL, type InsightDataSeriesData } from '../../backend/utils/create-line-chart-content'
 
-import { LivePreviewStatus, State } from './types'
+import { LivePreviewStatus, type State } from './types'
 
 export const GET_INSIGHT_PREVIEW_GQL = gql`
     query GetInsightPreview($input: SearchInsightPreviewInput!) {
@@ -25,7 +28,7 @@ export const GET_INSIGHT_PREVIEW_GQL = gql`
             points {
                 dateTime
                 value
-                diffQuery
+                pointInTimeQuery
             }
             label
         }
@@ -126,17 +129,20 @@ export function useLivePreviewSeriesInsight(props: Props): Result<Series<Datum>[
         return () => subscription.unsubscribe()
     }, [client, repoScope, series, skip, unit, value, counter])
 
+    const defaultPatternType = defaultPatternTypeFromSettings(useSettingsCascade())
+
     const parsedSeries = useMemo(() => {
         if (data) {
             return createPreviewSeriesContent({
                 response: data,
                 originalSeries: series,
                 repositories: repoScope.repositories,
+                defaultPatternType,
             })
         }
 
         return null
-    }, [data, repoScope, series])
+    }, [data, repoScope, series, defaultPatternType])
 
     if (loading) {
         return { state: { status: LivePreviewStatus.Loading }, refetch }
@@ -175,10 +181,11 @@ interface PreviewProps {
     response: GetInsightPreviewResult
     originalSeries: SeriesWithStroke[]
     repositories: string[]
+    defaultPatternType: SearchPatternType
 }
 
 function createPreviewSeriesContent(props: PreviewProps): Series<Datum>[] {
-    const { response, originalSeries } = props
+    const { response, originalSeries, defaultPatternType } = props
     const { searchInsightPreview: series } = response
 
     // inputMetadata creates a lookup so that the correct color can be later applied to the preview series
@@ -206,9 +213,7 @@ function createPreviewSeriesContent(props: PreviewProps): Series<Datum>[] {
         data: line.points.map(point => ({
             value: point.value,
             dateTime: new Date(point.dateTime),
-            link: generateLinkURL({
-                diffQuery: point.diffQuery,
-            }),
+            link: generateLinkURL(point.pointInTimeQuery, defaultPatternType),
         })),
         name: line.label,
         color: getColorForSeries(line.label, index),

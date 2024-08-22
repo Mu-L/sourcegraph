@@ -33,7 +33,7 @@ func TestBufferedLogger(t *testing.T) {
 		handler := &mockLogger{}
 
 		// Test with a buffer size of 0, which should immediately submit events
-		b := events.NewBufferedLogger(logtest.Scoped(t), handler, 0, 3)
+		b, _ := events.NewBufferedLogger(logtest.Scoped(t), handler, 0, 3)
 		wg := conc.NewWaitGroup()
 		wg.Go(b.Start)
 
@@ -43,7 +43,8 @@ func TestBufferedLogger(t *testing.T) {
 
 		// Stop the worker and wait for it to finish so that events flush before
 		// making any assertions
-		b.Stop()
+		err := b.Stop(ctx)
+		require.NoError(t, err)
 		wg.Wait()
 
 		autogold.Expect([]string{"bar", "baz", "foo"}).Equal(t, asSortedIdentifiers(handler.ReceivedEvents))
@@ -79,7 +80,7 @@ func TestBufferedLogger(t *testing.T) {
 		// Set up a buffered logger we can fill up
 		bufferSize := 3
 		workerCount := 3
-		b := events.NewBufferedLogger(l, handler, bufferSize, workerCount)
+		b, _ := events.NewBufferedLogger(l, handler, bufferSize, workerCount)
 		wg := conc.NewWaitGroup()
 		wg.Go(b.Start)
 
@@ -100,7 +101,8 @@ func TestBufferedLogger(t *testing.T) {
 
 		// Indicate close and stop the worker so that the buffer can flush
 		close(blockEventSubmissionC)
-		b.Stop()
+		err = b.Stop(ctx)
+		require.NoError(t, err)
 		wg.Wait()
 
 		// All backlogged events get submitted. Note the "buffer-full" event is
@@ -126,14 +128,15 @@ func TestBufferedLogger(t *testing.T) {
 
 		handler := &mockLogger{}
 		l, exportLogs := logtest.Captured(t)
-		b := events.NewBufferedLogger(l, handler, 10, 3)
+		b, _ := events.NewBufferedLogger(l, handler, 10, 3)
 		wg := conc.NewWaitGroup()
 		wg.Go(b.Start)
 
 		assert.NoError(t, b.LogEvent(ctx, events.Event{Identifier: "foo"}))
 
 		// Stop the worker and wait for it to finish
-		b.Stop()
+		err := b.Stop(ctx)
+		require.NoError(t, err)
 		wg.Wait()
 
 		// Submit an additional event - this should immediately attempt to

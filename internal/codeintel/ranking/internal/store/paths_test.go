@@ -22,8 +22,8 @@ func TestInsertInitialPathRanks(t *testing.T) {
 
 	logger := logtest.Scoped(t)
 	ctx := context.Background()
-	db := database.NewDB(logger, dbtest.NewDB(logger, t))
-	store := New(&observation.TestContext, db)
+	db := database.NewDB(logger, dbtest.NewDB(t))
+	store := New(observation.TestContextTB(t), db)
 
 	// Insert uploads
 	insertUploads(t, db, uploadsshared.Upload{ID: 4})

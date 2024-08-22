@@ -8,8 +8,8 @@ import { useLocation } from 'react-router-dom'
 import { dirname } from '@sourcegraph/common'
 import { Button, Badge, Link, Icon, Text, createLinkUrl, Tooltip } from '@sourcegraph/wildcard'
 
-import { FileDiffFields } from '../../graphql-operations'
-import { DiffMode } from '../../repo/commit/RepositoryCommitPage'
+import type { FileDiffFields } from '../../graphql-operations'
+import type { DiffMode } from '../../repo/commit/RepositoryCommitPage'
 import { isPerforceChangelistMappingEnabled } from '../../repo/utils'
 
 import { DiffStat, DiffStatSquares } from './DiffStat'
@@ -60,7 +60,6 @@ export const FileDiffNode: React.FunctionComponent<React.PropsWithChildren<FileD
         // By process of elimination (that TypeScript is unfortunately unable to infer, except
         // by reorganizing this code in a way that's much more complex to humans), node.oldPath
         // is non-null.
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         path = <span title={node.oldPath!}>{node.oldPath}</span>
     }
 

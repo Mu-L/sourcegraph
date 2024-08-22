@@ -5,11 +5,9 @@ import (
 	_ "embed"
 	"fmt"
 	"net/url"
-	"sync"
 
 	"github.com/graph-gophers/graphql-go/relay"
 
-	"github.com/sourcegraph/sourcegraph/internal/api/internalapi"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/errcode"
 	searchresult "github.com/sourcegraph/sourcegraph/internal/search/result"
@@ -126,18 +124,18 @@ func sendEmail(ctx context.Context, db database.DB, userID int32, template txtyp
 		if errcode.IsNotFound(err) {
 			return errors.Errorf("unable to send email to user ID %d with unknown email address", userID)
 		}
-		return errors.Errorf("internalapi.Client.UserEmailsGetEmail for userID=%d: %w", userID, err)
+		return errors.Errorf("get primary email for userID=%d: %w", userID, err)
 	}
 	if !verified {
 		return errors.Newf("unable to send email to user ID %d's unverified primary email address", userID)
 	}
 
-	if err := internalapi.Client.SendEmail(ctx, "code-monitor", txtypes.Message{
+	if err := txemail.Send(ctx, "code-monitor", txtypes.Message{
 		To:       []string{email},
 		Template: template,
 		Data:     data,
 	}); err != nil {
-		return errors.Errorf("internalapi.Client.SendEmail to email=%q userID=%d: %w", email, userID, err)
+		return errors.Errorf("send mail to email=%q userID=%d: %w", email, userID, err)
 	}
 	return nil
 }
@@ -152,28 +150,6 @@ func getCodeMonitorURL(externalURL *url.URL, monitorID int64, utmSource string) 
 
 func getCommitURL(externalURL *url.URL, repoName, oid, utmSource string) string {
 	return sourcegraphURL(externalURL, fmt.Sprintf("%s/-/commit/%s", repoName, oid), "", utmSource)
-}
-
-var (
-	externalURLOnce  sync.Once
-	externalURLValue *url.URL
-	externalURLError error
-)
-
-func getExternalURL(ctx context.Context) (*url.URL, error) {
-	if MockExternalURL != nil {
-		return MockExternalURL(), nil
-	}
-
-	externalURLOnce.Do(func() {
-		externalURLStr, err := internalapi.Client.ExternalURL(ctx)
-		if err != nil {
-			externalURLError = err
-			return
-		}
-		externalURLValue, externalURLError = url.Parse(externalURLStr)
-	})
-	return externalURLValue, externalURLError
 }
 
 func sourcegraphURL(externalURL *url.URL, path, query, utmSource string) string {

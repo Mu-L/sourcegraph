@@ -1,4 +1,4 @@
-import React, { ReactNode, useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState, type ReactNode } from 'react'
 
 import { mdiChevronDown } from '@mdi/js'
 import { VisuallyHidden } from '@reach/visually-hidden'
@@ -9,7 +9,8 @@ import { delay, map } from 'rxjs/operators'
 
 import { Timestamp } from '@sourcegraph/branded/src/components/Timestamp'
 import { useQuery } from '@sourcegraph/http-client/src'
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import {
     Button,
     Code,
@@ -29,27 +30,27 @@ import {
 
 import {
     FilteredConnection,
-    FilteredConnectionFilter,
-    FilteredConnectionQueryArguments,
+    type Filter,
+    type FilteredConnectionQueryArguments,
 } from '../components/FilteredConnection'
 import { PageTitle } from '../components/PageTitle'
-import { OutboundRequestsResult, OutboundRequestsVariables } from '../graphql-operations'
+import type { OutboundRequestsResult, OutboundRequestsVariables } from '../graphql-operations'
 
 import { OUTBOUND_REQUESTS, OUTBOUND_REQUESTS_PAGE_POLL_INTERVAL_MS } from './backend'
 import { parseProductReference } from './SiteAdminFeatureFlagsPage'
 
 import styles from './SiteAdminOutboundRequestsPage.module.scss'
 
-export interface SiteAdminOutboundRequestsPageProps extends TelemetryProps {}
+export interface SiteAdminOutboundRequestsPageProps extends TelemetryProps, TelemetryV2Props {}
 
 export type OutboundRequest = OutboundRequestsResult['outboundRequests']['nodes'][0]
 
-const filters: FilteredConnectionFilter[] = [
+const filters: Filter[] = [
     {
         id: 'filters',
         label: 'Filter',
         type: 'select',
-        values: [
+        options: [
             {
                 label: 'All',
                 value: 'all',
@@ -74,14 +75,15 @@ const filters: FilteredConnectionFilter[] = [
 
 export const SiteAdminOutboundRequestsPage: React.FunctionComponent<
     React.PropsWithChildren<SiteAdminOutboundRequestsPageProps>
-> = ({ telemetryService }) => {
+> = ({ telemetryService, telemetryRecorder }) => {
     const [items, setItems] = useState<OutboundRequest[]>([])
 
     useEffect(() => {
         telemetryService.logPageView('SiteAdminOutboundRequests')
-    }, [telemetryService])
+        telemetryRecorder.recordEvent('admin.outboundRequests', 'view')
+    }, [telemetryService, telemetryRecorder])
 
-    const lastId = items[items.length - 1]?.id ?? null
+    const lastId = items.at(-1)?.id ?? null
     const { data, loading, error, stopPolling, refetch, startPolling } = useQuery<
         OutboundRequestsResult,
         OutboundRequestsVariables
@@ -116,7 +118,7 @@ export const SiteAdminOutboundRequestsPage: React.FunctionComponent<
             // See http://www.petecorey.com/blog/2019/09/23/apollo-quirks-polling-after-refetching-with-new-variables/
             stopPolling()
             setItems(newItems)
-            refetch({ after: newItems[newItems.length - 1]?.id ?? null })
+            refetch({ after: newItems.at(-1)?.id ?? null })
                 .then(() => {})
                 .catch(() => {})
             startPolling(OUTBOUND_REQUESTS_PAGE_POLL_INTERVAL_MS)

@@ -1,10 +1,10 @@
 import { type Extension, Facet, MapMode, type SelectionRange, StateEffect, StateField } from '@codemirror/state'
-import { Decoration, EditorView, hoverTooltip, TooltipView } from '@codemirror/view'
+import { Decoration, EditorView, hoverTooltip, type TooltipView } from '@codemirror/view'
 
 import { renderMarkdown } from '@sourcegraph/common'
 import type { DecoratedToken } from '@sourcegraph/shared/src/search/query/decoratedToken'
 import { toHover } from '@sourcegraph/shared/src/search/query/hover'
-import { Node } from '@sourcegraph/shared/src/search/query/parser'
+import type { Node } from '@sourcegraph/shared/src/search/query/parser'
 import { KeywordKind } from '@sourcegraph/shared/src/search/query/token'
 import { resolveFilterMemoized } from '@sourcegraph/shared/src/search/query/utils'
 
@@ -54,7 +54,7 @@ const hoverStyle = [
         '.sg-decorated-token-hover': {
             backgroundColor: 'var(--gray-02)',
         },
-        '&dark .sg-decorated-token-hover': {
+        '.theme-dark & .sg-decorated-token-hover': {
             backgroundColor: 'var(--gray-08)',
         },
     }),
@@ -107,7 +107,13 @@ export function tokenInfo(): Extension {
                         return null
                     }
 
-                    return getTokensTooltipInformation(state.facet(decoratedTokens), position)
+                    const tooltipInformation = getTokensTooltipInformation(state.facet(decoratedTokens), position)
+
+                    // Do not show tooltips with empty content
+                    if (!tooltipInformation?.value) {
+                        return null
+                    }
+                    return tooltipInformation
                 }),
 
                 EditorView.decorations.compute([field, tooltipInformationFacet, 'selection'], state => {
@@ -151,7 +157,7 @@ export function tokenInfo(): Extension {
         EditorView.domEventHandlers({
             mousemove(event, view) {
                 const position = view.posAtCoords(event)
-                let effects: StateEffect<any> | null = null
+                let effects: StateEffect<unknown> | null = null
 
                 // event.buttons === 0 means no button is pressed
                 if (event.buttons > 0) {
@@ -239,10 +245,11 @@ function getTokensTooltipInformation(tokens: readonly DecoratedToken[], position
     const tokensAtCursor = tokens.filter(token => {
         let { start, end } = token.range
         switch (token.type) {
-            case 'field':
+            case 'field': {
                 // +1 to include field separator :
                 end += 1
                 break
+            }
         }
         return start <= position && end > position
     })
@@ -272,27 +279,32 @@ function getTokensTooltipInformation(tokens: readonly DecoratedToken[], position
             case 'pattern':
             case 'metaRevision':
             case 'metaRepoRevisionSeparator':
-            case 'metaSelector':
+            case 'metaSelector': {
                 values.push(toHover(token))
                 range = token.range
                 break
+            }
             case 'metaRegexp':
             case 'metaStructural':
-            case 'metaPredicate':
+            case 'metaPredicate': {
                 values.push(toHover(token))
                 range = token.groupRange ? token.groupRange : token.range
                 break
-            case 'keyword':
+            }
+            case 'keyword': {
                 switch (token.kind) {
-                    case KeywordKind.And:
+                    case KeywordKind.And: {
                         values.push('Find results which match both the left and the right expression.')
                         range = token.range
                         break
-                    case KeywordKind.Or:
+                    }
+                    case KeywordKind.Or: {
                         values.push('Find results which match the left or the right expression.')
                         range = token.range
                         break
+                    }
                 }
+            }
         }
     }
 

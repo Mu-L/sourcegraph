@@ -1,7 +1,6 @@
-local config = require("sg.autoindex.config").new {}
+local config = require("sg.autoindex.config").new({})
 
-for _, name in ipairs {
-  "clang",
+for _, name in ipairs({
   "go",
   "java",
   "python",
@@ -9,7 +8,8 @@ for _, name in ipairs {
   "rust",
   "test",
   "typescript",
-} do
+  "dotnet",
+}) do
   -- Backdoor set `sg.`-prefixed recognizers
   rawset(config, "sg." .. name, require("sg.autoindex." .. name))
 end

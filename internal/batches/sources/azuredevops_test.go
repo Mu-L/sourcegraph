@@ -24,7 +24,7 @@ var (
 	testProjectName           = "testproject"
 	testOrgName               = "testorg"
 	testPRID                  = "42"
-	testRepository            = azuredevops.Repository{ID: "testrepoid", Name: testRepoName, Project: azuredevops.Project{ID: "testprojectid", Name: testProjectName}, APIURL: fmt.Sprintf("https://dev.azure.com/%s/%s/_git/%s", testOrgName, testProjectName, testRepoName), CloneURL: fmt.Sprintf("https://dev.azure.com/%s/%s/_git/%s", testOrgName, testProjectName, testRepoName)}
+	testRepository            = azuredevops.Repository{ID: "testrepoid", Name: testRepoName, Project: azuredevops.Project{ID: "testprojectid", Name: testProjectName}, APIURL: fmt.Sprintf("https://dev.azure.com/%s/%s/_git/%s", testOrgName, testProjectName, testRepoName), RemoteURL: fmt.Sprintf("https://dev.azure.com/%s/%s/_git/%s", testOrgName, testProjectName, testRepoName)}
 	testCommonPullRequestArgs = azuredevops.PullRequestCommonArgs{Org: testOrgName, Project: testProjectName, RepoNameOrID: testRepoName, PullRequestID: testPRID}
 	testOrgProjectRepoArgs    = azuredevops.OrgProjectRepoArgs{Org: testOrgName, Project: testProjectName, RepoNameOrID: testRepoName}
 )
@@ -62,7 +62,8 @@ func TestAzureDevOpsSource_GitserverPushConfig(t *testing.T) {
 		},
 	}
 
-	pushConfig, err := s.GitserverPushConfig(repo)
+	ctx := context.Background()
+	pushConfig, err := s.GitserverPushConfig(ctx, repo)
 	assert.Nil(t, err)
 	assert.NotNil(t, pushConfig)
 	assert.Equal(t, "https://user:pass@dev.azure.com/testorg/testproject/_git/testrepo", pushConfig.RemoteURL)

@@ -9,8 +9,10 @@ import (
 	"time"
 
 	"github.com/sourcegraph/log"
+
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/rcache"
+	"github.com/sourcegraph/sourcegraph/internal/redispool"
 )
 
 // KeyPrefix is the prefix that will be used to initialise the redis database with.
@@ -19,11 +21,13 @@ const KeyPrefix = "recording-cmd"
 
 // RecordedCommand stores a command record in Redis.
 type RecordedCommand struct {
-	Start    time.Time `json:"start"`
-	Duration float64   `json:"duration_seconds"`
-	Args     []string  `json:"args"`
-	Dir      string    `json:"dir"`
-	Path     string    `json:"path"`
+	Start     time.Time `json:"start"`
+	Duration  float64   `json:"duration_seconds"`
+	Args      []string  `json:"args"`
+	Dir       string    `json:"dir"`
+	Path      string    `json:"path"`
+	Output    string    `json:"output"`
+	IsSuccess bool      `json:"success"`
 }
 
 func UnmarshalCommand(rawCommand []byte) (RecordedCommand, error) {
@@ -44,7 +48,10 @@ type RecordingCmd struct {
 	recording    bool
 	start        time.Time
 	done         bool
+	redactorFunc RedactorFunc
 }
+
+type RedactorFunc func(string) string
 
 // ShouldRecordFunc is a predicate to signify if a command should be recorded or just pass through.
 type ShouldRecordFunc func(context.Context, *exec.Cmd) bool
@@ -93,6 +100,19 @@ func (rc *RecordingCmd) before(ctx context.Context, _ log.Logger, cmd *exec.Cmd)
 	return nil
 }
 
+// WithRedactorFunc sets a redaction function f that will be called to redact  the command's arguments
+// and output before recording.
+//
+// The redaction function f accepts the raw argument or output string as input and returns the
+// redacted string.
+//
+// This allows sensitive arguments or output to be redacted before recording.
+// Returns the RecordingCmd to allow chaining.
+func (rc *RecordingCmd) WithRedactorFunc(f RedactorFunc) *RecordingCmd {
+	rc.redactorFunc = f
+	return rc
+}
+
 func (rc *RecordingCmd) after(_ context.Context, logger log.Logger, cmd *exec.Cmd) {
 	// ensure we don't record ourselves twice if the caller calls Wait() twice for example.
 	defer func() { rc.done = true }()
@@ -105,13 +125,36 @@ func (rc *RecordingCmd) after(_ context.Context, logger log.Logger, cmd *exec.Cm
 		return
 	}
 
+	commandArgs := cmd.Args
+	commandOutput := rc.Cmd.GetExecutionOutput()
+
+	if rc.redactorFunc != nil {
+		commandOutput = rc.redactorFunc(commandOutput)
+
+		redactedArgs := make([]string, len(commandArgs))
+		for i, arg := range commandArgs {
+			redactedArgs[i] = rc.redactorFunc(arg)
+		}
+		// We don't directly modify the commandArgs above because we want to avoid
+		// overwriting the original args (cmd.Args).
+		commandArgs = redactedArgs
+	}
+
+	isSuccess := false
+	if cmd.ProcessState != nil {
+		isSuccess = cmd.ProcessState.Success()
+	}
+
 	// record this command in redis
 	val := RecordedCommand{
 		Start:    rc.start,
 		Duration: time.Since(rc.start).Seconds(),
-		Args:     cmd.Args,
+		Args:     commandArgs,
 		Dir:      cmd.Dir,
 		Path:     cmd.Path,
+
+		IsSuccess: isSuccess,
+		Output:    commandOutput,
 	}
 
 	data, err := json.Marshal(&val)
@@ -154,14 +197,14 @@ func (rf *RecordingCommandFactory) Disable() {
 
 // Command returns a new RecordingCommand with the ShouldRecordFunc already set.
 func (rf *RecordingCommandFactory) Command(ctx context.Context, logger log.Logger, repoName, cmdName string, args ...string) *RecordingCmd {
-	store := rcache.NewFIFOList(GetFIFOListKey(repoName), rf.maxSize)
+	store := rcache.NewFIFOList(redispool.Cache, GetFIFOListKey(repoName), rf.maxSize)
 	return RecordingCommand(ctx, logger, rf.shouldRecord, store, cmdName, args...)
 }
 
 // Wrap constructs a new RecordingCommand based of an existing os/exec.Cmd, while also setting up the ShouldRecordFunc
 // currently set in the factory.
 func (rf *RecordingCommandFactory) Wrap(ctx context.Context, logger log.Logger, cmd *exec.Cmd) *RecordingCmd {
-	store := rcache.NewFIFOList(KeyPrefix, rf.maxSize)
+	store := rcache.NewFIFOList(redispool.Cache, KeyPrefix, rf.maxSize)
 	return RecordingWrap(ctx, logger, rf.shouldRecord, store, cmd)
 }
 
@@ -169,7 +212,7 @@ func (rf *RecordingCommandFactory) Wrap(ctx context.Context, logger log.Logger, 
 // os/exec.Cmd, while also setting up the ShouldRecordFunc currently set in the
 // factory. It uses repoName to create a new Redis list using it.
 func (rf *RecordingCommandFactory) WrapWithRepoName(ctx context.Context, logger log.Logger, repoName api.RepoName, cmd *exec.Cmd) *RecordingCmd {
-	store := rcache.NewFIFOList(GetFIFOListKey(string(repoName)), rf.maxSize)
+	store := rcache.NewFIFOList(redispool.Cache, GetFIFOListKey(string(repoName)), rf.maxSize)
 	return RecordingWrap(ctx, logger, rf.shouldRecord, store, cmd)
 }
 

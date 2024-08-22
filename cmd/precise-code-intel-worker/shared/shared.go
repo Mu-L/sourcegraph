@@ -10,7 +10,6 @@ import (
 	"github.com/sourcegraph/log"
 
 	"github.com/sourcegraph/sourcegraph/internal/authz"
-	"github.com/sourcegraph/sourcegraph/internal/authz/providers"
 	srp "github.com/sourcegraph/sourcegraph/internal/authz/subrepoperms"
 	"github.com/sourcegraph/sourcegraph/internal/codeintel"
 	codeintelshared "github.com/sourcegraph/sourcegraph/internal/codeintel/shared"
@@ -24,9 +23,9 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/goroutine"
 	"github.com/sourcegraph/sourcegraph/internal/honey"
 	"github.com/sourcegraph/sourcegraph/internal/httpserver"
+	"github.com/sourcegraph/sourcegraph/internal/object"
 	"github.com/sourcegraph/sourcegraph/internal/observation"
 	"github.com/sourcegraph/sourcegraph/internal/service"
-	"github.com/sourcegraph/sourcegraph/internal/uploadstore"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
 
@@ -54,11 +53,7 @@ func Main(ctx context.Context, observationCtx *observation.Context, ready servic
 	ready()
 
 	// Initialize sub-repo permissions client
-	var err error
-	authz.DefaultSubRepoPermsChecker, err = srp.NewSubRepoPermsClient(db.SubRepoPerms())
-	if err != nil {
-		return errors.Wrap(err, "creating sub-repo client")
-	}
+	authz.DefaultSubRepoPermsChecker = srp.NewSubRepoPermsClient(db.SubRepoPerms())
 
 	services, err := codeintel.NewServices(codeintel.ServiceDependencies{
 		DB:             db,
@@ -98,9 +93,7 @@ func Main(ctx context.Context, observationCtx *observation.Context, ready servic
 	})
 
 	// Go!
-	goroutine.MonitorBackgroundRoutines(ctx, append(worker, server)...)
-
-	return nil
+	return goroutine.MonitorBackgroundRoutines(ctx, append(worker, server)...)
 }
 
 func mustInitializeDB(observationCtx *observation.Context) *sql.DB {
@@ -109,23 +102,8 @@ func mustInitializeDB(observationCtx *observation.Context) *sql.DB {
 	})
 	sqlDB, err := connections.EnsureNewFrontendDB(observationCtx, dsn, "precise-code-intel-worker")
 	if err != nil {
-		log.Scoped("init db", "Initialize fontend database").Fatal("Failed to connect to frontend database", log.Error(err))
+		log.Scoped("init db").Fatal("Failed to connect to frontend database", log.Error(err))
 	}
-
-	//
-	// START FLAILING
-
-	ctx := context.Background()
-	db := database.NewDB(observationCtx.Logger, sqlDB)
-	go func() {
-		for range time.NewTicker(providers.RefreshInterval()).C {
-			allowAccessByDefault, authzProviders, _, _, _ := providers.ProvidersFromConfig(ctx, conf.Get(), db.ExternalServices(), db)
-			authz.SetProviders(allowAccessByDefault, authzProviders)
-		}
-	}()
-
-	// END FLAILING
-	//
 
 	return sqlDB
 }
@@ -136,13 +114,13 @@ func mustInitializeCodeIntelDB(observationCtx *observation.Context) codeintelsha
 	})
 	db, err := connections.EnsureNewCodeIntelDB(observationCtx, dsn, "precise-code-intel-worker")
 	if err != nil {
-		log.Scoped("init db", "Initialize codeintel database.").Fatal("Failed to connect to codeintel database", log.Error(err))
+		log.Scoped("init db").Fatal("Failed to connect to codeintel database", log.Error(err))
 	}
 
 	return codeintelshared.NewCodeIntelDB(observationCtx.Logger, db)
 }
 
-func initializeUploadStore(ctx context.Context, uploadStore uploadstore.Store) error {
+func initializeUploadStore(ctx context.Context, uploadStore object.Storage) error {
 	for {
 		if err := uploadStore.Init(ctx); err == nil || !isRequestError(err) {
 			return err
@@ -157,5 +135,5 @@ func initializeUploadStore(ctx context.Context, uploadStore uploadstore.Store) e
 }
 
 func isRequestError(err error) bool {
-	return errors.HasType(err, &smithyhttp.RequestSendError{})
+	return errors.HasType[*smithyhttp.RequestSendError](err)
 }

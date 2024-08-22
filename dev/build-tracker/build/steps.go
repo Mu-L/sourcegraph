@@ -5,15 +5,16 @@ import (
 
 	"github.com/buildkite/go-buildkite/v3/buildkite"
 
-	"github.com/sourcegraph/sourcegraph/dev/build-tracker/util"
+	"github.com/sourcegraph/sourcegraph/lib/pointers"
 )
 
 type JobStatus string
 
 const (
-	JobFixed  JobStatus = JobStatus(BuildFixed)
-	JobFailed JobStatus = JobStatus(BuildFailed)
-	JobPassed JobStatus = JobStatus(BuildPassed)
+	JobFixed   JobStatus = JobStatus(BuildFixed)
+	JobFailed  JobStatus = JobStatus(BuildFailed)
+	JobPassed  JobStatus = JobStatus(BuildPassed)
+	JobUnknown JobStatus = JobStatus("Unknown")
 )
 
 func (js JobStatus) ToBuildStatus() BuildStatus {
@@ -25,34 +26,45 @@ type Job struct {
 }
 
 func (j *Job) GetID() string {
-	return util.Strp(j.ID)
+	return pointers.DerefZero(j.ID)
 }
 
 func (j *Job) GetName() string {
-	return util.Strp(j.Name)
+	return pointers.DerefZero(j.Name)
 }
 
 func (j *Job) exitStatus() int {
-	return util.Intp(j.ExitStatus)
+	return pointers.DerefZero(j.ExitStatus)
 }
 
-func (j *Job) failed() bool {
-	return !j.SoftFailed && j.exitStatus() > 0
-}
-
-func (j *Job) state() string {
-	return strings.ToTitle(util.Strp(j.State))
+func (j *Job) GetState() string {
+	return pointers.DerefZero(j.State)
 }
 
 func (j *Job) status() JobStatus {
-	if j.failed() {
-		return JobFailed
+	state := strings.ToLower(j.GetState())
+	// We convert the state from received from buildkite to a known terminal state.
+	// If we don't know about the state we consider it to be unknown
+	// Furthermore, for the Failed / TimedOut state, we additional check the exit code and whether the step
+	// soft failed and then return a JobFailed status accordingly that is because a Job can Fail, but can
+	// fail due to a soft failure - buildkite doesn't distinguish between the two on the job status
+	switch state {
+	case JobFailedState, JobTimedOutState:
+		if !j.SoftFailed && j.exitStatus() > 0 {
+			return JobFailed
+		} else {
+			// SoftFailure so job is considered to have passed
+			return JobPassed
+		}
+	case JobPassedState:
+		return JobPassed
+	default:
+		return JobUnknown
 	}
-	return JobPassed
 }
 
 func (j *Job) hasTimedOut() bool {
-	return j.state() == "timed_out"
+	return j.status() == JobTimedOutState
 }
 
 func NewStep(name string) *Step {

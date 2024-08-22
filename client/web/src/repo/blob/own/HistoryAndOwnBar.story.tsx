@@ -1,10 +1,11 @@
-import { MockedResponse } from '@apollo/client/testing'
-import { Meta, Story } from '@storybook/react'
+import type { MockedResponse } from '@apollo/client/testing'
+import type { Meta, StoryFn } from '@storybook/react'
 
 import { getDocumentNode } from '@sourcegraph/http-client'
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 
 import { WebStory } from '../../../components/WebStory'
-import { ExternalServiceKind, FetchOwnersAndHistoryResult, RepositoryType } from '../../../graphql-operations'
+import { ExternalServiceKind, type FetchOwnersAndHistoryResult, RepositoryType } from '../../../graphql-operations'
 
 import { FETCH_OWNERS_AND_HISTORY } from './grapqlQueries'
 import { HistoryAndOwnBar } from './HistoryAndOwnBar'
@@ -13,6 +14,7 @@ window.context.experimentalFeatures = { perforceChangelistMapping: 'enabled' }
 
 const barData: FetchOwnersAndHistoryResult = {
     node: {
+        id: '1',
         sourceType: RepositoryType.GIT_REPOSITORY,
         commit: {
             blob: {
@@ -131,11 +133,12 @@ const barData: FetchOwnersAndHistoryResult = {
             },
             __typename: 'GitCommit',
         },
+        changelist: null,
         __typename: 'Repository',
     },
 }
 
-const variables = { repoID: 'VXNlcjox', filePath: 'test.tsx' }
+const variables = { repoID: 'VXNlcjox', filePath: 'test.tsx', telemetryRecorder: noOpTelemetryRecorder }
 
 const mockLoaded: MockedResponse = {
     request: {
@@ -147,13 +150,11 @@ const mockLoaded: MockedResponse = {
 
 const config: Meta = {
     title: 'web/repo/blob/own/HistoryAndOwnBar',
-    parameters: {
-        chromatic: { disableSnapshot: false },
-    },
+    parameters: {},
 }
 
 export default config
 
-export const Default: Story = () => (
+export const Default: StoryFn = () => (
     <WebStory mocks={[mockLoaded]}>{() => <HistoryAndOwnBar enableOwnershipPanel={true} {...variables} />}</WebStory>
 )

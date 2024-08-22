@@ -3,8 +3,10 @@ package compute
 import (
 	"context"
 	"fmt"
+	"io"
 
-	"github.com/sourcegraph/sourcegraph/internal/authz"
+	"github.com/sourcegraph/log"
+
 	"github.com/sourcegraph/sourcegraph/internal/comby"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
 	"github.com/sourcegraph/sourcegraph/internal/search/result"
@@ -30,7 +32,7 @@ func replace(ctx context.Context, content []byte, matchPattern MatchPattern, rep
 	case *Regexp:
 		newContent = match.Value.ReplaceAllString(string(content), replacePattern)
 	case *Comby:
-		replacements, err := comby.Replacements(ctx, comby.Args{
+		replacements, err := comby.Replacements(ctx, log.Scoped("compute"), comby.Args{
 			Input:           comby.FileContent(content),
 			MatchTemplate:   match.Value,
 			RewriteTemplate: replacePattern,
@@ -52,7 +54,12 @@ func replace(ctx context.Context, content []byte, matchPattern MatchPattern, rep
 func (c *Replace) Run(ctx context.Context, gitserverClient gitserver.Client, r result.Match) (Result, error) {
 	switch m := r.(type) {
 	case *result.FileMatch:
-		content, err := gitserverClient.ReadFile(ctx, authz.DefaultSubRepoPermsChecker, m.Repo.Name, m.CommitID, m.Path)
+		r, err := gitserverClient.NewFileReader(ctx, m.Repo.Name, m.CommitID, m.Path)
+		if err != nil {
+			return nil, err
+		}
+		defer r.Close()
+		content, err := io.ReadAll(r)
 		if err != nil {
 			return nil, err
 		}

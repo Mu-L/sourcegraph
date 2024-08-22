@@ -5,28 +5,31 @@ import { useNavigate } from 'react-router-dom'
 
 import { logger } from '@sourcegraph/common'
 import { useQuery } from '@sourcegraph/http-client'
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { ErrorAlert, LoadingSpinner } from '@sourcegraph/wildcard'
 
-import { FetchOwnershipResult, FetchOwnershipVariables } from '../../../graphql-operations'
+import type { FetchOwnershipResult, FetchOwnershipVariables } from '../../../graphql-operations'
 import { OwnershipAssignPermission } from '../../../rbac/constants'
 
 import { FETCH_OWNERS } from './grapqlQueries'
 import { MakeOwnerButton } from './MakeOwnerButton'
 import { OwnerList } from './OwnerList'
-import { OwnershipPanelProps } from './TreeOwnershipPanel'
+import type { OwnershipPanelProps } from './TreeOwnershipPanel'
 
 import styles from './FileOwnershipPanel.module.scss'
 
-export const FileOwnershipPanel: React.FunctionComponent<OwnershipPanelProps & TelemetryProps> = ({
+export const FileOwnershipPanel: React.FunctionComponent<OwnershipPanelProps & TelemetryProps & TelemetryV2Props> = ({
     repoID,
     revision,
     filePath,
     telemetryService,
+    telemetryRecorder,
 }) => {
     React.useEffect(() => {
         telemetryService.log('OwnershipPanelOpened')
-    }, [telemetryService])
+        telemetryRecorder.recordEvent('repo.blob.ownershipPanel', 'open')
+    }, [telemetryService, telemetryRecorder])
 
     const { data, loading, error, refetch } = useQuery<FetchOwnershipResult, FetchOwnershipVariables>(FETCH_OWNERS, {
         variables: {

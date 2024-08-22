@@ -1,10 +1,10 @@
-import { Dispatch, SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 
-import { ApolloClient } from '@apollo/client'
-import * as H from 'history'
+import type { ApolloClient } from '@apollo/client'
+import type * as H from 'history'
 
 import { KEYBOARD_SHORTCUTS } from '@sourcegraph/shared/src/keyboardShortcuts/keyboardShortcuts'
-import { Settings, SettingsCascadeOrError } from '@sourcegraph/shared/src/settings/settings'
+import type { Settings, SettingsCascadeOrError } from '@sourcegraph/shared/src/settings/settings'
 import { useTheme } from '@sourcegraph/shared/src/theme'
 import { toPrettyBlobURL } from '@sourcegraph/shared/src/util/url'
 import { useSessionStorage } from '@sourcegraph/wildcard'
@@ -12,13 +12,13 @@ import { useSessionStorage } from '@sourcegraph/wildcard'
 import { SearchValueRankingCache } from '../../fuzzyFinder/SearchValueRankingCache'
 import { parseBrowserRepoURL } from '../../util/url'
 import { Keybindings, plaintextKeybindings } from '../KeyboardShortcutsHelp/KeyboardShortcutsHelp'
-import { UserHistory } from '../useUserHistory'
+import type { UserHistory } from '../useUserHistory'
 
 import { createActionsFSM, getAllFuzzyActions } from './FuzzyActions'
 import { FuzzyFiles, FuzzyRepoFiles } from './FuzzyFiles'
 import { useFuzzyFinderFeatureFlags } from './FuzzyFinderFeatureFlag'
-import { FuzzyFSM } from './FuzzyFsm'
-import { FuzzyRepoRevision } from './FuzzyRepoRevision'
+import type { FuzzyFSM } from './FuzzyFsm'
+import type { FuzzyRepoRevision } from './FuzzyRepoRevision'
 import { FuzzyRepos } from './FuzzyRepos'
 import { FuzzySymbols } from './FuzzySymbols'
 
@@ -151,7 +151,7 @@ export class FuzzyTabs {
     public entries(): [FuzzyTabKey, Tab][] {
         const result: [FuzzyTabKey, Tab][] = []
         for (const key of Object.keys(this.underlying)) {
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
             const value = (this.underlying as any)[key as keyof Tab] as Tab
             if (value.isEnabled) {
                 result.push([key as FuzzyTabKey, value])

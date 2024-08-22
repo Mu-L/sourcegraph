@@ -1,9 +1,10 @@
 import { mdiCog } from '@mdi/js'
 
 import { Icon } from '@sourcegraph/wildcard'
-import { BreadcrumbItem } from '@sourcegraph/wildcard/src/components/PageHeader'
+// eslint-disable-next-line no-restricted-imports
+import type { BreadcrumbItem } from '@sourcegraph/wildcard/src/components/PageHeader'
 
-import { ExternalServiceFieldsWithConfig } from './backend'
+import type { ExternalServiceFieldsWithConfig } from './backend'
 import { resolveExternalServiceCategory } from './externalServices'
 
 export const getBreadCrumbs = (

@@ -1,30 +1,30 @@
-import React, { FC, useCallback, useEffect, useRef } from 'react'
+import React, { type FC, useCallback, useEffect, useRef } from 'react'
 
 import { useLocation, useNavigate } from 'react-router-dom'
-import { NavbarQueryState } from 'src/stores/navbarSearchQueryState'
+import type { NavbarQueryState } from 'src/stores/navbarSearchQueryState'
 import shallow from 'zustand/shallow'
 
-import { SearchBox, Toggles } from '@sourcegraph/branded'
+import { SearchBox } from '@sourcegraph/branded'
+import { Toggles } from '@sourcegraph/branded/src/search-ui/input/toggles/Toggles'
 import { TraceSpanProvider } from '@sourcegraph/observability-client'
+import type { SearchPatternType } from '@sourcegraph/shared/src/graphql-operations'
 import {
-    CaseSensitivityProps,
-    SearchPatternTypeProps,
-    SubmitSearchParameters,
+    type CaseSensitivityProps,
+    type SearchPatternTypeProps,
+    type SubmitSearchParameters,
     canSubmitSearch,
-    QueryState,
-    SearchModeProps,
+    type QueryState,
+    type SearchModeProps,
     getUserSearchContextNamespaces,
 } from '@sourcegraph/shared/src/search'
-import { useExperimentalFeatures } from '@sourcegraph/shared/src/settings/settings'
-import { useIsLightTheme } from '@sourcegraph/shared/src/theme'
 import { Form } from '@sourcegraph/wildcard'
 
 import { Notices } from '../../../global/Notices'
 import { useLegacyContext_onlyInStormRoutes } from '../../../LegacyRouteContext'
 import { submitSearch } from '../../../search/helpers'
-import { LazyExperimentalSearchInput } from '../../../search/input/LazyExperimentalSearchInput'
+import { LazyV2SearchInput } from '../../../search/input/LazyV2SearchInput'
 import { useRecentSearches } from '../../../search/input/useRecentSearches'
-import { useExperimentalQueryInput } from '../../../search/useExperimentalSearchInput'
+import { useV2QueryInput } from '../../../search/useV2QueryInput'
 import { useNavbarQueryState, setSearchCaseSensitivity, setSearchPatternType, setSearchMode } from '../../../stores'
 
 import { SimpleSearch } from './SimpleSearch'
@@ -40,9 +40,12 @@ const isTouchOnlyDevice =
 
 const queryStateSelector = (
     state: NavbarQueryState
-): Pick<CaseSensitivityProps, 'caseSensitive'> & SearchPatternTypeProps & Pick<SearchModeProps, 'searchMode'> => ({
+): Pick<CaseSensitivityProps, 'caseSensitive'> &
+    SearchPatternTypeProps &
+    Pick<SearchModeProps, 'searchMode'> & { defaultPatternType: SearchPatternType } => ({
     caseSensitive: state.searchCaseSensitivity,
     patternType: state.searchPatternType,
+    defaultPatternType: state.defaultPatternType,
     searchMode: state.searchMode,
 })
 
@@ -62,22 +65,22 @@ export const SearchPageInput: FC<SearchPageInputProps> = props => {
         telemetryService,
         platformContext,
         searchContextsEnabled,
-        settingsCascade,
         selectedSearchContextSpec: dynamicSearchContextSpec,
         fetchSearchContexts,
         setSelectedSearchContextSpec,
     } = useLegacyContext_onlyInStormRoutes()
+    const { telemetryRecorder } = platformContext
 
     const selectedSearchContextSpec = hardCodedSearchContextSpec || dynamicSearchContextSpec
 
     const location = useLocation()
     const navigate = useNavigate()
 
-    const isLightTheme = useIsLightTheme()
-    const { caseSensitive, patternType, searchMode } = useNavbarQueryState(queryStateSelector, shallow)
-    const [experimentalQueryInput] = useExperimentalQueryInput()
-    const applySuggestionsOnEnter =
-        useExperimentalFeatures(features => features.applySearchQuerySuggestionOnEnter) ?? true
+    const { caseSensitive, patternType, defaultPatternType, searchMode } = useNavbarQueryState(
+        queryStateSelector,
+        shallow
+    )
+    const [v2QueryInput] = useV2QueryInput()
 
     const { recentSearches } = useRecentSearches()
 
@@ -96,7 +99,8 @@ export const SearchPageInput: FC<SearchPageInputProps> = props => {
                     searchMode,
                     // In the new query input, context is either omitted (-> global)
                     // or explicitly specified.
-                    selectedSearchContextSpec: experimentalQueryInput ? undefined : selectedSearchContextSpec,
+                    selectedSearchContextSpec: v2QueryInput ? undefined : selectedSearchContextSpec,
+                    telemetryRecorder,
                     ...parameters,
                 })
             }
@@ -109,7 +113,8 @@ export const SearchPageInput: FC<SearchPageInputProps> = props => {
             patternType,
             caseSensitive,
             searchMode,
-            experimentalQueryInput,
+            v2QueryInput,
+            telemetryRecorder,
         ]
     )
     const submitSearchOnChangeRef = useRef(submitSearchOnChange)
@@ -133,19 +138,17 @@ export const SearchPageInput: FC<SearchPageInputProps> = props => {
     )
 
     // TODO (#48103): Remove/simplify when new search input is released
-    const input = experimentalQueryInput ? (
-        <LazyExperimentalSearchInput
+    const input = v2QueryInput ? (
+        <LazyV2SearchInput
+            autoFocus={!isTouchOnlyDevice}
             telemetryService={telemetryService}
+            telemetryRecorder={telemetryRecorder}
             patternType={patternType}
             interpretComments={false}
             queryState={queryState}
             onChange={setQueryState}
             onSubmit={onSubmit}
-            isLightTheme={isLightTheme}
-            platformContext={platformContext}
             authenticatedUser={authenticatedUser}
-            fetchSearchContexts={fetchSearchContexts}
-            getUserSearchContextNamespaces={getUserSearchContextNamespaces}
             isSourcegraphDotCom={isSourcegraphDotCom}
             submitSearch={submitSearchOnChange}
             selectedSearchContextSpec={selectedSearchContextSpec}
@@ -153,18 +156,19 @@ export const SearchPageInput: FC<SearchPageInputProps> = props => {
         >
             <Toggles
                 patternType={patternType}
+                defaultPatternType={defaultPatternType}
                 caseSensitive={caseSensitive}
                 setPatternType={setSearchPatternType}
                 setCaseSensitivity={setSearchCaseSensitivity}
                 searchMode={searchMode}
                 setSearchMode={setSearchMode}
-                settingsCascade={settingsCascade}
                 navbarSearchQuery={queryState.query}
-                showCopyQueryButton={false}
-                showSmartSearchButton={false}
-                structuralSearchDisabled={window.context?.experimentalFeatures?.structuralSearch === 'disabled'}
+                submitSearch={submitSearchOnChange}
+                structuralSearchDisabled={window.context?.experimentalFeatures?.structuralSearch !== 'enabled'}
+                telemetryService={telemetryService}
+                telemetryRecorder={telemetryRecorder}
             />
-        </LazyExperimentalSearchInput>
+        </LazyV2SearchInput>
     ) : (
         <SearchBox
             platformContext={platformContext}
@@ -173,14 +177,15 @@ export const SearchPageInput: FC<SearchPageInputProps> = props => {
             selectedSearchContextSpec={selectedSearchContextSpec}
             setSelectedSearchContextSpec={setSelectedSearchContextSpec}
             telemetryService={telemetryService}
+            telemetryRecorder={telemetryRecorder}
             authenticatedUser={authenticatedUser}
             isSourcegraphDotCom={isSourcegraphDotCom}
-            settingsCascade={settingsCascade}
             searchContextsEnabled={searchContextsEnabled}
             showSearchContext={searchContextsEnabled}
             showSearchContextManagement={true}
             caseSensitive={caseSensitive}
             patternType={patternType}
+            defaultPatternType={defaultPatternType}
             setPatternType={setSearchPatternType}
             setCaseSensitivity={setSearchCaseSensitivity}
             searchMode={searchMode}
@@ -189,9 +194,7 @@ export const SearchPageInput: FC<SearchPageInputProps> = props => {
             onChange={setQueryState}
             onSubmit={onSubmit}
             autoFocus={!isTouchOnlyDevice}
-            isExternalServicesUserModeAll={window.context.externalServicesUserMode === 'all'}
-            structuralSearchDisabled={window.context?.experimentalFeatures?.structuralSearch === 'disabled'}
-            applySuggestionsOnEnter={applySuggestionsOnEnter}
+            structuralSearchDisabled={window.context?.experimentalFeatures?.structuralSearch !== 'enabled'}
             showSearchHistory={true}
             recentSearches={recentSearches}
         />
@@ -205,7 +208,7 @@ export const SearchPageInput: FC<SearchPageInputProps> = props => {
                             <div className="d-flex flex-grow-1 w-100">{input}</div>
                         </TraceSpanProvider>
                     </div>
-                    <Notices className="my-3 text-center" location="home" />
+                    <Notices className="my-3 text-center" location="home" telemetryRecorder={telemetryRecorder} />
                 </Form>
             </div>
             {simpleSearch && (
@@ -213,6 +216,7 @@ export const SearchPageInput: FC<SearchPageInputProps> = props => {
                     <hr className="mt-4 mb-4" />
                     <SimpleSearch
                         telemetryService={telemetryService}
+                        telemetryRecorder={telemetryRecorder}
                         onSubmit={onSubmit}
                         onSimpleSearchUpdate={onSimpleSearchUpdate}
                     />

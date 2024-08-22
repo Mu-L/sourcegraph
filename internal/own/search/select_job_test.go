@@ -1,16 +1,20 @@
 package search
 
 import (
+	"bytes"
 	"context"
 	"hash/fnv"
+	"io"
 	"io/fs"
 	"sort"
 	"testing"
 
 	"github.com/hexops/autogold/v2"
+	"github.com/stretchr/testify/assert"
+
 	"github.com/sourcegraph/sourcegraph/internal/api"
-	"github.com/sourcegraph/sourcegraph/internal/authz"
 	"github.com/sourcegraph/sourcegraph/internal/database"
+	"github.com/sourcegraph/sourcegraph/internal/database/dbmocks"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
 	"github.com/sourcegraph/sourcegraph/internal/search"
 	"github.com/sourcegraph/sourcegraph/internal/search/job"
@@ -18,19 +22,18 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/search/result"
 	"github.com/sourcegraph/sourcegraph/internal/search/streaming"
 	"github.com/sourcegraph/sourcegraph/internal/types"
-	"github.com/stretchr/testify/assert"
 )
 
 func TestGetCodeOwnersFromMatches(t *testing.T) {
-	setupDB := func() *database.MockDB {
-		codeownersStore := database.NewMockCodeownersStore()
+	setupDB := func() *dbmocks.MockDB {
+		codeownersStore := dbmocks.NewMockCodeownersStore()
 		codeownersStore.GetCodeownersForRepoFunc.SetDefaultReturn(nil, nil)
-		repoStore := database.NewMockRepoStore()
+		repoStore := dbmocks.NewMockRepoStore()
 		repoStore.GetFunc.SetDefaultReturn(&types.Repo{ExternalRepo: api.ExternalRepoSpec{ServiceType: "github"}}, nil)
-		db := database.NewMockDB()
+		db := dbmocks.NewMockDB()
 		db.CodeownersFunc.SetDefaultReturn(codeownersStore)
-		db.AssignedOwnersFunc.SetDefaultReturn(database.NewMockAssignedOwnersStore())
-		db.AssignedTeamsFunc.SetDefaultReturn(database.NewMockAssignedTeamsStore())
+		db.AssignedOwnersFunc.SetDefaultReturn(dbmocks.NewMockAssignedOwnersStore())
+		db.AssignedTeamsFunc.SetDefaultReturn(dbmocks.NewMockAssignedTeamsStore())
 		db.ReposFunc.SetDefaultReturn(repoStore)
 		return db
 	}
@@ -39,9 +42,7 @@ func TestGetCodeOwnersFromMatches(t *testing.T) {
 		ctx := context.Background()
 
 		gitserverClient := gitserver.NewMockClient()
-		gitserverClient.ReadFileFunc.SetDefaultHook(func(_ context.Context, _ authz.SubRepoPermissionChecker, _ api.RepoName, _ api.CommitID, file string) ([]byte, error) {
-			return nil, fs.ErrNotExist
-		})
+		gitserverClient.NewFileReaderFunc.SetDefaultReturn(nil, fs.ErrNotExist)
 
 		rules := NewRulesCache(gitserverClient, setupDB())
 
@@ -63,9 +64,9 @@ func TestGetCodeOwnersFromMatches(t *testing.T) {
 		ctx := context.Background()
 
 		gitserverClient := gitserver.NewMockClient()
-		gitserverClient.ReadFileFunc.SetDefaultHook(func(_ context.Context, _ authz.SubRepoPermissionChecker, _ api.RepoName, _ api.CommitID, file string) ([]byte, error) {
+		gitserverClient.NewFileReaderFunc.SetDefaultHook(func(ctx context.Context, rn api.RepoName, ci api.CommitID, s string) (io.ReadCloser, error) {
 			// return a codeowner path for no which doesn't match the path of the match below.
-			return []byte("NO.md @test\n"), nil
+			return io.NopCloser(bytes.NewReader([]byte("NO.md @test\n"))), nil
 		})
 		rules := NewRulesCache(gitserverClient, setupDB())
 
@@ -87,21 +88,21 @@ func TestGetCodeOwnersFromMatches(t *testing.T) {
 		ctx := context.Background()
 
 		gitserverClient := gitserver.NewMockClient()
-		gitserverClient.ReadFileFunc.SetDefaultHook(func(_ context.Context, _ authz.SubRepoPermissionChecker, _ api.RepoName, _ api.CommitID, file string) ([]byte, error) {
+		gitserverClient.NewFileReaderFunc.SetDefaultHook(func(ctx context.Context, rn api.RepoName, ci api.CommitID, s string) (io.ReadCloser, error) {
 			// README is owned by a user and a team.
 			// code.go is owner by another user and an unknown entity.
-			return []byte("README.md @testUserHandle @testTeamHandle\ncode.go user@email.com @unknown"), nil
+			return io.NopCloser(bytes.NewReader([]byte("README.md @testUserHandle @testTeamHandle\ncode.go user@email.com @unknown"))), nil
 		})
-		mockUserStore := database.NewMockUserStore()
-		mockTeamStore := database.NewMockTeamStore()
-		mockEmailStore := database.NewMockUserEmailsStore()
+		mockUserStore := dbmocks.NewMockUserStore()
+		mockTeamStore := dbmocks.NewMockTeamStore()
+		mockEmailStore := dbmocks.NewMockUserEmailsStore()
 		db := setupDB()
 		db.UsersFunc.SetDefaultReturn(mockUserStore)
 		db.UserEmailsFunc.SetDefaultReturn(mockEmailStore)
 		db.TeamsFunc.SetDefaultReturn(mockTeamStore)
-		db.AssignedOwnersFunc.SetDefaultReturn(database.NewMockAssignedOwnersStore())
-		db.AssignedTeamsFunc.SetDefaultReturn(database.NewMockAssignedTeamsStore())
-		db.UserExternalAccountsFunc.SetDefaultReturn(database.NewMockUserExternalAccountsStore())
+		db.AssignedOwnersFunc.SetDefaultReturn(dbmocks.NewMockAssignedOwnersStore())
+		db.AssignedTeamsFunc.SetDefaultReturn(dbmocks.NewMockAssignedTeamsStore())
+		db.UserExternalAccountsFunc.SetDefaultReturn(dbmocks.NewMockUserExternalAccountsStore())
 
 		personOwnerByHandle := newTestUser("testUserHandle")
 		personOwnerByEmail := newTestUser("user@email.com")
@@ -152,7 +153,8 @@ func TestGetCodeOwnersFromMatches(t *testing.T) {
 						File: result.File{
 							Path: "code.go",
 						},
-					}},
+					},
+				},
 			})
 			return nil, nil
 		})

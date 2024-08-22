@@ -1,4 +1,4 @@
-import { FunctionComponent, useEffect, useMemo, useState } from 'react'
+import { type FunctionComponent, useEffect, useMemo, useState } from 'react'
 
 import { mdiDelete, mdiPlus } from '@mdi/js'
 import classNames from 'classnames'
@@ -113,7 +113,6 @@ interface RepositoryListProps {
 }
 
 const RepositoryList: FunctionComponent<RepositoryListProps> = ({ repositoryPatterns }) => {
-    const isSourcegraphApp = window.context?.sourcegraphAppMode
     const [repositoryFetchLimit, setRepositoryFetchLimit] = useState(DEFAULT_FETCH_LIMIT)
     const {
         previewResult: preview,
@@ -188,13 +187,9 @@ const RepositoryList: FunctionComponent<RepositoryListProps> = ({ repositoryPatt
                 {preview.repositories.map(repo => (
                     <li key={repo.name} className="list-group-item">
                         {repo.externalRepository && <ExternalRepositoryIcon externalRepo={repo.externalRepository} />}
-                        {isSourcegraphApp ? (
-                            <>{repo.name}</>
-                        ) : (
-                            <Link to={repo.url} target="_blank" rel="noopener noreferrer">
-                                {repo.name}
-                            </Link>
-                        )}
+                        <Link to={repo.url} target="_blank" rel="noopener noreferrer">
+                            {repo.name}
+                        </Link>
                     </li>
                 ))}
             </ul>

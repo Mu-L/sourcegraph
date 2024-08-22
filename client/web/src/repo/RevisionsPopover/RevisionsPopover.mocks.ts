@@ -1,10 +1,11 @@
-import { MockedResponse } from '@apollo/client/testing'
+import type { MockedResponse } from '@apollo/client/testing'
 import { subDays } from 'date-fns'
 
 import { getDocumentNode } from '@sourcegraph/http-client'
 import { GitRefType } from '@sourcegraph/shared/src/graphql-operations'
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 
-import {
+import type {
     GitCommitAncestorsConnectionFields,
     GitRefConnectionFields,
     RepositoryGitCommitResult,
@@ -12,7 +13,7 @@ import {
 } from '../../graphql-operations'
 import { REPOSITORY_GIT_REFS } from '../GitReference'
 
-import { RevisionsPopoverProps } from './RevisionsPopover'
+import type { RevisionsPopoverProps } from './RevisionsPopover'
 import { REPOSITORY_GIT_COMMIT } from './RevisionsPopoverCommits'
 
 export const MOCK_PROPS: RevisionsPopoverProps = {
@@ -23,6 +24,7 @@ export const MOCK_PROPS: RevisionsPopoverProps = {
     currentRev: 'main',
     togglePopover: () => null,
     showSpeculativeResults: false,
+    telemetryRecorder: noOpTelemetryRecorder,
 }
 
 const yesterday = subDays(new Date(), 1).toISOString()

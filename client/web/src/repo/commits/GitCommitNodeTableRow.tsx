@@ -1,17 +1,17 @@
 import React, { useState, useCallback } from 'react'
 
-import { mdiDotsHorizontal } from '@mdi/js'
+import { mdiChevronUp, mdiChevronDown } from '@mdi/js'
 import classNames from 'classnames'
 
 import { Timestamp } from '@sourcegraph/branded/src/components/Timestamp'
+import { EVENT_LOGGER } from '@sourcegraph/shared/src/telemetry/web/eventLogger'
 import { Button, Link, Icon, Code } from '@sourcegraph/wildcard'
 
-import { eventLogger } from '../../tracking/eventLogger'
 import { CommitMessageWithLinks } from '../commit/CommitMessageWithLinks'
 import { Linkified } from '../linkifiy/Linkified'
 import { isPerforceChangelistMappingEnabled } from '../utils'
 
-import { GitCommitNodeProps } from './GitCommitNode'
+import type { GitCommitNodeProps } from './GitCommitNode'
 import { GitCommitNodeByline } from './GitCommitNodeByline'
 
 import styles from './GitCommitNode.module.scss'
@@ -26,13 +26,21 @@ export const GitCommitNodeTableRow: React.FC<
         | 'onHandleDiffMode'
         | 'diffMode'
     >
-> = ({ node, className, expandCommitMessageBody, hideExpandCommitMessageBody, messageSubjectClassName }) => {
+> = ({
+    node,
+    className,
+    expandCommitMessageBody,
+    hideExpandCommitMessageBody,
+    messageSubjectClassName,
+    telemetryRecorder,
+}) => {
     const [showCommitMessageBody, setShowCommitMessageBody] = useState<boolean>(false)
 
     const toggleShowCommitMessageBody = useCallback((): void => {
-        eventLogger.log('CommitBodyToggled')
+        EVENT_LOGGER.log('CommitBodyToggled')
+        telemetryRecorder.recordEvent('repo.commit.body', 'toggle')
         setShowCommitMessageBody(!showCommitMessageBody)
-    }, [showCommitMessageBody])
+    }, [showCommitMessageBody, telemetryRecorder])
 
     const canonicalURL =
         isPerforceChangelistMappingEnabled() && node.perforceChangelist?.canonicalURL
@@ -57,7 +65,7 @@ export const GitCommitNodeTableRow: React.FC<
                     size="sm"
                     aria-label={showCommitMessageBody ? 'Hide commit message body' : 'Show commit message body'}
                 >
-                    <Icon aria-hidden={true} svgPath={mdiDotsHorizontal} />
+                    <Icon aria-hidden={true} svgPath={showCommitMessageBody ? mdiChevronUp : mdiChevronDown} />
                 </Button>
             )}
 
@@ -69,12 +77,14 @@ export const GitCommitNodeTableRow: React.FC<
 
     const commitMessageBody =
         expandCommitMessageBody || showCommitMessageBody ? (
-            <tr className={classNames(styles.tableRow, className)}>
-                <td colSpan={3}>
-                    <pre className={styles.messageBody}>
+            <tr className={classNames(styles.commitMessage, className)}>
+                <td className={classNames(styles.colByline)} />
+                <td>
+                    <div className={`${styles.messageBody} flex-1`}>
                         {node.body && <Linkified input={node.body} externalURLs={node.externalURLs} />}
-                    </pre>
+                    </div>
                 </td>
+                <td className={classNames(styles.spacer)} />
             </tr>
         ) : undefined
 

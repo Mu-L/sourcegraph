@@ -5,24 +5,24 @@ import classNames from 'classnames'
 
 import { RepoLink } from '@sourcegraph/shared/src/components/RepoLink'
 import {
+    Alert,
     Button,
+    ErrorAlert,
+    Form,
     Icon,
     Input,
     Label,
-    Alert,
+    LoadingSpinner,
+    Select,
     Tooltip,
     useDebounce,
-    LoadingSpinner,
-    ErrorAlert,
-    Select,
-    Form,
 } from '@sourcegraph/wildcard'
 
-import { FilteredConnectionFilterValue } from '../../../components/FilteredConnection'
-import { PackageRepoReferenceKind } from '../../../graphql-operations'
+import type { FilterOption } from '../../../components/FilteredConnection'
+import type { PackageRepoReferenceKind } from '../../../graphql-operations'
 import { prettyBytesBigint } from '../../../util/prettyBytesBigint'
 import { useMatchingPackages } from '../hooks/useMatchingPackages'
-import { BlockType } from '../modal-content/AddPackageFilterModalContent'
+import type { BlockType } from '../modal-content/AddPackageFilterModalContent'
 
 import { FilterPackagesActions } from './FilterPackagesActions'
 
@@ -35,7 +35,7 @@ export interface MultiPackageState {
 
 interface MultiPackageFormProps {
     initialState: MultiPackageState
-    filters: FilteredConnectionFilterValue[]
+    filters: FilterOption[]
     setType: (type: BlockType) => void
     onDismiss: () => void
     onSave: (state: MultiPackageState) => Promise<unknown>
@@ -180,7 +180,7 @@ const PackageList: React.FunctionComponent<PackageListProps> = ({ blockState, qu
                 </span>
                 {nodes.length < totalCount && (
                     <Button variant="link" className="p-0 mr-3" onClick={() => setPackageFetchLimit(nextFetchLimit)}>
-                        <>Show {nextFetchLimit === totalCount ? 'all ' : { nextFetchLimit }}</>
+                        <>Show {nextFetchLimit === totalCount ? 'all ' : nextFetchLimit.toString()}</>
                     </Button>
                 )}
             </div>

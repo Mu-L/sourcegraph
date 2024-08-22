@@ -9,14 +9,15 @@ import (
 	"sync/atomic"
 	"testing"
 
-	mockassert "github.com/derision-test/go-mockgen/testutil/assert"
+	mockassert "github.com/derision-test/go-mockgen/v2/testutil/assert"
 	"github.com/sourcegraph/log/logtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/sourcegraph/sourcegraph/internal/database"
+	"github.com/sourcegraph/sourcegraph/internal/database/dbmocks"
 	"github.com/sourcegraph/sourcegraph/internal/encryption"
 	"github.com/sourcegraph/sourcegraph/internal/types"
+	"github.com/sourcegraph/sourcegraph/internal/webhooks/outbound"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
 
@@ -52,10 +53,10 @@ func TestHandler_Handle(t *testing.T) {
 			Secret: encryption.NewUnencrypted(secret),
 		}
 
-		store := database.NewMockOutboundWebhookStore()
+		store := dbmocks.NewMockOutboundWebhookStore()
 		store.ListFunc.SetDefaultReturn([]*types.OutboundWebhook{happyWebhook, sadWebhook}, nil)
 
-		logStore := database.NewMockOutboundWebhookLogStore()
+		logStore := dbmocks.NewMockOutboundWebhookLogStore()
 		webhooksSeen := newSeen[int64]()
 		logStore.CreateFunc.SetDefaultHook(func(ctx context.Context, log *types.OutboundWebhookLog) error {
 			assert.Equal(t, job.ID, log.JobID)
@@ -82,6 +83,9 @@ func TestHandler_Handle(t *testing.T) {
 			store:    store,
 			logStore: logStore,
 		}
+
+		outbound.SetTestDenyList()
+		t.Cleanup(outbound.ResetDenyList)
 
 		err := h.Handle(ctx, logger, job)
 		// We expect an error here because sadServer returned a 500.
@@ -112,16 +116,16 @@ func TestHandler_Handle(t *testing.T) {
 
 		webhook := &types.OutboundWebhook{
 			ID:     1,
-			URL:    encryption.NewUnencrypted("http://sourcegraph.com/webhook-receiver/1234"),
+			URL:    encryption.NewUnencrypted("http://127.0.0.1/webhook-receiver/1234"),
 			Secret: encryption.NewUnencrypted(secret),
 		}
 
-		store := database.NewMockOutboundWebhookStore()
+		store := dbmocks.NewMockOutboundWebhookStore()
 		store.ListFunc.SetDefaultReturn([]*types.OutboundWebhook{webhook}, nil)
 
 		want := errors.New("connection error")
 
-		logStore := database.NewMockOutboundWebhookLogStore()
+		logStore := dbmocks.NewMockOutboundWebhookLogStore()
 		logStore.CreateFunc.SetDefaultHook(func(ctx context.Context, log *types.OutboundWebhookLog) error {
 			have, err := log.Error.Decrypt(ctx)
 			require.NoError(t, err)
@@ -135,6 +139,9 @@ func TestHandler_Handle(t *testing.T) {
 			store:    store,
 			logStore: logStore,
 		}
+
+		outbound.SetTestDenyList()
+		t.Cleanup(outbound.ResetDenyList)
 
 		err := h.Handle(ctx, logger, job)
 		assert.ErrorIs(t, err, want)

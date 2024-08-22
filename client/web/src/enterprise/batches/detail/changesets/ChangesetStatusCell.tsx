@@ -17,7 +17,7 @@ import classNames from 'classnames'
 
 import { Tooltip, Icon } from '@sourcegraph/wildcard'
 
-import { ChangesetFields, ChangesetState, Scalars } from '../../../../graphql-operations'
+import { type ChangesetFields, ChangesetState, type Scalars } from '../../../../graphql-operations'
 
 import { ChangesetStatusScheduled } from './ChangesetStatusScheduled'
 
@@ -35,28 +35,39 @@ export const ChangesetStatusCell: React.FunctionComponent<React.PropsWithChildre
     role,
 }) => {
     switch (state) {
-        case ChangesetState.FAILED:
+        case ChangesetState.FAILED: {
             return <ChangesetStatusError className={className} role={role} />
-        case ChangesetState.RETRYING:
+        }
+        case ChangesetState.RETRYING: {
             return <ChangesetStatusRetrying className={className} role={role} />
-        case ChangesetState.SCHEDULED:
+        }
+        case ChangesetState.SCHEDULED: {
             return <ChangesetStatusScheduled className={className} role={role} id={id} />
-        case ChangesetState.PROCESSING:
+        }
+        case ChangesetState.PROCESSING: {
             return <ChangesetStatusProcessing className={className} role={role} />
-        case ChangesetState.UNPUBLISHED:
+        }
+        case ChangesetState.UNPUBLISHED: {
             return <ChangesetStatusUnpublished className={className} role={role} />
-        case ChangesetState.OPEN:
+        }
+        case ChangesetState.OPEN: {
             return <ChangesetStatusOpen className={className} role={role} />
-        case ChangesetState.DRAFT:
+        }
+        case ChangesetState.DRAFT: {
             return <ChangesetStatusDraft className={className} role={role} />
-        case ChangesetState.CLOSED:
+        }
+        case ChangesetState.CLOSED: {
             return <ChangesetStatusClosed className={className} role={role} />
-        case ChangesetState.MERGED:
+        }
+        case ChangesetState.MERGED: {
             return <ChangesetStatusMerged className={className} role={role} />
-        case ChangesetState.READONLY:
+        }
+        case ChangesetState.READONLY: {
             return <ChangesetStatusReadOnly className={className} role={role} />
-        case ChangesetState.DELETED:
+        }
+        case ChangesetState.DELETED: {
             return <ChangesetStatusDeleted className={className} role={role} />
+        }
     }
 }
 

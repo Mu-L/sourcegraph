@@ -4,12 +4,14 @@ import (
 	"context"
 	"testing"
 
-	"github.com/sourcegraph/sourcegraph/internal/database"
+	"github.com/sourcegraph/sourcegraph/internal/database/dbmocks"
 )
 
 func TestSubjects(t *testing.T) {
 	t.Run("Default settings are included", func(t *testing.T) {
-		cascade := &settingsCascade{db: database.NewMockDB(), subject: &settingsSubjectResolver{site: NewSiteResolver(nil, nil)}}
+		subject := &settingsSubjectResolver{site: NewSiteResolver(nil, nil)}
+		subject.mockCheckedAccessForTest()
+		cascade := &settingsCascade{db: dbmocks.NewMockDB(), subject: subject}
 		subjects, err := cascade.Subjects(context.Background())
 		if err != nil {
 			t.Fatal(err)

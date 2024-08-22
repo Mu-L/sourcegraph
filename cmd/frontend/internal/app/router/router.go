@@ -7,7 +7,7 @@ package router
 import (
 	"github.com/gorilla/mux"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/codyapp"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/app/ui/sveltekit"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/routevar"
 )
 
@@ -28,7 +28,6 @@ const (
 	RequestAccess      = "request-access"
 	UnlockAccount      = "unlock-account"
 	UnlockUserAccount  = "unlock-user-account"
-	Welcome            = "welcome"
 	SiteInit           = "site-init"
 	VerifyEmail        = "verify-email"
 	ResetPasswordInit  = "reset-password.init"
@@ -41,9 +40,6 @@ const (
 
 	LatestPing = "pings.latest"
 
-	SetupGitHubAppCloud = "setup.github.app.cloud"
-	SetupGitHubApp      = "setup.github.app"
-
 	OldToolsRedirect = "old-tools-redirect"
 	OldTreeRedirect  = "old-tree-redirect"
 
@@ -55,8 +51,6 @@ const (
 	GopherconLiveBlog = "gophercon.live.blog"
 
 	UI = "ui"
-
-	AppUpdateCheck = codyapp.RouteAppUpdateCheck
 )
 
 // Router returns the frontend app router.
@@ -78,7 +72,6 @@ func newRouter() *mux.Router {
 
 	base.Path("/-/sign-up").Methods("POST").Name(SignUp)
 	base.Path("/-/request-access").Methods("POST").Name(RequestAccess)
-	base.Path("/-/welcome").Methods("GET").Name(Welcome)
 	base.Path("/-/site-init").Methods("POST").Name(SiteInit)
 	base.Path("/-/verify-email").Methods("GET").Name(VerifyEmail)
 	base.Path("/-/sign-in").Methods("POST").Name(SignIn)
@@ -106,8 +99,10 @@ func newRouter() *mux.Router {
 
 	base.Path("/site-admin/pings/latest").Methods("GET").Name(LatestPing)
 
-	base.Path("/setup/github/app/cloud").Methods("GET").Name(SetupGitHubAppCloud)
-	base.Path("/setup/github/app").Methods("GET").Name(SetupGitHubApp)
+	// Make the abov paths known to the SvelteKit app
+	// (the repo route is ignored since it's basically catch-all;
+	//  it's also handled by ui/router.go)
+	sveltekit.RegisterSvelteKit(base, nil)
 
 	repoPath := `/` + routevar.Repo
 	repo := base.PathPrefix(repoPath + "/" + routevar.RepoPathDelim + "/").Subrouter()

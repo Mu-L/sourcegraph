@@ -74,7 +74,7 @@ func TestUpdateTriggerJob(t *testing.T) {
 	logger := logtest.Scoped(t)
 	t.Run("handles null results", func(t *testing.T) {
 		ctx := context.Background()
-		db := NewDB(logger, dbtest.NewDB(logger, t))
+		db := NewDB(logger, dbtest.NewDB(t))
 		_ = populateCodeMonitorFixtures(t, db)
 		jobs, err := db.CodeMonitors().EnqueueQueryTriggerJobs(ctx)
 		require.NoError(t, err)
@@ -89,7 +89,7 @@ func TestListTriggerJobs(t *testing.T) {
 	logger := logtest.Scoped(t)
 	t.Run("handles null results", func(t *testing.T) {
 		ctx := context.Background()
-		db := NewDB(logger, dbtest.NewDB(logger, t))
+		db := NewDB(logger, dbtest.NewDB(t))
 		f := populateCodeMonitorFixtures(t, db)
 		jobs, err := db.CodeMonitors().EnqueueQueryTriggerJobs(ctx)
 		require.NoError(t, err)
@@ -105,7 +105,7 @@ func TestEnqueueTriggerJobs(t *testing.T) {
 	logger := logtest.Scoped(t)
 	t.Run("does not enqueue jobs for deleted users", func(t *testing.T) {
 		ctx := context.Background()
-		db := NewDB(logger, dbtest.NewDB(logger, t))
+		db := NewDB(logger, dbtest.NewDB(t))
 		f := populateCodeMonitorFixtures(t, db)
 
 		err := db.Users().Delete(ctx, f.User.ID)
@@ -114,5 +114,32 @@ func TestEnqueueTriggerJobs(t *testing.T) {
 		jobs, err := db.CodeMonitors().EnqueueQueryTriggerJobs(ctx)
 		require.NoError(t, err)
 		require.Len(t, jobs, 0)
+	})
+}
+
+func TestUpdateTriggerJobWithLogs(t *testing.T) {
+	logger := logtest.Scoped(t)
+	t.Run("execution logs round-trip", func(t *testing.T) {
+		ctx := context.Background()
+		db := NewDB(logger, dbtest.NewDB(t))
+		_ = populateCodeMonitorFixtures(t, db)
+		jobs, err := db.CodeMonitors().EnqueueQueryTriggerJobs(ctx)
+		require.NoError(t, err)
+		require.Len(t, jobs, 1)
+
+		entry0 := TriggerJobLogs{Message: "foo"}
+		err = db.CodeMonitors().UpdateTriggerJobWithLogs(ctx, jobs[0].ID, entry0)
+		require.NoError(t, err)
+
+		entry1 := TriggerJobLogs{Message: "bar"}
+		err = db.CodeMonitors().UpdateTriggerJobWithLogs(ctx, jobs[0].ID, entry1)
+		require.NoError(t, err)
+
+		js, err := db.CodeMonitors().ListQueryTriggerJobs(ctx, ListTriggerJobsOpts{QueryID: &jobs[0].Query})
+		require.NoError(t, err)
+		require.Len(t, js, 1)
+		require.Len(t, js[0].Logs, 2)
+		require.Equal(t, entry0, js[0].Logs[0])
+		require.Equal(t, entry1, js[0].Logs[1])
 	})
 }

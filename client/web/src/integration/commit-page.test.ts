@@ -1,20 +1,21 @@
 import { subDays } from 'date-fns'
+import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import {
     DiffHunkLineType,
     ExternalServiceKind,
     RepositoryType,
-    SharedGraphQlOperations,
+    type SharedGraphQlOperations,
 } from '@sourcegraph/shared/src/graphql-operations'
 import { accessibilityAudit } from '@sourcegraph/shared/src/testing/accessibility'
-import { createDriverForTest, Driver } from '@sourcegraph/shared/src/testing/driver'
+import { createDriverForTest, type Driver } from '@sourcegraph/shared/src/testing/driver'
 import { afterEachSaveScreenshotIfFailed } from '@sourcegraph/shared/src/testing/screenshotReporter'
 
-import { WebGraphQlOperations } from '../graphql-operations'
+import type { WebGraphQlOperations } from '../graphql-operations'
 
-import { createWebIntegrationTestContext, WebIntegrationTestContext } from './context'
+import { createWebIntegrationTestContext, type WebIntegrationTestContext } from './context'
+import { createCodyContextFiltersResult } from './graphQlResponseHelpers'
 import { commonWebGraphQlResults } from './graphQlResults'
-import { percySnapshotWithVariants } from './utils'
 
 describe('RepositoryCommitPage', () => {
     const repositoryName = 'github.com/sourcegraph/sourcegraph'
@@ -22,6 +23,7 @@ describe('RepositoryCommitPage', () => {
     const commitDate = subDays(new Date(), 7).toISOString()
     const commonBlobGraphQlResults: Partial<WebGraphQlOperations & SharedGraphQlOperations> = {
         ...commonWebGraphQlResults,
+        ContextFilters: () => createCodyContextFiltersResult(),
         RepositoryCommit: () => ({
             node: {
                 __typename: 'Repository',
@@ -301,6 +303,7 @@ describe('RepositoryCommitPage', () => {
                 changelist: null,
                 isFork: false,
                 metadata: [],
+                topics: [],
             },
         }),
     }
@@ -325,8 +328,6 @@ describe('RepositoryCommitPage', () => {
     it('Display diff in unified mode', async () => {
         await driver.page.goto(`${driver.sourcegraphBaseUrl}/${repositoryName}/-/commit/${commitID}`)
         await driver.page.waitForSelector('.test-file-diff-node', { visible: true })
-
-        await percySnapshotWithVariants(driver.page, 'Commit page - Unified mode')
         await accessibilityAudit(driver.page)
     })
 
@@ -338,8 +339,6 @@ describe('RepositoryCommitPage', () => {
         await driver.page.evaluate(element => element.click(), splitRadioButton)
 
         await driver.page.waitForSelector('[data-split-mode="split"]', { visible: true })
-
-        await percySnapshotWithVariants(driver.page, 'Commit page - Split mode')
         await accessibilityAudit(driver.page)
     })
 })

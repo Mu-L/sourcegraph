@@ -1,14 +1,15 @@
 import assert from 'assert'
 
 import delay from 'delay'
+import { afterEach, beforeEach, describe, it } from 'mocha'
 import { Key } from 'ts-key-enum'
 
 import { accessibilityAudit } from '@sourcegraph/shared/src/testing/accessibility'
-import { createDriverForTest, Driver } from '@sourcegraph/shared/src/testing/driver'
+import { createDriverForTest, type Driver } from '@sourcegraph/shared/src/testing/driver'
 import { afterEachSaveScreenshotIfFailed } from '@sourcegraph/shared/src/testing/screenshotReporter'
 
-import { createWebIntegrationTestContext, WebIntegrationTestContext } from '../context'
-import { createEditorAPI, percySnapshotWithVariants } from '../utils'
+import { createWebIntegrationTestContext, type WebIntegrationTestContext } from '../context'
+import { createEditorAPI } from '../utils'
 
 import { createJITMigrationToGQLInsightMetadataFixture } from './fixtures/insights-metadata'
 import { SEARCH_INSIGHT_LIVE_PREVIEW_FIXTURE } from './fixtures/runtime-insights'
@@ -294,8 +295,6 @@ describe('Code insight edit insight page', () => {
         await driver.page.waitForSelector(
             '[data-testid="line-chart__content"] [data-line-name="Imports of new graphql-operations types"] circle'
         )
-
-        await percySnapshotWithVariants(driver.page, 'Code insights edit page with search-based insight creation UI')
         await accessibilityAudit(driver.page)
 
         // Gather all filled inputs within a creation UI form.

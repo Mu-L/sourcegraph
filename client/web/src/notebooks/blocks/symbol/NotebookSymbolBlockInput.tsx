@@ -3,13 +3,14 @@ import React, { useCallback, useMemo } from 'react'
 import { EditorView } from '@codemirror/view'
 
 import { createDefaultSuggestions, RepoFileLink } from '@sourcegraph/branded'
-import { getFileMatchUrl, getRepositoryUrl, SymbolMatch } from '@sourcegraph/shared/src/search/stream'
+import { SearchPatternType } from '@sourcegraph/shared/src/graphql-operations'
+import { getFileMatchUrl, getRepositoryUrl, type SymbolMatch } from '@sourcegraph/shared/src/search/stream'
 import { fetchStreamSuggestions } from '@sourcegraph/shared/src/search/suggestions'
 import { useExperimentalFeatures } from '@sourcegraph/shared/src/settings/settings'
 import { SymbolKind } from '@sourcegraph/shared/src/symbols/SymbolKind'
 import { Button, Code } from '@sourcegraph/wildcard'
 
-import { BlockProps, SymbolBlockInput } from '../..'
+import type { BlockProps, SymbolBlockInput } from '../..'
 import { SearchTypeSuggestionsInput } from '../suggestions/SearchTypeSuggestionsInput'
 import { fetchSuggestions } from '../suggestions/suggestions'
 
@@ -18,6 +19,7 @@ import styles from './NotebookSymbolBlockInput.module.scss'
 interface NotebookSymbolBlockInputProps extends Pick<BlockProps, 'onRunBlock'> {
     id: string
     queryInput: string
+    patternType: SearchPatternType
     onEditorCreated: (editor: EditorView) => void
     setQueryInput: (value: string) => void
     onSymbolSelected: (symbol: SymbolBlockInput) => void
@@ -39,18 +41,16 @@ const editorAttributes = [
 
 export const NotebookSymbolBlockInput: React.FunctionComponent<
     React.PropsWithChildren<NotebookSymbolBlockInputProps>
-> = ({ onSymbolSelected, isSourcegraphDotCom, ...inputProps }) => {
-    const applySuggestionsOnEnter =
-        useExperimentalFeatures(features => features.applySearchQuerySuggestionOnEnter) ?? true
-
+> = ({ onSymbolSelected, isSourcegraphDotCom, patternType, ...inputProps }) => {
     const fetchSymbolSuggestions = useCallback(
         (query: string) =>
             fetchSuggestions(
                 getSymbolSuggestionsQuery(query),
+                patternType,
                 (suggestion): suggestion is SymbolMatch => suggestion.type === 'symbol',
                 symbol => symbol
             ),
-        []
+        [patternType]
     )
 
     const countSuggestions = useCallback(
@@ -70,10 +70,9 @@ export const NotebookSymbolBlockInput: React.FunctionComponent<
             createDefaultSuggestions({
                 isSourcegraphDotCom,
                 fetchSuggestions: fetchStreamSuggestions,
-                applyOnEnter: applySuggestionsOnEnter,
                 disableSymbolCompletion: true,
             }),
-        [isSourcegraphDotCom, applySuggestionsOnEnter]
+        [isSourcegraphDotCom]
     )
 
     return (

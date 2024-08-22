@@ -8,11 +8,11 @@ import (
 	"github.com/graph-gophers/graphql-go"
 	"github.com/graph-gophers/graphql-go/relay"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/actor"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/deviceid"
 	"github.com/sourcegraph/sourcegraph/internal/featureflag"
+	"github.com/sourcegraph/sourcegraph/internal/gqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/rbac"
 	"github.com/sourcegraph/sourcegraph/internal/usagestats"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
@@ -156,9 +156,11 @@ func (r *schemaResolver) DeleteRepoMetadata(ctx context.Context, args struct {
 	return &EmptyResponse{}, err
 }
 
+// TODO: Use EventRecorder from internal/telemetryrecorder instead.
 func (r *schemaResolver) logBackendEvent(ctx context.Context, eventName string) {
 	a := actor.FromContext(ctx)
 	if a.IsAuthenticated() && !a.IsMockUser() {
+		//lint:ignore SA1019 existing usage of deprecated functionality.
 		if err := usagestats.LogBackendEvent(
 			r.db,
 			a.UID,
@@ -186,10 +188,10 @@ func (r *schemaResolver) RepoMeta(ctx context.Context) (*repoMetaResolver, error
 
 type RepoMetadataKeysArgs struct {
 	database.RepoKVPListKeysOptions
-	graphqlutil.ConnectionResolverArgs
+	gqlutil.ConnectionResolverArgs
 }
 
-func (r *repoMetaResolver) Keys(ctx context.Context, args *RepoMetadataKeysArgs) (*graphqlutil.ConnectionResolver[string], error) {
+func (r *repoMetaResolver) Keys(ctx context.Context, args *RepoMetadataKeysArgs) (*gqlutil.ConnectionResolver[string], error) {
 	if err := rbac.CheckCurrentUserHasPermission(ctx, r.db, rbac.RepoMetadataWritePermission); err != nil {
 		return nil, err
 	}
@@ -199,21 +201,18 @@ func (r *repoMetaResolver) Keys(ctx context.Context, args *RepoMetadataKeysArgs)
 	}
 
 	listOptions := &args.RepoKVPListKeysOptions
-	if listOptions == nil {
-		listOptions = &database.RepoKVPListKeysOptions{}
-	}
 	connectionStore := &repoMetaKeysConnectionStore{
 		db:          r.db,
 		listOptions: *listOptions,
 	}
 
 	reverse := false
-	connectionOptions := graphqlutil.ConnectionResolverOptions{
+	connectionOptions := gqlutil.ConnectionResolverOptions{
 		Reverse:   &reverse,
 		OrderBy:   database.OrderBy{{Field: string(database.RepoKVPListKeyColumn)}},
 		Ascending: true,
 	}
-	return graphqlutil.NewConnectionResolver[string](connectionStore, &args.ConnectionResolverArgs, &connectionOptions)
+	return gqlutil.NewConnectionResolver[string](connectionStore, &args.ConnectionResolverArgs, &connectionOptions)
 }
 
 type repoMetaKeysConnectionStore struct {
@@ -221,15 +220,13 @@ type repoMetaKeysConnectionStore struct {
 	listOptions database.RepoKVPListKeysOptions
 }
 
-func (s *repoMetaKeysConnectionStore) ComputeTotal(ctx context.Context) (*int32, error) {
+func (s *repoMetaKeysConnectionStore) ComputeTotal(ctx context.Context) (int32, error) {
 	count, err := s.db.RepoKVPs().CountKeys(ctx, s.listOptions)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 
-	totalCount := int32(count)
-
-	return &totalCount, nil
+	return int32(count), nil
 }
 
 func (s *repoMetaKeysConnectionStore) ComputeNodes(ctx context.Context, args *database.PaginationArgs) ([]string, error) {
@@ -242,13 +239,12 @@ func (s *repoMetaKeysConnectionStore) MarshalCursor(node string, _ database.Orde
 	return &cursor, nil
 }
 
-func (s *repoMetaKeysConnectionStore) UnmarshalCursor(cursor string, _ database.OrderBy) (*string, error) {
+func (s *repoMetaKeysConnectionStore) UnmarshalCursor(cursor string, _ database.OrderBy) ([]any, error) {
 	var value string
 	if err := relay.UnmarshalSpec(graphql.ID(cursor), &value); err != nil {
 		return nil, err
 	}
-	value = fmt.Sprintf("'%v'", value)
-	return &value, nil
+	return []any{value}, nil
 }
 
 func (r *repoMetaResolver) Key(ctx context.Context, args *struct{ Key string }) (*repoMetaKeyResolver, error) {
@@ -262,10 +258,10 @@ type repoMetaKeyResolver struct {
 
 type RepoMetadataValuesArgs struct {
 	Query *string
-	graphqlutil.ConnectionResolverArgs
+	gqlutil.ConnectionResolverArgs
 }
 
-func (r *repoMetaKeyResolver) Values(ctx context.Context, args *RepoMetadataValuesArgs) (*graphqlutil.ConnectionResolver[string], error) {
+func (r *repoMetaKeyResolver) Values(ctx context.Context, args *RepoMetadataValuesArgs) (*gqlutil.ConnectionResolver[string], error) {
 	if err := rbac.CheckCurrentUserHasPermission(ctx, r.db, rbac.RepoMetadataWritePermission); err != nil {
 		return nil, err
 	}
@@ -283,12 +279,12 @@ func (r *repoMetaKeyResolver) Values(ctx context.Context, args *RepoMetadataValu
 	}
 
 	reverse := false
-	connectionOptions := graphqlutil.ConnectionResolverOptions{
+	connectionOptions := gqlutil.ConnectionResolverOptions{
 		Reverse:   &reverse,
 		OrderBy:   database.OrderBy{{Field: string(database.RepoKVPListValueColumn)}},
 		Ascending: true,
 	}
-	return graphqlutil.NewConnectionResolver[string](connectionStore, &args.ConnectionResolverArgs, &connectionOptions)
+	return gqlutil.NewConnectionResolver[string](connectionStore, &args.ConnectionResolverArgs, &connectionOptions)
 }
 
 type repoMetaValuesConnectionStore struct {
@@ -296,15 +292,13 @@ type repoMetaValuesConnectionStore struct {
 	listOptions database.RepoKVPListValuesOptions
 }
 
-func (s *repoMetaValuesConnectionStore) ComputeTotal(ctx context.Context) (*int32, error) {
+func (s *repoMetaValuesConnectionStore) ComputeTotal(ctx context.Context) (int32, error) {
 	count, err := s.db.RepoKVPs().CountValues(ctx, s.listOptions)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 
-	totalCount := int32(count)
-
-	return &totalCount, nil
+	return int32(count), nil
 }
 
 func (s *repoMetaValuesConnectionStore) ComputeNodes(ctx context.Context, args *database.PaginationArgs) ([]string, error) {
@@ -317,11 +311,10 @@ func (s *repoMetaValuesConnectionStore) MarshalCursor(node string, _ database.Or
 	return &cursor, nil
 }
 
-func (s *repoMetaValuesConnectionStore) UnmarshalCursor(cursor string, _ database.OrderBy) (*string, error) {
+func (s *repoMetaValuesConnectionStore) UnmarshalCursor(cursor string, _ database.OrderBy) ([]any, error) {
 	var value string
 	if err := relay.UnmarshalSpec(graphql.ID(cursor), &value); err != nil {
 		return nil, err
 	}
-	value = fmt.Sprintf("'%v'", value)
-	return &value, nil
+	return []any{value}, nil
 }

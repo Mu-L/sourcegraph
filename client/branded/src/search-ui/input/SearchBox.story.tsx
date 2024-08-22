@@ -1,7 +1,8 @@
-import { Meta, Story } from '@storybook/react'
+import type { Meta, StoryFn } from '@storybook/react'
 
 import { SearchPatternType } from '@sourcegraph/shared/src/graphql-operations'
 import { SearchMode } from '@sourcegraph/shared/src/search'
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { NOOP_TELEMETRY_SERVICE } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import {
     mockFetchSearchContexts,
@@ -11,26 +12,22 @@ import { NOOP_PLATFORM_CONTEXT } from '@sourcegraph/shared/src/testing/searchTes
 import { H2 } from '@sourcegraph/wildcard'
 import { BrandedStory } from '@sourcegraph/wildcard/src/stories'
 
-import { SearchBox, SearchBoxProps } from './SearchBox'
+import { SearchBox, type SearchBoxProps } from './SearchBox'
 
 const config: Meta = {
     title: 'branded/search-ui/input/SearchBox',
-    parameters: {
-        chromatic: { viewports: [575, 700], disableSnapshot: false },
-    },
+    parameters: {},
 }
 
 export default config
 
 const defaultProps: SearchBoxProps = {
     telemetryService: NOOP_TELEMETRY_SERVICE,
-    settingsCascade: {
-        final: null,
-        subjects: null,
-    },
+    telemetryRecorder: noOpTelemetryRecorder,
     queryState: { query: 'hello repo:test' },
     isSourcegraphDotCom: false,
-    patternType: SearchPatternType.standard,
+    patternType: SearchPatternType.keyword,
+    defaultPatternType: SearchPatternType.keyword,
     setPatternType: () => {},
     caseSensitive: false,
     setCaseSensitivity: () => {},
@@ -49,7 +46,7 @@ const defaultProps: SearchBoxProps = {
     platformContext: NOOP_PLATFORM_CONTEXT,
 }
 
-export const SearchBoxStory: Story = () => (
+export const SearchBoxStory: StoryFn = () => (
     <BrandedStory>
         {props => (
             <div>
@@ -63,9 +60,19 @@ export const SearchBoxStory: Story = () => (
                     <SearchBox {...defaultProps} patternType={SearchPatternType.regexp} />
                 </div>
 
+                <H2>Standard enabled</H2>
+                <div className="w-100 d-flex my-2">
+                    <SearchBox {...defaultProps} patternType={SearchPatternType.standard} />
+                </div>
+
                 <H2>Structural enabled</H2>
                 <div className="w-100 d-flex my-2">
                     <SearchBox {...defaultProps} patternType={SearchPatternType.structural} />
+                </div>
+
+                <H2>Default patterntype</H2>
+                <div className="w-100 d-flex my-2">
+                    <SearchBox {...defaultProps} defaultPatternType={SearchPatternType.standard} />
                 </div>
 
                 <H2>Case sensitivity enabled</H2>

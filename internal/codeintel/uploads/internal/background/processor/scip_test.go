@@ -10,7 +10,7 @@ import (
 	"github.com/sourcegraph/log"
 	"github.com/stretchr/testify/require"
 
-	"github.com/sourcegraph/sourcegraph/internal/codeintel/uploads/internal/lsifstore"
+	"github.com/sourcegraph/sourcegraph/internal/codeintel/codegraph"
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/uploads/shared"
 	"github.com/sourcegraph/sourcegraph/lib/codeintel/precise"
 )
@@ -50,30 +50,35 @@ func implCorrelateSCIP(t *testing.T, testIndexPath string, indexSizeLimit int64)
 	}
 
 	// Correlate and consume channels from returned object
-	correlatedSCIPData, err := correlateSCIP(ctx, log.NoOp(), testReader(), "", func(ctx context.Context, dirnames []string) (map[string][]string, error) {
+	scipDataStream, err := prepareSCIPDataStream(ctx, testReader(), "", func(ctx context.Context, dirnames []string) (map[string][]string, error) {
 		return scipDirectoryChildren, nil
 	})
 	if err != nil {
 		t.Fatalf("unexpected error processing SCIP: %s", err)
 	}
-	var documents []lsifstore.ProcessedSCIPDocument
-	for document := range correlatedSCIPData.Documents {
-		documents = append(documents, document)
-	}
-	packages, packageReferences, err := readPackageAndPackageReferences(ctx, correlatedSCIPData)
+	var documents []codegraph.ProcessedSCIPDocument
+	packageData := codegraph.ProcessedPackageData{}
+	err = scipDataStream.DocumentIterator.VisitAllDocuments(ctx, log.NoOp(), &packageData, func(d codegraph.ProcessedSCIPDocument) error {
+		documents = append(documents, d)
+		return nil
+	})
+	require.NoError(t, err)
+	packageData.Normalize()
+	packages := packageData.Packages
+	packageReferences := packageData.PackageReferences
 	if err != nil {
 		t.Fatalf("unexpected error reading processed SCIP: %s", err)
 	}
 
 	// Check metadata values
-	expectedMetadata := lsifstore.ProcessedMetadata{
+	expectedMetadata := codegraph.ProcessedMetadata{
 		TextDocumentEncoding: "UTF8",
 		ToolName:             "scip-typescript",
 		ToolVersion:          "0.3.3",
 		ToolArguments:        nil,
 		ProtocolVersion:      0,
 	}
-	if diff := cmp.Diff(expectedMetadata, correlatedSCIPData.Metadata); diff != "" {
+	if diff := cmp.Diff(expectedMetadata, scipDataStream.Metadata); diff != "" {
 		t.Fatalf("unexpected metadata (-want +got):\n%s", diff)
 	}
 
@@ -81,7 +86,7 @@ func implCorrelateSCIP(t *testing.T, testIndexPath string, indexSizeLimit int64)
 	if len(documents) != 11 {
 		t.Fatalf("unexpected number of documents. want=%d have=%d", 11, len(documents))
 	} else {
-		documentMap := map[string]lsifstore.ProcessedSCIPDocument{}
+		documentMap := map[string]codegraph.ProcessedSCIPDocument{}
 		for _, document := range documents {
 			documentMap[document.Path] = document
 		}

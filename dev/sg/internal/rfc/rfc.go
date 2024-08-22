@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -143,7 +144,7 @@ func authResponseHandler(sendCode chan string, sendError chan error, gracefulShu
 // gracefulShutdown: Whether the server shutdown gracefully after handling a request.
 // handler: The request handler for the server, containing the authEndpoint.
 func startAuthHandlerServer(socket net.Listener, authEndpoint string, codeReceiver chan string, errorReceiver chan error) {
-	logger := log.Scoped("rfc_auth_handler", "sg rfc oauth handler")
+	logger := log.Scoped("rfc_auth_handler")
 	var server http.Server
 	gracefulShutdown := false
 
@@ -185,7 +186,7 @@ func handleAuthResponse() (*url.URL, chan string, chan error, error) {
 	startAuthHandlerServer(socket, AuthEndpoint, codeReceiver, errorReceiver)
 
 	redirectUrl := url.URL{
-		Host:   net.JoinHostPort("localhost", strconv.Itoa(socket.Addr().(*net.TCPAddr).Port)),
+		Host:   net.JoinHostPort("127.0.0.1", strconv.Itoa(socket.Addr().(*net.TCPAddr).Port)),
 		Path:   AuthEndpoint,
 		Scheme: "http",
 	}
@@ -284,7 +285,7 @@ func getClient(ctx context.Context, scope ScopePermissions, out *std.Output) (*h
 	}
 
 	clientCredentials, err := sec.GetExternal(ctx, secrets.ExternalSecret{
-		Project: "sourcegraph-local-dev",
+		Project: secrets.LocalDevProject,
 		// sg Google client credentials
 		Name: "SG_GOOGLE_CREDS",
 	})
@@ -339,8 +340,11 @@ func queryRFCs(ctx context.Context, query string, driveSpec DriveSpec, pager fun
 	}
 
 	if query == "" {
-		query = "name contains 'RFC'"
+		query = "name contains 'RFC' and trashed = false"
+	} else {
+		query += " and trashed = false"
 	}
+
 	q := driveSpec.Query(query)
 
 	list := srv.Files.List().
@@ -359,12 +363,14 @@ func queryRFCs(ctx context.Context, query string, driveSpec DriveSpec, pager fun
 	return list.Pages(ctx, pager)
 }
 
-func List(ctx context.Context, driveSpec DriveSpec, out *std.Output) error {
-	return queryRFCs(ctx, "", driveSpec, rfcTitlesPrinter(out), out)
+func List(ctx context.Context, driveSpec DriveSpec, out *std.Output, statuses []string) error {
+	return queryRFCs(ctx, "", driveSpec, rfcTitlesPrinter(out, statuses), out)
 }
 
-func Search(ctx context.Context, query string, driveSpec DriveSpec, out *std.Output) error {
-	return queryRFCs(ctx, fmt.Sprintf("(name contains '%[1]s' or fullText contains '%[1]s')", query), driveSpec, rfcTitlesPrinter(out), out)
+func Search(ctx context.Context, query string, driveSpec DriveSpec, out *std.Output, statuses []string) error {
+	driveSpec.OrderBy = "" // fullText queries are always ordered by relevance and fail if an order is specified
+	return queryRFCs(ctx, fmt.Sprintf("(name contains '%[1]s' or fullText contains '%[1]s')", query),
+		driveSpec, rfcTitlesPrinter(out, statuses), out)
 }
 
 func openFile(f *drive.File, out *std.Output) {
@@ -398,7 +404,12 @@ var rfcTitleRegex = regexp.MustCompile(`RFC\s(\d+):*\s([\w\s]+):\s(.*)$`)
 var rfcIDRegex = regexp.MustCompile(`RFC\s(\d+)`)
 var rfcDocRegex = regexp.MustCompile(`(RFC.*)(number)(.*:.*)(title)`)
 
-func rfcTitlesPrinter(out *std.Output) func(r *drive.FileList) error {
+// onlyStatuses, if non-empty, discards any RFCs that do not have one of the specified statuses.
+func rfcTitlesPrinter(out *std.Output, onlyStatuses []string) func(r *drive.FileList) error {
+	for i := range onlyStatuses {
+		onlyStatuses[i] = strings.ToUpper(onlyStatuses[i])
+	}
+
 	return func(r *drive.FileList) error {
 		if len(r.Files) == 0 {
 			return nil
@@ -416,6 +427,19 @@ func rfcTitlesPrinter(out *std.Output) func(r *drive.FileList) error {
 				number := matches[1]
 				statuses := strings.Split(strings.ToUpper(matches[2]), " ")
 				name := matches[3]
+
+				if len(onlyStatuses) > 0 {
+					var matchesStatusFilter bool
+					for _, s := range statuses {
+						if slices.Contains(onlyStatuses, strings.ToUpper(s)) {
+							matchesStatusFilter = true
+							break
+						}
+					}
+					if !matchesStatusFilter {
+						continue // skip this file
+					}
+				}
 
 				var statusColor output.Style = output.StyleItalic
 				for _, s := range statuses {
@@ -448,6 +472,9 @@ func rfcTitlesPrinter(out *std.Output) func(r *drive.FileList) error {
 					output.StyleSuggestion, modified.Format("2006-01-02"), f.Description,
 					output.StyleReset)
 			} else {
+				if len(onlyStatuses) > 0 {
+					continue // skip this file, it doesn't have a recognized format
+				}
 				out.Writef("%s%s", f.Name, output.StyleReset)
 			}
 		}

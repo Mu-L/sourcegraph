@@ -14,6 +14,7 @@ import (
 
 	"github.com/sourcegraph/log"
 
+	"github.com/sourcegraph/sourcegraph/dev/sg/internal/category"
 	"github.com/sourcegraph/sourcegraph/dev/sg/internal/db"
 	"github.com/sourcegraph/sourcegraph/dev/sg/internal/migration"
 	"github.com/sourcegraph/sourcegraph/dev/sg/internal/std"
@@ -128,6 +129,7 @@ var (
 	describeCommand = cliutil.Describe("sg migration", makeRunner, outputFactory)
 	driftCommand    = cliutil.Drift("sg migration", makeRunner, outputFactory, true, schemaFactories...)
 	addLogCommand   = cliutil.AddLog("sg migration", makeRunner, outputFactory)
+	tenantCommand   = cliutil.EnforceTenant("sg migration", makeRunner, outputFactory)
 
 	leavesCommand = &cli.Command{
 		Name:        "leaves",
@@ -174,8 +176,9 @@ var (
 	}
 
 	migrationCommand = &cli.Command{
-		Name:  "migration",
-		Usage: "Modifies and runs database migrations",
+		Name:    "migration",
+		Aliases: []string{"migrate"},
+		Usage:   "Modifies and runs database migrations",
 		UsageText: `
 # Migrate local default database up all the way
 sg migration up
@@ -189,7 +192,7 @@ sg migration add --db codeintel 'add missing index'
 # Squash migrations for default database
 sg migration squash
 `,
-		Category: CategoryDev,
+		Category: category.Dev,
 		Subcommands: []*cli.Command{
 			addCommand,
 			revertCommand,
@@ -206,6 +209,7 @@ sg migration squash
 			squashAllCommand,
 			visualizeCommand,
 			rewriteCommand,
+			tenantCommand,
 		},
 	}
 )
@@ -224,7 +228,7 @@ func makeRunnerWithSchemas(schemaNames []string, schemas []*schemas.Schema) (*ru
 	// configuration and use process env as fallback.
 	var getEnv func(string) string
 	config, _ := getConfig()
-	logger := log.Scoped("migrations.runner", "migration runner")
+	logger := log.Scoped("migrations.runner")
 	if config != nil {
 		getEnv = config.GetEnv
 	} else {

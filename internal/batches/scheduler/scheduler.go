@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/inconshreveable/log15"
+	"github.com/inconshreveable/log15" //nolint:logging // TODO move all logging to sourcegraph/log
 
 	"github.com/sourcegraph/sourcegraph/internal/batches/store"
 	"github.com/sourcegraph/sourcegraph/internal/batches/types/scheduler/config"
@@ -100,12 +100,13 @@ func (s *Scheduler) Start() {
 	}
 }
 
-func (s *Scheduler) Stop() {
+func (s *Scheduler) Stop(context.Context) error {
 	if s.recorder != nil {
 		go s.recorder.LogStop(s)
 	}
 	s.done <- struct{}{}
 	close(s.done)
+	return nil
 }
 
 func (s *Scheduler) enqueueChangeset() error {

@@ -3,15 +3,15 @@ package httpapi
 import (
 	"testing"
 
-	"github.com/gorilla/mux"
+	"github.com/stretchr/testify/require"
 	"github.com/throttled/throttled/v2/store/memstore"
 
 	"github.com/sourcegraph/log/logtest"
 
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/enterprise"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/httpapi/router"
-	"github.com/sourcegraph/sourcegraph/internal/database"
+	"github.com/sourcegraph/sourcegraph/internal/conf"
+	"github.com/sourcegraph/sourcegraph/internal/database/dbmocks"
 	"github.com/sourcegraph/sourcegraph/internal/httptestutil"
 	"github.com/sourcegraph/sourcegraph/internal/txemail"
 )
@@ -21,15 +21,19 @@ func init() {
 }
 
 func newTest(t *testing.T) *httptestutil.Client {
+	conf.Mock(&conf.Unified{})
+	t.Cleanup(func() {
+		conf.Mock(nil)
+	})
+
 	logger := logtest.Scoped(t)
 	enterpriseServices := enterprise.DefaultServices()
 	rateLimitStore, _ := memstore.NewCtx(1024)
 	rateLimiter := graphqlbackend.NewBasicLimitWatcher(logger, rateLimitStore)
 
-	db := database.NewMockDB()
+	db := dbmocks.NewMockDB()
 
-	return httptestutil.NewTest(NewHandler(db,
-		router.New(mux.NewRouter()),
+	handler, err := NewHandler(db,
 		nil,
 		rateLimiter,
 		&Handlers{
@@ -49,5 +53,7 @@ func newTest(t *testing.T) *httptestutil.Client {
 			NewChatCompletionsStreamHandler: enterpriseServices.NewChatCompletionsStreamHandler,
 			NewCodeCompletionsHandler:       enterpriseServices.NewCodeCompletionsHandler,
 		},
-	))
+	)
+	require.NoError(t, err)
+	return httptestutil.NewTest(handler)
 }

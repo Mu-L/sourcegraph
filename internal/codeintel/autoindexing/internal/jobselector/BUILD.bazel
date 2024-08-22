@@ -7,10 +7,10 @@ go_library(
         "job_selector.go",
     ],
     importpath = "github.com/sourcegraph/sourcegraph/internal/codeintel/autoindexing/internal/jobselector",
+    tags = [TAG_PLATFORM_GRAPH],
     visibility = ["//:__subpackages__"],
     deps = [
         "//internal/api",
-        "//internal/authz",
         "//internal/codeintel/autoindexing/internal/store",
         "//internal/codeintel/autoindexing/shared",
         "//internal/codeintel/uploads/shared",
@@ -19,6 +19,7 @@ go_library(
         "//internal/gitserver",
         "//lib/codeintel/autoindex/config",
         "//lib/errors",
+        "@com_github_life4_genesis//slices",
         "@com_github_sourcegraph_log//:log",
     ],
 )

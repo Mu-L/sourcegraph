@@ -1,8 +1,9 @@
 import { of } from 'rxjs'
 
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { NOOP_TELEMETRY_SERVICE } from '@sourcegraph/shared/src/telemetry/telemetryService'
 
-import { Panel, TabbedPanelContent } from './TabbedPanelContent'
+import type { Panel, TabbedPanelContent } from './TabbedPanelContent'
 
 export const panels: Panel[] = [
     {
@@ -28,4 +29,5 @@ export const panelProps: React.ComponentPropsWithoutRef<typeof TabbedPanelConten
     platformContext: {} as any,
     settingsCascade: { subjects: null, final: null },
     telemetryService: NOOP_TELEMETRY_SERVICE,
+    telemetryRecorder: noOpTelemetryRecorder,
 }

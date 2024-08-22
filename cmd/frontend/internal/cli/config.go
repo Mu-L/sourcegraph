@@ -18,7 +18,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/sourcegraph/log"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/envvar"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/highlight"
 	"github.com/sourcegraph/sourcegraph/internal/actor"
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/conf"
@@ -27,19 +27,18 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/database/migration/schemas"
 	"github.com/sourcegraph/sourcegraph/internal/database/postgresdsn"
+	"github.com/sourcegraph/sourcegraph/internal/dotcom"
 	"github.com/sourcegraph/sourcegraph/internal/endpoint"
 	"github.com/sourcegraph/sourcegraph/internal/env"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
-	"github.com/sourcegraph/sourcegraph/internal/highlight"
 	"github.com/sourcegraph/sourcegraph/internal/jsonc"
 	"github.com/sourcegraph/sourcegraph/internal/symbols"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
-	"github.com/sourcegraph/sourcegraph/schema"
 )
 
 func printConfigValidation(logger log.Logger) {
-	logger = logger.Scoped("configValidation", "")
+	logger = logger.Scoped("configValidation")
 	messages, err := conf.Validate(conf.Raw())
 	if err != nil {
 		logger.Warn("unable to validate Sourcegraph site configuration", log.Error(err))
@@ -110,7 +109,7 @@ func readSiteConfigFile(paths []string) ([]byte, error) {
 }
 
 func overrideSiteConfig(ctx context.Context, logger log.Logger, db database.DB) error {
-	logger = logger.Scoped("overrideSiteConfig", "")
+	logger = logger.Scoped("overrideSiteConfig")
 	paths := filepath.SplitList(os.Getenv("SITE_CONFIG_FILE"))
 	if len(paths) == 0 {
 		return nil
@@ -163,7 +162,7 @@ func overrideSiteConfig(ctx context.Context, logger log.Logger, db database.DB) 
 }
 
 func overrideGlobalSettings(ctx context.Context, logger log.Logger, db database.DB) error {
-	logger = logger.Scoped("overrideGlobalSettings", "")
+	logger = logger.Scoped("overrideGlobalSettings")
 	path := os.Getenv("GLOBAL_SETTINGS_FILE")
 	if path == "" {
 		return nil
@@ -208,7 +207,7 @@ func overrideGlobalSettings(ctx context.Context, logger log.Logger, db database.
 }
 
 func overrideExtSvcConfig(ctx context.Context, logger log.Logger, db database.DB) error {
-	logger = logger.Scoped("overrideExtSvcConfig", "")
+	logger = logger.Scoped("overrideExtSvcConfig")
 	path := os.Getenv("EXTSVC_CONFIG_FILE")
 	if path == "" {
 		return nil
@@ -265,30 +264,10 @@ func overrideExtSvcConfig(ctx context.Context, logger log.Logger, db database.DB
 					return false, errors.Wrapf(err, "marshaling extsvc config ([%v][%v])", key, i)
 				}
 
-				// When overriding external service config from a file we allow setting the value
-				// of the cloud_default column.
-				var cloudDefault bool
-				switch key {
-				case extsvc.KindGitHub:
-					var c schema.GitHubConnection
-					if err = json.Unmarshal(marshaledCfg, &c); err != nil {
-						return false, err
-					}
-					cloudDefault = c.CloudDefault
-
-				case extsvc.KindGitLab:
-					var c schema.GitLabConnection
-					if err = json.Unmarshal(marshaledCfg, &c); err != nil {
-						return false, err
-					}
-					cloudDefault = c.CloudDefault
-				}
-
 				toAdd[&types.ExternalService{
-					Kind:         key,
-					DisplayName:  fmt.Sprintf("%s #%d", key, i+1),
-					Config:       extsvc.NewUnencryptedConfig(string(marshaledCfg)),
-					CloudDefault: cloudDefault,
+					Kind:        key,
+					DisplayName: fmt.Sprintf("%s #%d", key, i+1),
+					Config:      extsvc.NewUnencryptedConfig(string(marshaledCfg)),
 				}] = true
 			}
 		}
@@ -364,8 +343,8 @@ func overrideExtSvcConfig(ctx context.Context, logger log.Logger, db database.DB
 			if err != nil {
 				return false, err
 			}
+			update := &database.ExternalServiceUpdate{DisplayName: &extSvc.DisplayName, Config: &rawConfig}
 
-			update := &database.ExternalServiceUpdate{DisplayName: &extSvc.DisplayName, Config: &rawConfig, CloudDefault: &extSvc.CloudDefault}
 			if err := extsvcs.Update(ctx, ps, id, update); err != nil {
 				return false, errors.Wrap(err, "ExternalServices.Update")
 			}
@@ -385,7 +364,7 @@ func overrideExtSvcConfig(ctx context.Context, logger log.Logger, db database.DB
 }
 
 func watchUpdate(ctx context.Context, logger log.Logger, update func(context.Context) (bool, error), paths ...string) {
-	logger = logger.Scoped("watch", "").With(log.Strings("files", paths))
+	logger = logger.Scoped("watch").With(log.Strings("files", paths))
 	events, err := watchPaths(ctx, paths...)
 	if err != nil {
 		logger.Error("failed to watch config override files", log.Error(err))
@@ -463,7 +442,7 @@ func watchPaths(ctx context.Context, paths ...string) (<-chan error, error) {
 
 func newConfigurationSource(logger log.Logger, db database.DB) *configurationSource {
 	return &configurationSource{
-		logger: logger.Scoped("configurationSource", ""),
+		logger: logger.Scoped("configurationSource"),
 		db:     db,
 	}
 }
@@ -619,7 +598,7 @@ var (
 	indexedListTTL = func() time.Duration {
 		ttl, _ := time.ParseDuration(env.Get("SRC_INDEXED_SEARCH_LIST_CACHE_TTL", "", "Indexed search list cache TTL"))
 		if ttl == 0 {
-			if envvar.SourcegraphDotComMode() {
+			if dotcom.SourcegraphDotComMode() {
 				ttl = 30 * time.Second
 			} else {
 				ttl = 5 * time.Second
@@ -781,7 +760,7 @@ func replicaAddrs(deployType, countStr, serviceName, port string) (string, error
 	}
 
 	var addrs []string
-	for i := 0; i < count; i++ {
+	for i := range count {
 		addrs = append(addrs, strings.Join([]string{fmtStrHead, serviceName, "-", strconv.Itoa(i), fmtStrTail}, ""))
 	}
 	return strings.Join(addrs, " "), nil

@@ -8,9 +8,15 @@ import (
 	"github.com/sourcegraph/log"
 	"google.golang.org/grpc"
 
+	"github.com/sourcegraph/sourcegraph/internal/env"
+
 	"github.com/sourcegraph/sourcegraph/internal/grpc/defaults"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
+
+// GRPCWebUIEnabled is an additional environment variable that must be true to
+// enable the gRPC Web UI.
+var GRPCWebUIEnabled = env.MustGetBool("GRPC_WEB_UI_ENABLED", false, "Enable the gRPC Web UI to debug and explore gRPC services")
 
 const gRPCWebUIPath = "/debug/grpcui"
 
@@ -19,7 +25,7 @@ const gRPCWebUIPath = "/debug/grpcui"
 //
 // serviceName is the name of the gRPC service that will be displayed on the debug page.
 func NewGRPCWebUIEndpoint(serviceName, target string) Endpoint {
-	logger := log.Scoped("gRPCWebUI", "HTTP handler for serving the gRPC Web UI explore page")
+	logger := log.Scoped("gRPCWebUI")
 
 	var handler http.Handler = &grpcHandler{
 		target:   target,
@@ -50,8 +56,14 @@ type grpcHandler struct {
 }
 
 func (g *grpcHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !GRPCWebUIEnabled {
+		http.Error(w, "gRPC Web UI is disabled", http.StatusNotFound)
+		return
+	}
+
 	ctx := r.Context()
 
+	//lint:ignore SA1019 DialContext will be supported throughout 1.x
 	cc, err := grpc.DialContext(ctx, g.target, g.dialOpts...)
 	if err != nil {
 		err = errors.Wrap(err, "dialing GRPC server")

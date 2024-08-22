@@ -1,24 +1,35 @@
-import { getContext } from 'svelte'
+import { getContext, setContext } from 'svelte'
 import { readable, writable, type Readable, type Writable } from 'svelte/store'
 
-import type { GraphQLClient } from '$lib/http-client'
-import type { SettingsCascade, AuthenticatedUser, TemporarySettingsStorage } from '$lib/shared'
-import { getWebGraphQLClient } from '$lib/web'
+import { browser } from '$app/environment'
+import type { Settings, TemporarySettingsStorage } from '$lib/shared'
 
-export interface SourcegraphContext {
-    settings: Readable<SettingsCascade['final'] | null>
-    user: Readable<AuthenticatedUser | null>
-    isLightTheme: Readable<boolean>
-    temporarySettingsStorage: Readable<TemporarySettingsStorage>
-}
+import type { AuthenticatedUser, FeatureFlag } from '../routes/layout.gql'
 
+export { themeSetting, theme, isLightTheme } from './theme'
+
+// Only exported to be used for mocking tests
+// TODO (fkling): Find a better way to initialize mocked contexts and stores
 export const KEY = '__sourcegraph__'
 
-export function getStores(): SourcegraphContext {
-    const { settings, user, isLightTheme, temporarySettingsStorage } = getContext<SourcegraphContext>(KEY)
-    return { settings, user, isLightTheme, temporarySettingsStorage }
+export interface SourcegraphContext {
+    settings: Readable<Settings | null>
+    user: Readable<AuthenticatedUser | null>
+    temporarySettingsStorage: Readable<TemporarySettingsStorage>
+    featureFlags: Readable<FeatureFlag[]>
 }
 
+export function setAppContext(context: SourcegraphContext): void {
+    setContext<SourcegraphContext>(KEY, context)
+}
+
+export function getStores(): SourcegraphContext {
+    return getContext<SourcegraphContext>(KEY)
+}
+
+/**
+ * This store returns the currently logged in user.
+ */
 export const user = {
     subscribe(subscriber: (user: AuthenticatedUser | null) => void) {
         const { user } = getStores()
@@ -26,17 +37,13 @@ export const user = {
     },
 }
 
+/**
+ * This store returns the user's settings.
+ */
 export const settings = {
-    subscribe(subscriber: (settings: SettingsCascade['final'] | null) => void) {
+    subscribe(subscriber: (settings: Settings | null) => void) {
         const { settings } = getStores()
         return settings.subscribe(subscriber)
-    },
-}
-
-export const isLightTheme = {
-    subscribe(subscriber: (isLightTheme: boolean) => void) {
-        const { isLightTheme } = getStores()
-        return isLightTheme.subscribe(subscriber)
     },
 }
 
@@ -44,14 +51,9 @@ export const isLightTheme = {
  * A store that updates every second to return the current time.
  */
 export const currentDate: Readable<Date> = readable(new Date(), set => {
+    set(new Date())
     const interval = setInterval(() => set(new Date()), 1000)
     return () => clearInterval(interval)
-})
-
-export const graphqlClient = readable<GraphQLClient | null>(null, set => {
-    // no-void conflicts with no-floating-promises
-    // eslint-disable-next-line no-void
-    void getWebGraphQLClient().then(client => set(client))
 })
 
 /**
@@ -81,4 +83,18 @@ export function createLocalWritable<T>(localStorageKey: string, defaultValue: T)
     }
 }
 
-export const scrollAll = writable(false)
+/**
+ * Media query store that updates when the media query matches.
+ */
+export function mediaQuery(query: string): Readable<boolean> {
+    const mediaQuery = window.matchMedia(query)
+    return readable(mediaQuery.matches, set => {
+        const listener = () => set(mediaQuery.matches)
+        mediaQuery.addEventListener('change', listener)
+        return () => mediaQuery.removeEventListener('change', listener)
+    })
+}
+
+// See breakpoints.scss for the values
+export const isViewportMediumDown = browser ? mediaQuery('(max-width: 767.98px)') : readable(false)
+export const isViewportMobile = browser ? mediaQuery('(max-width: 575.98px)') : readable(false)

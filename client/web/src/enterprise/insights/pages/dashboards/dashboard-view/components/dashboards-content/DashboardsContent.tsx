@@ -1,4 +1,4 @@
-import { FC, useEffect, useState } from 'react'
+import { type FC, useEffect, useState } from 'react'
 
 import classNames from 'classnames'
 import MapSearchIcon from 'mdi-react/MapSearchIcon'
@@ -6,12 +6,13 @@ import ViewDashboardOutlineIcon from 'mdi-react/ViewDashboardOutlineIcon'
 import { useNavigate } from 'react-router-dom'
 
 import { useTemporarySetting } from '@sourcegraph/shared/src/settings/temporary/useTemporarySetting'
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { Button, Link, Tooltip } from '@sourcegraph/wildcard'
 
 import { HeroPage } from '../../../../../../../components/HeroPage'
-import { GridApi, LimitedAccessLabel } from '../../../../../components'
-import { CustomInsightDashboard } from '../../../../../core'
+import { type GridApi, LimitedAccessLabel } from '../../../../../components'
+import type { CustomInsightDashboard } from '../../../../../core'
 import { useCopyURLHandler, useUiFeatures } from '../../../../../hooks'
 import { AddInsightModal } from '../add-insight-modal'
 import { DashboardMenu, DashboardMenuAction } from '../dashboard-menu/DashboardMenu'
@@ -23,13 +24,13 @@ import { DashboardInsights } from './components/dashboard-inisghts/DashboardInsi
 
 import styles from './DashboardsContent.module.scss'
 
-export interface DashboardsContentProps extends TelemetryProps {
+export interface DashboardsContentProps extends TelemetryProps, TelemetryV2Props {
     currentDashboard: CustomInsightDashboard | undefined
     dashboards: CustomInsightDashboard[]
 }
 
 export const DashboardsContent: FC<DashboardsContentProps> = props => {
-    const { currentDashboard, dashboards, telemetryService } = props
+    const { currentDashboard, dashboards, telemetryService, telemetryRecorder } = props
 
     const navigate = useNavigate()
     const [, setLasVisitedDashboard] = useTemporarySetting('insights.lastVisitedDashboardId', null)
@@ -40,7 +41,10 @@ export const DashboardsContent: FC<DashboardsContentProps> = props => {
     const [isDeleteDashboardActive, setDeleteDashboardActive] = useState<boolean>(false)
     const [dashboardGridApi, setDashboardGridApi] = useState<GridApi>()
 
-    useEffect(() => telemetryService.logViewEvent('Insights'), [telemetryService])
+    useEffect(() => {
+        telemetryService.logViewEvent('Insights')
+        telemetryRecorder.recordEvent('insights.dashboard', 'view')
+    }, [telemetryService, telemetryRecorder])
     useEffect(() => setLasVisitedDashboard(currentDashboard?.id ?? null), [currentDashboard, setLasVisitedDashboard])
 
     const handleDashboardSelect = (dashboard: CustomInsightDashboard): void =>
@@ -113,6 +117,7 @@ export const DashboardsContent: FC<DashboardsContentProps> = props => {
                 <DashboardInsights
                     currentDashboard={currentDashboard}
                     telemetryService={telemetryService}
+                    telemetryRecorder={telemetryRecorder}
                     className={styles.insights}
                     onAddInsightRequest={() => setAddInsightsState(true)}
                     onDashboardCreate={setDashboardGridApi}

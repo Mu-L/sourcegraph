@@ -1,15 +1,16 @@
-import { DecoratorFn, Meta, Story } from '@storybook/react'
+import type { Decorator, Meta, StoryFn } from '@storybook/react'
 import { addMinutes, formatRFC3339 } from 'date-fns'
 import { Route, Routes } from 'react-router-dom'
 import { MATCH_ANY_PARAMETERS, WildcardMockLink } from 'wildcard-mock-link'
 
 import { getDocumentNode } from '@sourcegraph/http-client'
 import { ExternalServiceKind } from '@sourcegraph/shared/src/graphql-operations'
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { NOOP_TELEMETRY_SERVICE } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { MockedTestProvider } from '@sourcegraph/shared/src/testing/apollo'
 
 import { WebStory } from '../components/WebStory'
-import { WebhookLogFields } from '../graphql-operations'
+import type { WebhookLogFields } from '../graphql-operations'
 
 import { WEBHOOK_BY_ID } from './backend'
 import { createWebhookMock, TIMESTAMP_MOCK } from './fixtures'
@@ -17,7 +18,7 @@ import { SiteAdminWebhookPage } from './SiteAdminWebhookPage'
 import { WEBHOOK_BY_ID_LOG_PAGE_HEADER, WEBHOOK_LOGS_BY_ID } from './webhooks/backend'
 import { BODY_JSON, BODY_PLAIN, HEADERS_JSON, HEADERS_PLAIN } from './webhooks/story/fixtures'
 
-const decorator: DecoratorFn = Story => <Story />
+const decorator: Decorator = Story => <Story />
 
 const config: Meta = {
     title: 'web/site-admin/webhooks/incoming/SiteAdminWebhookPage',
@@ -29,7 +30,7 @@ export default config
 const WEBHOOK_MOCK_DATA = buildWebhookLogs()
 const ERRORED_WEBHOOK_MOCK_DATA = WEBHOOK_MOCK_DATA.filter(webhook => webhook.statusCode !== 200)
 
-export const SiteAdminWebhookPageStory: Story = args => {
+export const SiteAdminWebhookPageStory: StoryFn = args => {
     const buildWebhookLogsMock = new WildcardMockLink([
         {
             request: {
@@ -53,12 +54,13 @@ export const SiteAdminWebhookPageStory: Story = args => {
                     after: null,
                     onlyErrors: false,
                     onlyUnmatched: false,
-                    webhookID: '',
+                    webhookID: '1',
                 },
             },
             result: {
                 data: {
                     webhookLogs: {
+                        __typename: 'WebhookLogConnection',
                         nodes: WEBHOOK_MOCK_DATA,
                         pageInfo: { hasNextPage: false },
                         totalCount: 20,
@@ -81,6 +83,7 @@ export const SiteAdminWebhookPageStory: Story = args => {
             result: {
                 data: {
                     webhookLogs: {
+                        __typename: 'WebhookLogConnection',
                         nodes: ERRORED_WEBHOOK_MOCK_DATA,
                         pageInfo: { hasNextPage: false },
                         totalCount: 20,
@@ -114,7 +117,14 @@ export const SiteAdminWebhookPageStory: Story = args => {
                     <Routes>
                         <Route
                             path="/site-admin/webhooks/incoming/:id"
-                            element={<SiteAdminWebhookPage telemetryService={NOOP_TELEMETRY_SERVICE} />}
+                            element={
+                                <div className="container p-4">
+                                    <SiteAdminWebhookPage
+                                        telemetryService={NOOP_TELEMETRY_SERVICE}
+                                        telemetryRecorder={noOpTelemetryRecorder}
+                                    />
+                                </div>
+                            }
                         />
                     </Routes>
                 </MockedTestProvider>
@@ -125,7 +135,7 @@ export const SiteAdminWebhookPageStory: Story = args => {
 
 SiteAdminWebhookPageStory.storyName = 'Incoming webhook'
 
-export const SiteAdminWebhookPageWithoutLogsStory: Story = args => {
+export const SiteAdminWebhookPageWithoutLogsStory: StoryFn = args => {
     const buildWebhookLogsMock = new WildcardMockLink([
         {
             request: {
@@ -149,6 +159,7 @@ export const SiteAdminWebhookPageWithoutLogsStory: Story = args => {
             result: {
                 data: {
                     webhookLogs: {
+                        __typename: 'WebhookLogConnection',
                         nodes: [],
                         pageInfo: { hasNextPage: false },
                         totalCount: 0,
@@ -179,7 +190,10 @@ export const SiteAdminWebhookPageWithoutLogsStory: Story = args => {
         <WebStory>
             {() => (
                 <MockedTestProvider link={buildWebhookLogsMock}>
-                    <SiteAdminWebhookPage telemetryService={NOOP_TELEMETRY_SERVICE} />
+                    <SiteAdminWebhookPage
+                        telemetryService={NOOP_TELEMETRY_SERVICE}
+                        telemetryRecorder={noOpTelemetryRecorder}
+                    />
                 </MockedTestProvider>
             )}
         </WebStory>

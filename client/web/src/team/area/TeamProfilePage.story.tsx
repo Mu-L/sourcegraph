@@ -1,4 +1,4 @@
-import { Meta, Story } from '@storybook/react'
+import type { Meta, StoryFn } from '@storybook/react'
 
 import { WebStory } from '../../components/WebStory'
 
@@ -7,12 +7,10 @@ import { testContext } from './testContext.mock'
 
 const config: Meta = {
     title: 'web/teams/TeamProfilePage',
-    parameters: {
-        chromatic: { disableSnapshot: false },
-    },
+    parameters: {},
 }
 export default config
 
-export const Default: Story = function Default() {
+export const Default: StoryFn = function Default() {
     return <WebStory initialEntries={['/teams/team-1']}>{() => <TeamProfilePage {...testContext} />}</WebStory>
 }

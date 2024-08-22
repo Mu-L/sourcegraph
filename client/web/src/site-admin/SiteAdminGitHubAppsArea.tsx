@@ -1,18 +1,19 @@
-import { FC } from 'react'
+import type { FC } from 'react'
 
 import { Routes, Route } from 'react-router-dom'
 
 import { useQuery } from '@sourcegraph/http-client'
-import { AuthenticatedUser } from '@sourcegraph/shared/src/auth'
-import { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import type { AuthenticatedUser } from '@sourcegraph/shared/src/auth'
+import type { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { lazyComponent } from '@sourcegraph/shared/src/util/lazyComponent'
 import { LoadingSpinner, ErrorAlert } from '@sourcegraph/wildcard'
 
 import {
     GitHubAppDomain,
-    SiteExternalServiceConfigResult,
-    SiteExternalServiceConfigVariables,
+    GitHubAppKind,
+    type SiteExternalServiceConfigResult,
+    type SiteExternalServiceConfigVariables,
 } from '../graphql-operations'
 
 import { SITE_EXTERNAL_SERVICE_CONFIG } from './backend'
@@ -26,7 +27,6 @@ const GitHubAppsPage = lazyComponent(() => import('../components/gitHubApps/GitH
 
 interface Props extends TelemetryProps, PlatformContextProps {
     authenticatedUser: AuthenticatedUser
-    isSourcegraphApp: boolean
     batchChangesEnabled: boolean
 }
 
@@ -69,15 +69,25 @@ export const SiteAdminGitHubAppsArea: FC<Props> = props => {
 
     return (
         <Routes>
-            <Route index={true} element={<GitHubAppsPage batchChangesEnabled={props.batchChangesEnabled} />} />
+            <Route
+                index={true}
+                element={
+                    <GitHubAppsPage
+                        batchChangesEnabled={props.batchChangesEnabled}
+                        telemetryRecorder={props.platformContext.telemetryRecorder}
+                    />
+                }
+            />
 
             <Route
                 path="new"
                 element={
                     <CreateGitHubAppPage
+                        appKind={GitHubAppKind.REPO_SYNC}
                         defaultEvents={DEFAULT_EVENTS}
                         defaultPermissions={DEFAULT_PERMISSIONS}
                         appDomain={GitHubAppDomain.REPOS}
+                        telemetryRecorder={props.platformContext.telemetryRecorder}
                         {...props}
                     />
                 }
@@ -87,6 +97,7 @@ export const SiteAdminGitHubAppsArea: FC<Props> = props => {
                 element={
                     <GitHubAppPage
                         headerParentBreadcrumb={{ to: '/site-admin/github-apps', text: 'GitHub Apps' }}
+                        telemetryRecorder={props.platformContext.telemetryRecorder}
                         {...props}
                     />
                 }

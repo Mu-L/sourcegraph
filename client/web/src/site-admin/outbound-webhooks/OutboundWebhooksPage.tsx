@@ -1,9 +1,10 @@
-import { FC, useEffect } from 'react'
+import { useEffect, type FC } from 'react'
 
-import { mdiAlertCircle, mdiWebhook, mdiMapSearch, mdiPencil, mdiPlus } from '@mdi/js'
+import { mdiAlertCircle, mdiMapSearch, mdiPencil, mdiPlus, mdiWebhook } from '@mdi/js'
 
 import { pluralize } from '@sourcegraph/common'
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { ButtonLink, Container, H3, Icon, Link, PageHeader, Tooltip } from '@sourcegraph/wildcard'
 
 import {
@@ -16,19 +17,20 @@ import {
     SummaryContainer,
 } from '../../components/FilteredConnection/ui'
 import { PageTitle } from '../../components/PageTitle'
-import { OutboundWebhookFieldsWithStats } from '../../graphql-operations'
+import type { OutboundWebhookFieldsWithStats } from '../../graphql-operations'
 
 import { useOutboundWebhooksConnection } from './backend'
 import { DeleteButton } from './delete/DeleteButton'
 
 import styles from './OutboundWebhooksPage.module.scss'
 
-export interface OutboundWebhooksPageProps extends TelemetryProps {}
+export interface OutboundWebhooksPageProps extends TelemetryProps, TelemetryV2Props {}
 
-export const OutboundWebhooksPage: FC<OutboundWebhooksPageProps> = ({ telemetryService }) => {
+export const OutboundWebhooksPage: FC<OutboundWebhooksPageProps> = ({ telemetryService, telemetryRecorder }) => {
     useEffect(() => {
         telemetryService.logPageView('OutboundWebhooksPage')
-    }, [telemetryService])
+        telemetryRecorder.recordEvent('admin.outboundWebhooks', 'view')
+    }, [telemetryService, telemetryRecorder])
 
     const { loading, hasNextPage, fetchMore, refetchAll, connection, error } = useOutboundWebhooksConnection()
 
@@ -60,7 +62,6 @@ export const OutboundWebhooksPage: FC<OutboundWebhooksPageProps> = ({ telemetryS
                         <SummaryContainer centered={true}>
                             <ConnectionSummary
                                 noSummaryIfAllNodesVisible={false}
-                                first={connection.totalCount ?? 0}
                                 centered={true}
                                 connection={connection}
                                 noun="webhook"

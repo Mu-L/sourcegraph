@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback } from 'react'
 
-import { EditorView } from '@codemirror/view'
+import type { EditorView } from '@codemirror/view'
 import { mdiOpenInNew, mdiInformationOutline, mdiCheck, mdiPencil } from '@mdi/js'
 import { debounce } from 'lodash'
 import { of } from 'rxjs'
@@ -8,18 +8,19 @@ import { startWith } from 'rxjs/operators'
 
 import { CodeExcerpt } from '@sourcegraph/branded'
 import { isErrorLike } from '@sourcegraph/common'
-import { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
+import type { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
 import { getRepositoryUrl } from '@sourcegraph/shared/src/search/stream'
 import { useExperimentalFeatures } from '@sourcegraph/shared/src/settings/settings'
 import { SymbolKind } from '@sourcegraph/shared/src/symbols/SymbolKind'
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { codeCopiedEvent } from '@sourcegraph/shared/src/tracking/event-log-creators'
 import { toPrettyBlobURL } from '@sourcegraph/shared/src/util/url'
 import { Alert, Icon, LoadingSpinner, Tooltip, useObservable } from '@sourcegraph/wildcard'
 
-import { BlockProps, SymbolBlock, SymbolBlockInput, SymbolBlockOutput } from '../..'
+import type { BlockProps, SymbolBlock, SymbolBlockInput, SymbolBlockOutput } from '../..'
 import { focusEditor } from '../../codemirror-utils'
-import { BlockMenuAction } from '../menu/NotebookBlockMenu'
+import type { BlockMenuAction } from '../menu/NotebookBlockMenu'
 import { useCommonBlockMenuActions } from '../menu/useCommonBlockMenuActions'
 import { NotebookBlock } from '../NotebookBlock'
 import { RepoFileSymbolLink } from '../RepoFileSymbolLink'
@@ -32,6 +33,7 @@ import styles from './NotebookSymbolBlock.module.scss'
 interface NotebookSymbolBlockProps
     extends BlockProps<SymbolBlock>,
         TelemetryProps,
+        TelemetryV2Props,
         PlatformContextProps<'requestGraphQL' | 'urlToFile' | 'settings'> {
     isSourcegraphDotCom: boolean
 }
@@ -51,6 +53,7 @@ export const NotebookSymbolBlock: React.FunctionComponent<React.PropsWithChildre
             input,
             output,
             telemetryService,
+            telemetryRecorder,
             isSelected,
             showMenu,
             isReadOnly,
@@ -139,7 +142,8 @@ export const NotebookSymbolBlock: React.FunctionComponent<React.PropsWithChildre
 
             const logEventOnCopy = useCallback(() => {
                 telemetryService.log(...codeCopiedEvent('notebook-symbols'))
-            }, [telemetryService])
+                telemetryRecorder.recordEvent('notebook.code', 'copy', { metadata: { page: 1 } })
+            }, [telemetryService, telemetryRecorder])
 
             return (
                 <NotebookBlock
@@ -196,10 +200,10 @@ export const NotebookSymbolBlock: React.FunctionComponent<React.PropsWithChildre
                                 repoName={input.repositoryName}
                                 commitID={input.revision}
                                 filePath={input.filePath}
-                                blobLines={symbolOutput.highlightedLines}
+                                plaintextLines={[]}
+                                highlightedLines={symbolOutput.highlightedLines}
                                 highlightRanges={[symbolOutput.highlightSymbolRange]}
                                 {...symbolOutput.highlightLineRange}
-                                fetchHighlightedFileRangeLines={() => of([])}
                                 onCopy={logEventOnCopy}
                             />
                         </div>

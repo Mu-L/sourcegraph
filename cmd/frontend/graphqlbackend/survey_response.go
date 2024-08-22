@@ -5,15 +5,15 @@ import (
 
 	"github.com/graph-gophers/graphql-go"
 	"github.com/graph-gophers/graphql-go/relay"
-	"github.com/inconshreveable/log15"
+	"github.com/inconshreveable/log15" //nolint:logging // TODO move all logging to sourcegraph/log
 
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/hubspot/hubspotutil"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/siteid"
 	sgactor "github.com/sourcegraph/sourcegraph/internal/actor"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/env"
 	"github.com/sourcegraph/sourcegraph/internal/errcode"
 	"github.com/sourcegraph/sourcegraph/internal/gqlutil"
+	"github.com/sourcegraph/sourcegraph/internal/siteid"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
@@ -123,7 +123,7 @@ func (r *schemaResolver) SubmitSurvey(ctx context.Context, args *struct {
 		OtherUseCase:    args.Input.OtherUseCase,
 		Better:          args.Input.Better,
 		IsAuthenticated: actor.IsAuthenticated(),
-		SiteID:          siteid.Get(),
+		SiteID:          siteid.Get(r.db),
 	}); err != nil {
 		// Log an error, but don't return one if the only failure was in submitting survey results to HubSpot.
 		log15.Error("Unable to submit survey results to Sourcegraph remote", "error", err)
@@ -159,7 +159,7 @@ func (r *schemaResolver) SubmitHappinessFeedback(ctx context.Context, args *stru
 		Feedback:    args.Input.Feedback,
 		CurrentPath: args.Input.CurrentPath,
 		IsTest:      env.InsecureDev,
-		SiteID:      siteid.Get(),
+		SiteID:      siteid.Get(r.db),
 	}
 
 	// We include the username and email address of the user (if signed in). For signed-in users,

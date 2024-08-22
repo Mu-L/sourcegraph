@@ -1,8 +1,9 @@
-import { DecoratorFn, Meta, Story } from '@storybook/react'
+import type { Decorator, Meta, StoryFn } from '@storybook/react'
 import { noop } from 'lodash'
 import { MATCH_ANY_PARAMETERS, WildcardMockLink } from 'wildcard-mock-link'
 
 import { getDocumentNode } from '@sourcegraph/http-client'
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { MockedTestProvider } from '@sourcegraph/shared/src/testing/apollo'
 
 import { WebStory } from '../../../components/WebStory'
@@ -11,7 +12,7 @@ import { mockRoles, mockPermissionsMap } from '../mock'
 
 import { RoleNode } from './RoleNode'
 
-const decorator: DecoratorFn = story => <div className="p-3 container list-unstyled">{story()}</div>
+const decorator: Decorator = story => <div className="p-3 container list-unstyled">{story()}</div>
 
 const config: Meta = {
     title: 'web/src/site-admin/rbac/RoleNode',
@@ -41,11 +42,16 @@ const mocks = new WildcardMockLink([
 
 const [systemRole, nonSystemRole] = mockRoles.roles.nodes
 
-export const SystemRole: Story = () => (
+export const SystemRole: StoryFn = () => (
     <WebStory>
         {() => (
             <MockedTestProvider link={mocks}>
-                <RoleNode allPermissions={mockPermissionsMap} node={systemRole} refetch={noop} />
+                <RoleNode
+                    allPermissions={mockPermissionsMap}
+                    node={systemRole}
+                    refetch={noop}
+                    telemetryRecorder={noOpTelemetryRecorder}
+                />
             </MockedTestProvider>
         )}
     </WebStory>
@@ -53,11 +59,16 @@ export const SystemRole: Story = () => (
 
 SystemRole.storyName = 'System role'
 
-export const NonSystemRole: Story = () => (
+export const NonSystemRole: StoryFn = () => (
     <WebStory>
         {() => (
             <MockedTestProvider link={mocks}>
-                <RoleNode node={nonSystemRole} refetch={noop} allPermissions={mockPermissionsMap} />
+                <RoleNode
+                    node={nonSystemRole}
+                    refetch={noop}
+                    allPermissions={mockPermissionsMap}
+                    telemetryRecorder={noOpTelemetryRecorder}
+                />
             </MockedTestProvider>
         )}
     </WebStory>

@@ -10,6 +10,7 @@ import (
 	"github.com/keegancsmith/sqlf"
 	"github.com/stretchr/testify/require"
 
+	"github.com/sourcegraph/log"
 	"github.com/sourcegraph/log/logtest"
 
 	"github.com/sourcegraph/sourcegraph/internal/actor"
@@ -19,6 +20,7 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/database/dbutil"
 	"github.com/sourcegraph/sourcegraph/internal/search/result"
 	"github.com/sourcegraph/sourcegraph/internal/timeutil"
+	"github.com/sourcegraph/sourcegraph/internal/types"
 )
 
 // CodeMonitorStore is an interface for interacting with the code monitor tables in the database
@@ -36,7 +38,7 @@ type CodeMonitorStore interface {
 	DeleteMonitor(ctx context.Context, id int64) error
 	GetMonitor(ctx context.Context, monitorID int64) (*Monitor, error)
 	ListMonitors(context.Context, ListMonitorsOpts) ([]*Monitor, error)
-	CountMonitors(ctx context.Context, userID int32) (int32, error)
+	CountMonitors(ctx context.Context, opts ListMonitorsOpts) (int32, error)
 
 	CreateQueryTrigger(ctx context.Context, monitorID int64, query string) (*QueryTrigger, error)
 	UpdateQueryTrigger(ctx context.Context, id int64, query string) error
@@ -50,6 +52,7 @@ type CodeMonitorStore interface {
 
 	UpdateTriggerJobWithResults(ctx context.Context, triggerJobID int32, queryString string, results []*result.CommitMatch) error
 	DeleteOldTriggerJobs(ctx context.Context, retentionInDays int) error
+	UpdateTriggerJobWithLogs(ctx context.Context, triggerJobID int32, entry TriggerJobLogs) error
 
 	UpdateEmailAction(_ context.Context, id int64, _ *EmailActionArgs) (*EmailAction, error)
 	CreateEmailAction(ctx context.Context, monitorID int64, _ *EmailActionArgs) (*EmailAction, error)
@@ -95,7 +98,8 @@ type CodeMonitorStore interface {
 // from persistent storage.
 type codeMonitorStore struct {
 	*basestore.Store
-	now func() time.Time
+	userStore UserStore
+	now       func() time.Time
 }
 
 var _ CodeMonitorStore = (*codeMonitorStore)(nil)
@@ -108,7 +112,8 @@ func CodeMonitorsWith(other basestore.ShareableStore) *codeMonitorStore {
 // CodeMonitorsWithClock returns a new Store backed by the given database and
 // clock for timestamps.
 func CodeMonitorsWithClock(other basestore.ShareableStore, clock func() time.Time) *codeMonitorStore {
-	return &codeMonitorStore{Store: basestore.NewWithHandle(other.Handle()), now: clock}
+	handle := basestore.NewWithHandle(other.Handle())
+	return &codeMonitorStore{Store: handle, userStore: UsersWith(log.Scoped("codemonitors"), handle), now: clock}
 }
 
 // Clock returns the clock of the underlying store.
@@ -159,7 +164,7 @@ WHERE id = %s;
 func (s *TestStore) SetJobStatus(ctx context.Context, table JobTable, state JobState, id int) error {
 	st := []string{"queued", "processing", "completed", "errored", "failed"}[state]
 	t := []string{"cm_trigger_jobs", "cm_action_jobs"}[table]
-	return s.Exec(ctx, sqlf.Sprintf(setStatusFmtStr, quote(t), st, s.Now(), s.Now(), id))
+	return s.Exec(ctx, sqlf.Sprintf(setStatusFmtStr, sqlf.Sprintf(t), st, s.Now(), s.Now(), id))
 }
 
 type TestStore struct {
@@ -221,6 +226,14 @@ func (s *TestStore) InsertTestMonitor(ctx context.Context, t *testing.T) (*Monit
 	return m, nil
 }
 
+func namespaceScopeQuery(user *types.User) *sqlf.Query {
+	namespaceScope := sqlf.Sprintf("cm_monitors.namespace_user_id = %s", user.ID)
+	if user.SiteAdmin {
+		namespaceScope = sqlf.Sprintf("TRUE")
+	}
+	return namespaceScope
+}
+
 func NewTestStore(t *testing.T, db DB) (context.Context, *TestStore) {
 	ctx := actor.WithInternalActor(context.Background())
 	now := time.Now().Truncate(time.Microsecond)
@@ -238,18 +251,22 @@ func NewTestUser(ctx context.Context, t *testing.T, db dbutil.DB) (name string, 
 }
 
 const (
-	testQuery       = "repo:github\\.com/sourcegraph/sourcegraph func type:diff patternType:literal"
+	//nolint:unused // used in tests
+	testQuery = "repo:github\\.com/sourcegraph/sourcegraph func type:diff patternType:literal"
+	//nolint:unused // used in tests
 	testDescription = "test description"
 )
 
+//nolint:unused // used in tests
 func newTestStore(t *testing.T) (context.Context, DB, *codeMonitorStore) {
 	logger := logtest.Scoped(t)
 	ctx := actor.WithInternalActor(context.Background())
-	db := NewDB(logger, dbtest.NewDB(logger, t))
+	db := NewDB(logger, dbtest.NewDB(t))
 	now := time.Now().Truncate(time.Microsecond)
 	return ctx, db, CodeMonitorsWithClock(db, func() time.Time { return now })
 }
 
+//nolint:unused // used in tests
 func newTestUser(ctx context.Context, t *testing.T, db dbutil.DB) (name string, id int32, userContext context.Context) {
 	t.Helper()
 
@@ -260,6 +277,7 @@ func newTestUser(ctx context.Context, t *testing.T, db dbutil.DB) (name string, 
 	return name, id, ctx
 }
 
+//nolint:unused // used in tests
 func insertTestUser(ctx context.Context, t *testing.T, db dbutil.DB, name string, isAdmin bool) (userID int32) {
 	t.Helper()
 

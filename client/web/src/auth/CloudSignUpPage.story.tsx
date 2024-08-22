@@ -1,41 +1,28 @@
-import { Meta, Story } from '@storybook/react'
+import type { Meta, StoryFn } from '@storybook/react'
 import sinon from 'sinon'
 
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { NOOP_TELEMETRY_SERVICE } from '@sourcegraph/shared/src/telemetry/telemetryService'
 
 import { WebStory } from '../components/WebStory'
-import { SourcegraphContext } from '../jscontext'
+import type { SourcegraphContext } from '../jscontext'
 
 import { CloudSignUpPage } from './CloudSignUpPage'
 
 const config: Meta = {
     title: 'web/auth/CloudSignUpPage',
+    parameters: {},
 }
 
 export default config
 
-const context: Pick<SourcegraphContext, 'authProviders' | 'experimentalFeatures' | 'authMinPasswordLength'> = {
-    authProviders: [
-        {
-            serviceType: 'github',
-            displayName: 'GitHub.com',
-            isBuiltin: false,
-            authenticationURL: '/.auth/github/login?pc=https%3A%2F%2Fgithub.com%2F',
-            serviceID: 'https://github.com',
-        },
-        {
-            serviceType: 'gitlab',
-            displayName: 'GitLab.com',
-            isBuiltin: false,
-            authenticationURL: '/.auth/gitlab/login?pc=https%3A%2F%2Fgitlab.com%2F',
-            serviceID: 'https://gitlab.com',
-        },
-    ],
+const context: Pick<SourcegraphContext, 'externalURL' | 'experimentalFeatures' | 'authMinPasswordLength'> = {
     experimentalFeatures: {},
     authMinPasswordLength: 0,
+    externalURL: 'https://sourcegraph.test:3443',
 }
 
-export const Default: Story = () => (
+export const Default: StoryFn = () => (
     <WebStory>
         {({ isLightTheme }) => (
             <CloudSignUpPage
@@ -45,13 +32,14 @@ export const Default: Story = () => (
                 context={context}
                 showEmailForm={false}
                 telemetryService={NOOP_TELEMETRY_SERVICE}
+                telemetryRecorder={noOpTelemetryRecorder}
                 isSourcegraphDotCom={true}
             />
         )}
     </WebStory>
 )
 
-export const EmailForm: Story = () => (
+export const EmailForm: StoryFn = () => (
     <WebStory>
         {({ isLightTheme }) => (
             <CloudSignUpPage
@@ -61,13 +49,14 @@ export const EmailForm: Story = () => (
                 context={context}
                 showEmailForm={true}
                 telemetryService={NOOP_TELEMETRY_SERVICE}
+                telemetryRecorder={noOpTelemetryRecorder}
                 isSourcegraphDotCom={true}
             />
         )}
     </WebStory>
 )
 
-export const InvalidSource: Story = () => (
+export const InvalidSource: StoryFn = () => (
     <WebStory>
         {({ isLightTheme }) => (
             <CloudSignUpPage
@@ -77,13 +66,14 @@ export const InvalidSource: Story = () => (
                 context={context}
                 showEmailForm={false}
                 telemetryService={NOOP_TELEMETRY_SERVICE}
+                telemetryRecorder={noOpTelemetryRecorder}
                 isSourcegraphDotCom={true}
             />
         )}
     </WebStory>
 )
 
-export const OptimizationSignup: Story = () => (
+export const OptimizationSignup: StoryFn = () => (
     <WebStory>
         {({ isLightTheme }) => (
             <CloudSignUpPage
@@ -93,6 +83,7 @@ export const OptimizationSignup: Story = () => (
                 context={context}
                 showEmailForm={false}
                 telemetryService={NOOP_TELEMETRY_SERVICE}
+                telemetryRecorder={noOpTelemetryRecorder}
                 isSourcegraphDotCom={true}
             />
         )}

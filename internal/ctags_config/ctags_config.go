@@ -65,7 +65,9 @@ var supportedLanguages = map[string]struct{}{
 	"go":         {},
 	"java":       {},
 	"javascript": {},
+	"hack":       {},
 	"kotlin":     {},
+	"magik":      {},
 	"python":     {},
 	"ruby":       {},
 	"rust":       {},
@@ -80,7 +82,9 @@ var DefaultEngines = map[string]ParserType{
 	"c_sharp":    ScipCtags,
 	"go":         ScipCtags,
 	"javascript": ScipCtags,
+	"hack":       ScipCtags,
 	"kotlin":     ScipCtags,
+	"magik":      ScipCtags,
 	"python":     ScipCtags,
 	"ruby":       ScipCtags,
 	"rust":       ScipCtags,
@@ -104,7 +108,7 @@ func CreateEngineMap(siteConfig schema.SiteConfiguration) map[string]ParserType 
 
 	// Set any relevant overrides
 	configuration := siteConfig.SyntaxHighlighting
-	if configuration != nil {
+	if configuration != nil && configuration.Symbols != nil {
 		for lang, engine := range configuration.Symbols.Engine {
 			lang = languages.NormalizeLanguage(lang)
 

@@ -1,27 +1,32 @@
-import { Observable } from 'rxjs'
-import { mapTo, map, tap } from 'rxjs/operators'
+import { lastValueFrom } from 'rxjs'
+import { map, tap } from 'rxjs/operators'
 
 import { resetAllMemoizationCaches } from '@sourcegraph/common'
 import { gql, dataOrThrowErrors } from '@sourcegraph/http-client'
-import { Scalars } from '@sourcegraph/shared/src/graphql-operations'
+import type { Scalars } from '@sourcegraph/shared/src/graphql-operations'
 
 import { requestGraphQL } from '../../../../backend/graphql'
-import { ScheduleUserPermissionsSyncResult, ScheduleUserPermissionsSyncVariables } from '../../../../graphql-operations'
+import type {
+    ScheduleUserPermissionsSyncResult,
+    ScheduleUserPermissionsSyncVariables,
+} from '../../../../graphql-operations'
 
-export function scheduleUserPermissionsSync(args: { user: Scalars['ID'] }): Observable<void> {
-    return requestGraphQL<ScheduleUserPermissionsSyncResult, ScheduleUserPermissionsSyncVariables>(
-        gql`
-            mutation ScheduleUserPermissionsSync($user: ID!) {
-                scheduleUserPermissionsSync(user: $user) {
-                    alwaysNil
+export function scheduleUserPermissionsSync(args: { user: Scalars['ID'] }): Promise<void> {
+    return lastValueFrom(
+        requestGraphQL<ScheduleUserPermissionsSyncResult, ScheduleUserPermissionsSyncVariables>(
+            gql`
+                mutation ScheduleUserPermissionsSync($user: ID!) {
+                    scheduleUserPermissionsSync(user: $user) {
+                        alwaysNil
+                    }
                 }
-            }
-        `,
-        args
-    ).pipe(
-        map(dataOrThrowErrors),
-        tap(() => resetAllMemoizationCaches()),
-        mapTo(undefined)
+            `,
+            args
+        ).pipe(
+            map(dataOrThrowErrors),
+            tap(() => resetAllMemoizationCaches()),
+            map(() => undefined)
+        )
     )
 }
 
@@ -37,8 +42,8 @@ export const UserPermissionsInfoQuery = gql`
 
     fragment UserPermissionsInfoUserNode on User {
         permissionsInfo {
-            syncedAt
             updatedAt
+            source
             repositories(first: $first, last: $last, after: $after, before: $before, query: $query) {
                 nodes {
                     ...PermissionsInfoRepositoryFields

@@ -1,13 +1,11 @@
 package store
 
 import (
-	"testing"
-
-	"github.com/sourcegraph/log/logtest"
-
-	"github.com/sourcegraph/sourcegraph/internal/database/dbtest"
 	"github.com/sourcegraph/sourcegraph/internal/encryption"
 	et "github.com/sourcegraph/sourcegraph/internal/encryption/testing"
+	"testing"
+
+	"github.com/sourcegraph/sourcegraph/internal/database/dbtest"
 )
 
 func TestIntegration(t *testing.T) {
@@ -17,9 +15,7 @@ func TestIntegration(t *testing.T) {
 
 	t.Parallel()
 
-	logger := logtest.Scoped(t)
-
-	db := dbtest.NewDB(logger, t)
+	db := dbtest.NewDB(t)
 
 	t.Run("Store", func(t *testing.T) {
 		t.Run("BatchChanges", storeTest(db, nil, testStoreBatchChanges))
@@ -50,6 +46,7 @@ func TestIntegration(t *testing.T) {
 			"no key":   nil,
 			"test key": &et.TestKey{},
 		} {
+			db := dbtest.NewDB(t)
 			t.Run(name, func(t *testing.T) {
 				t.Run("SiteCredentials", storeTest(db, key, testStoreSiteCredentials))
 			})

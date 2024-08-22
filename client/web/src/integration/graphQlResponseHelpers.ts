@@ -1,15 +1,16 @@
 import { encodeURIPathComponent } from '@sourcegraph/common'
-import { JsonDocument } from '@sourcegraph/shared/src/codeintel/scip'
-import { RepositoryType, TreeEntriesResult } from '@sourcegraph/shared/src/graphql-operations'
+import type { JsonDocument } from '@sourcegraph/shared/src/codeintel/scip'
+import { RepositoryType, type TreeEntriesResult } from '@sourcegraph/shared/src/graphql-operations'
 
 import {
-    BlobResult,
+    type BlobResult,
+    type ContextFiltersResult,
     ExternalServiceKind,
-    FileExternalLinksResult,
-    FileNamesResult,
-    FileTreeEntriesResult,
-    RepoChangesetsStatsResult,
-    ResolveRepoRevResult,
+    type FileExternalLinksResult,
+    type FileNamesResult,
+    type FileTreeEntriesResult,
+    type RepoChangesetsStatsResult,
+    type ResolveRepoRevResult,
 } from '../graphql-operations'
 
 export const createTreeEntriesResult = (url: string, toplevelFiles: string[]): TreeEntriesResult => ({
@@ -20,12 +21,13 @@ export const createTreeEntriesResult = (url: string, toplevelFiles: string[]): T
                 isRoot: true,
                 url,
                 entries: toplevelFiles.map(name => ({
+                    __typename: 'GitBlob',
+                    languages: [],
                     name,
                     path: name,
                     isDirectory: false,
                     url: `${url}/-/blob/${name}`,
                     submodule: null,
-                    isSingleChild: false,
                 })),
             },
         },
@@ -37,6 +39,7 @@ export const createFileTreeEntriesResult = (url: string, toplevelFiles: string[]
 
 export const createBlobContentResult = (content: string, lsif?: JsonDocument): BlobResult => ({
     repository: {
+        id: '1',
         commit: {
             __typename: 'GitCommit',
             oid: '1',
@@ -49,6 +52,7 @@ export const createBlobContentResult = (content: string, lsif?: JsonDocument): B
                     aborted: false,
                     lsif: lsif ? JSON.stringify(lsif) : '',
                 },
+                languages: [], // OK as this is only for testing
             },
         },
         changelist: null,
@@ -104,6 +108,7 @@ export const createResolveRepoRevisionResult = (treeUrl: string, oid = '1'.repea
         changelist: null,
         isFork: false,
         metadata: [],
+        topics: [],
     },
 })
 
@@ -135,6 +140,7 @@ export const createResolveCloningRepoRevisionResult = (
         changelist: null,
         isFork: false,
         metadata: [],
+        topics: [],
     },
     errors: [
         {
@@ -148,5 +154,15 @@ export const createFileNamesResult = (): FileNamesResult => ({
         id: 'repo-123',
         __typename: 'Repository',
         commit: { id: 'c0ff33', __typename: 'GitCommit', fileNames: ['README.md'] },
+    },
+})
+
+export const createCodyContextFiltersResult = (): ContextFiltersResult => ({
+    site: {
+        codyContextFilters: {
+            raw: null,
+            __typename: 'CodyContextFilters',
+        },
+        __typename: 'Site',
     },
 })

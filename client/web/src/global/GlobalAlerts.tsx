@@ -1,17 +1,18 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 
 import classNames from 'classnames'
-import { parseISO } from 'date-fns'
-import differenceInDays from 'date-fns/differenceInDays'
+import { parseISO, differenceInDays } from 'date-fns'
 
 import { renderMarkdown } from '@sourcegraph/common'
 import { gql, useQuery } from '@sourcegraph/http-client'
 import { useSettings } from '@sourcegraph/shared/src/settings/settings'
+import { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import { Link, Markdown } from '@sourcegraph/wildcard'
 
-import { AuthenticatedUser } from '../auth'
+import type { AuthenticatedUser } from '../auth'
 import { DismissibleAlert } from '../components/DismissibleAlert'
-import { GlobalAlertsSiteFlagsResult, GlobalAlertsSiteFlagsVariables } from '../graphql-operations'
+import { useFeatureFlag } from '../featureFlags/useFeatureFlag'
+import type { GlobalAlertsSiteFlagsResult, GlobalAlertsSiteFlagsVariables } from '../graphql-operations'
 import { FreeUsersExceededAlert } from '../site/FreeUsersExceededAlert'
 import { LicenseExpirationAlert } from '../site/LicenseExpirationAlert'
 import { NeedsRepositoryConfigurationAlert } from '../site/NeedsRepositoryConfigurationAlert'
@@ -22,9 +23,8 @@ import { Notices, VerifyEmailNotices } from './Notices'
 
 import styles from './GlobalAlerts.module.scss'
 
-interface Props {
+interface Props extends TelemetryV2Props {
     authenticatedUser: AuthenticatedUser | null
-    isSourcegraphApp: boolean
 }
 
 // NOTE: The name of the query is also added in the refreshSiteFlags() function
@@ -34,41 +34,68 @@ const QUERY = gql`
         site {
             ...SiteFlagFields
         }
-        codeIntelligenceConfigurationPolicies(forEmbeddings: true) {
-            totalCount
-        }
     }
 
     ${siteFlagFieldsFragment}
 `
 /**
+ * Alerts that should not be visible when admin onboarding is enabled
+ */
+const adminOnboardingRemovedAlerts = ['externalURL', 'email.smtp', 'enable repository permissions']
+
+/**
  * Fetches and displays relevant global alerts at the top of the page
  */
-export const GlobalAlerts: React.FunctionComponent<Props> = ({ authenticatedUser, isSourcegraphApp }) => {
+export const GlobalAlerts: React.FunctionComponent<Props> = ({ authenticatedUser, telemetryRecorder }) => {
     const settings = useSettings()
+    const [isAdminOnboardingEnabled] = useFeatureFlag('admin-onboarding', true)
     const { data } = useQuery<GlobalAlertsSiteFlagsResult, GlobalAlertsSiteFlagsVariables>(QUERY, {
         fetchPolicy: 'cache-and-network',
     })
-    const siteFlagsValue = data?.site
 
-    const showNoEmbeddingPoliciesAlert =
-        window.context?.codyEnabled && data?.codeIntelligenceConfigurationPolicies.totalCount === 0
+    useEffect(() => {
+        if (settings?.motd && Array.isArray(settings.motd)) {
+            telemetryRecorder.recordEvent('alert.motd', 'view')
+        }
+        if (process.env.SOURCEGRAPH_API_URL) {
+            telemetryRecorder.recordEvent('alert.proxyAPI', 'view')
+        }
+    }, [settings?.motd, telemetryRecorder])
+
+    const siteFlagsValue = data?.site
+    let alerts = siteFlagsValue?.alerts ?? []
+
+    if (isAdminOnboardingEnabled) {
+        alerts =
+            siteFlagsValue?.alerts.filter(
+                ({ message }) => !adminOnboardingRemovedAlerts.some(alt => message.includes(alt))
+            ) ?? []
+    }
 
     return (
         <div className={classNames('test-global-alert', styles.globalAlerts)}>
             {siteFlagsValue && (
                 <>
-                    {siteFlagsValue?.externalServicesCounts.remoteExternalServicesCount === 0 && !isSourcegraphApp && (
-                        <NeedsRepositoryConfigurationAlert className={styles.alert} />
+                    {siteFlagsValue?.needsRepositoryConfiguration && (
+                        <NeedsRepositoryConfigurationAlert
+                            className={styles.alert}
+                            telemetryRecorder={telemetryRecorder}
+                        />
                     )}
                     {siteFlagsValue.freeUsersExceeded && (
                         <FreeUsersExceededAlert
                             noLicenseWarningUserCount={siteFlagsValue.productSubscription.noLicenseWarningUserCount}
                             className={styles.alert}
+                            telemetryRecorder={telemetryRecorder}
                         />
                     )}
-                    {siteFlagsValue.alerts.map((alert, index) => (
-                        <GlobalAlert key={index} alert={alert} className={styles.alert} />
+                    {alerts.map((alert, index) => (
+                        <GlobalAlert
+                            key={index}
+                            alert={alert}
+                            className={styles.alert}
+                            telemetryRecorder={telemetryRecorder}
+                        />
                     ))}
                     {siteFlagsValue.productSubscription.license &&
                         (() => {
@@ -79,6 +106,7 @@ export const GlobalAlerts: React.FunctionComponent<Props> = ({ authenticatedUser
                                         expiresAt={expiresAt}
                                         daysLeft={Math.floor(differenceInDays(expiresAt, Date.now()))}
                                         className={styles.alert}
+                                        telemetryRecorder={telemetryRecorder}
                                     />
                                 )
                             )
@@ -113,29 +141,12 @@ export const GlobalAlerts: React.FunctionComponent<Props> = ({ authenticatedUser
                     .
                 </DismissibleAlert>
             )}
-            {/* Sourcegraph app creates a global policy during setup but this alert is flashing during connection to dotcom account */}
-            {showNoEmbeddingPoliciesAlert && authenticatedUser?.siteAdmin && !isSourcegraphApp && (
-                <DismissibleAlert
-                    key="no-embeddings-policies-alert"
-                    partialStorageKey="no-embeddings-policies-alert"
-                    variant="danger"
-                    className={styles.alert}
-                >
-                    <div>
-                        <strong>Warning!</strong> No embeddings policies have been configured. This will lead to poor
-                        results from Cody, Sourcegraph’s AI assistant. Add an{' '}
-                        <Link to="/site-admin/embeddings/configuration">embedding policy</Link>
-                    </div>
-                    .
-                </DismissibleAlert>
-            )}
-            <Notices alertClassName={styles.alert} location="top" />
-
-            {/* The link in the notice doesn't work in the Sourcegraph app since it's rendered by Markdown,
-            so don't show it there for now. */}
-            {!isSourcegraphApp && (
-                <VerifyEmailNotices authenticatedUser={authenticatedUser} alertClassName={styles.alert} />
-            )}
+            <Notices alertClassName={styles.alert} location="top" telemetryRecorder={telemetryRecorder} />
+            <VerifyEmailNotices
+                authenticatedUser={authenticatedUser}
+                alertClassName={styles.alert}
+                telemetryRecorder={telemetryRecorder}
+            />
         </div>
     )
 }

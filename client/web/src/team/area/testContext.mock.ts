@@ -1,6 +1,7 @@
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { mockAuthenticatedUser } from '@sourcegraph/shared/src/testing/searchContexts/testHelpers'
 
-import { TeamAreaRouteContext } from './TeamArea'
+import type { TeamAreaRouteContext } from './TeamArea'
 
 export const testContext: TeamAreaRouteContext = {
     authenticatedUser: mockAuthenticatedUser,
@@ -30,5 +31,6 @@ export const testContext: TeamAreaRouteContext = {
             url: '/users/alice',
         },
     },
+    telemetryRecorder: noOpTelemetryRecorder,
     onTeamUpdate: () => {},
 }

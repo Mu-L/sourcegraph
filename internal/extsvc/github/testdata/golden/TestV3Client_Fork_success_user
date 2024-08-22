@@ -12,5 +12,7 @@
   "ViewerPermission": "ADMIN",
   "RepositoryTopics": {
    "Nodes": []
-  }
+  },
+  "visibility": "public",
+  "DiskUsage": 703
  }

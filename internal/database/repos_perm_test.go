@@ -18,10 +18,8 @@ import (
 
 	"github.com/sourcegraph/log/logtest"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/globals"
 	"github.com/sourcegraph/sourcegraph/internal/actor"
 	"github.com/sourcegraph/sourcegraph/internal/api"
-	"github.com/sourcegraph/sourcegraph/internal/authz"
 	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/database/batch"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbtest"
@@ -30,40 +28,16 @@ import (
 	"github.com/sourcegraph/sourcegraph/schema"
 )
 
-type fakeProvider struct {
-	codeHost *extsvc.CodeHost
-	extAcct  *extsvc.Account
-}
-
-func (p *fakeProvider) FetchAccount(context.Context, *types.User, []*extsvc.Account, []string) (mine *extsvc.Account, err error) {
-	return p.extAcct, nil
-}
-
-func (p *fakeProvider) ServiceType() string { return p.codeHost.ServiceType }
-func (p *fakeProvider) ServiceID() string   { return p.codeHost.ServiceID }
-func (p *fakeProvider) URN() string         { return extsvc.URN(p.codeHost.ServiceType, 0) }
-
-func (p *fakeProvider) ValidateConnection(context.Context) error { return nil }
-
-func (p *fakeProvider) FetchUserPerms(context.Context, *extsvc.Account, authz.FetchPermsOptions) (*authz.ExternalUserPermissions, error) {
-	return nil, nil
-}
-
-func (p *fakeProvider) FetchUserPermsByToken(context.Context, string, authz.FetchPermsOptions) (*authz.ExternalUserPermissions, error) {
-	return nil, nil
-}
-
-func (p *fakeProvider) FetchRepoPerms(context.Context, *extsvc.Repository, authz.FetchPermsOptions) ([]extsvc.AccountID, error) {
-	return nil, nil
-}
-
 func mockExplicitPermsConfig(enabled bool) func() {
-	before := globals.PermissionsUserMapping()
-	globals.SetPermissionsUserMapping(&schema.PermissionsUserMapping{Enabled: enabled})
-
-	return func() {
-		globals.SetPermissionsUserMapping(before)
-	}
+	conf.Mock(&conf.Unified{
+		SiteConfiguration: schema.SiteConfiguration{
+			PermissionsUserMapping: &schema.PermissionsUserMapping{
+				Enabled: enabled,
+				BindID:  "email",
+			},
+		},
+	})
+	return func() { conf.Mock(nil) }
 }
 
 // 🚨 SECURITY: Tests are necessary to ensure security.
@@ -71,13 +45,11 @@ func TestAuthzQueryConds(t *testing.T) {
 	cmpOpts := cmp.AllowUnexported(sqlf.Query{})
 
 	logger := logtest.Scoped(t)
-	db := NewDB(logger, dbtest.NewDB(logger, t))
+	db := NewDB(logger, dbtest.NewDB(t))
 
 	t.Run("When permissions user mapping is enabled", func(t *testing.T) {
-		authz.SetProviders(false, []authz.Provider{&fakeProvider{}})
 		cleanup := mockExplicitPermsConfig(true)
 		t.Cleanup(func() {
-			authz.SetProviders(true, nil)
 			cleanup()
 		})
 
@@ -91,10 +63,8 @@ func TestAuthzQueryConds(t *testing.T) {
 	})
 
 	t.Run("When permissions user mapping is enabled, unrestricted repos work correctly", func(t *testing.T) {
-		authz.SetProviders(false, []authz.Provider{&fakeProvider{}})
 		cleanup := mockExplicitPermsConfig(true)
 		t.Cleanup(func() {
-			authz.SetProviders(true, nil)
 			cleanup()
 		})
 
@@ -107,11 +77,12 @@ func TestAuthzQueryConds(t *testing.T) {
 		require.Contains(t, got.Query(sqlf.PostgresBindVar), ExternalServiceUnrestrictedCondition.Query(sqlf.PostgresBindVar))
 	})
 
+	u, err := db.Users().Create(context.Background(), NewUser{Username: "testuser"})
+	require.NoError(t, err)
 	tests := []struct {
-		name                string
-		setup               func(t *testing.T) (context.Context, DB)
-		authzAllowByDefault bool
-		wantQuery           *sqlf.Query
+		name      string
+		setup     func(t *testing.T) (context.Context, DB)
+		wantQuery *sqlf.Query
 	}{
 		{
 			name: "internal actor bypass checks",
@@ -121,54 +92,37 @@ func TestAuthzQueryConds(t *testing.T) {
 			wantQuery: authzQuery(true, int32(0)),
 		},
 		{
-			name: "no authz provider and not allow by default",
+			name: "no authz provider",
 			setup: func(t *testing.T) (context.Context, DB) {
 				return context.Background(), db
 			},
 			wantQuery: authzQuery(false, int32(0)),
 		},
 		{
-			name: "no authz provider but allow by default",
-			setup: func(t *testing.T) (context.Context, DB) {
-				return context.Background(), db
-			},
-			authzAllowByDefault: true,
-			wantQuery:           authzQuery(true, int32(0)),
-		},
-		{
 			name: "authenticated user is a site admin",
 			setup: func(_ *testing.T) (context.Context, DB) {
-				users := NewMockUserStoreFrom(db.Users())
-				users.GetByCurrentAuthUserFunc.SetDefaultReturn(&types.User{ID: 1, SiteAdmin: true}, nil)
-				mockDB := NewMockDBFrom(db)
-				mockDB.UsersFunc.SetDefaultReturn(users)
-				return actor.WithActor(context.Background(), &actor.Actor{UID: 1}), mockDB
+				require.NoError(t, db.Users().SetIsSiteAdmin(context.Background(), u.ID, true))
+				return actor.WithActor(context.Background(), &actor.Actor{UID: u.ID}), db
 			},
 			wantQuery: authzQuery(true, int32(1)),
 		},
 		{
 			name: "authenticated user is a site admin and AuthzEnforceForSiteAdmins is set",
 			setup: func(t *testing.T) (context.Context, DB) {
-				users := NewMockUserStoreFrom(db.Users())
-				users.GetByCurrentAuthUserFunc.SetDefaultReturn(&types.User{ID: 1, SiteAdmin: true}, nil)
-				mockDB := NewMockDBFrom(db)
-				mockDB.UsersFunc.SetDefaultReturn(users)
+				require.NoError(t, db.Users().SetIsSiteAdmin(context.Background(), u.ID, true))
 				conf.Get().AuthzEnforceForSiteAdmins = true
 				t.Cleanup(func() {
 					conf.Get().AuthzEnforceForSiteAdmins = false
 				})
-				return actor.WithActor(context.Background(), &actor.Actor{UID: 1}), mockDB
+				return actor.WithActor(context.Background(), &actor.Actor{UID: u.ID}), db
 			},
 			wantQuery: authzQuery(false, int32(1)),
 		},
 		{
 			name: "authenticated user is not a site admin",
 			setup: func(_ *testing.T) (context.Context, DB) {
-				users := NewMockUserStoreFrom(db.Users())
-				users.GetByCurrentAuthUserFunc.SetDefaultReturn(&types.User{ID: 1}, nil)
-				mockDB := NewMockDBFrom(db)
-				mockDB.UsersFunc.SetDefaultReturn(users)
-				return actor.WithActor(context.Background(), &actor.Actor{UID: 1}), mockDB
+				require.NoError(t, db.Users().SetIsSiteAdmin(context.Background(), u.ID, false))
+				return actor.WithActor(context.Background(), &actor.Actor{UID: 1}), db
 			},
 			wantQuery: authzQuery(false, int32(1)),
 		},
@@ -176,9 +130,6 @@ func TestAuthzQueryConds(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			authz.SetProviders(test.authzAllowByDefault, nil)
-			defer authz.SetProviders(true, nil)
-
 			ctx, mockDB := test.setup(t)
 			q, err := AuthzQueryConds(ctx, mockDB)
 			if err != nil {
@@ -295,14 +246,9 @@ func TestRepoStore_userCanSeeUnrestricedRepo(t *testing.T) {
 	}
 
 	logger := logtest.Scoped(t)
-	db := NewDB(logger, dbtest.NewDB(logger, t))
+	db := NewDB(logger, dbtest.NewDB(t))
 	ctx := context.Background()
 	alice, unrestrictedRepo := setupUnrestrictedDB(t, ctx, db)
-
-	authz.SetProviders(false, []authz.Provider{&fakeProvider{}})
-	t.Cleanup(func() {
-		authz.SetProviders(true, nil)
-	})
 
 	t.Run("Alice cannot see private repo, but can see unrestricted repo", func(t *testing.T) {
 		aliceCtx := actor.WithActor(ctx, &actor.Actor{UID: alice.ID})
@@ -364,18 +310,16 @@ func TestRepoStore_userCanSeePublicRepo(t *testing.T) {
 	}
 
 	logger := logtest.Scoped(t)
-	db := NewDB(logger, dbtest.NewDB(logger, t))
+	db := NewDB(logger, dbtest.NewDB(t))
 	ctx := context.Background()
 
 	alice, publicRepo := setupPublicRepo(t, db)
 
 	t.Run("Alice can see public repo with explicit permissions ON", func(t *testing.T) {
-		authz.SetProviders(false, []authz.Provider{&fakeProvider{}})
 		cleanup := mockExplicitPermsConfig(true)
 
 		t.Cleanup(func() {
 			cleanup()
-			authz.SetProviders(true, nil)
 		})
 
 		aliceCtx := actor.WithActor(ctx, &actor.Actor{UID: alice.ID})
@@ -483,7 +427,11 @@ VALUES (%s, %s, '')
 
 	// Set up external accounts for alice and bob
 	for _, user := range []*types.User{alice, bob} {
-		err = db.UserExternalAccounts().AssociateUserAndSave(ctx, user.ID, extsvc.AccountSpec{ServiceType: extsvc.TypeGitHub, ServiceID: "https://github.com/", AccountID: user.Username}, extsvc.AccountData{})
+		_, err = db.UserExternalAccounts().Upsert(ctx,
+			&extsvc.Account{
+				UserID:      user.ID,
+				AccountSpec: extsvc.AccountSpec{ServiceType: extsvc.TypeGitHub, ServiceID: "https://github.com/", AccountID: user.Username},
+			})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -520,15 +468,12 @@ func TestRepoStore_List_checkPermissions(t *testing.T) {
 	}
 
 	logger := logtest.Scoped(t)
-	db := NewDB(logger, dbtest.NewDB(logger, t))
+	db := NewDB(logger, dbtest.NewDB(t))
 	ctx := context.Background()
 
 	users, repos := setupDB(t, ctx, db)
 	admin, alice, bob, cindy := users["admin"], users["alice"], users["bob"], users["cindy"]
 	alicePublicRepo, alicePrivateRepo, bobPublicRepo, bobPrivateRepo, cindyPrivateRepo := repos["alice_public_repo"], repos["alice_private_repo"], repos["bob_public_repo"], repos["bob_private_repo"], repos["cindy_private_repo"]
-
-	authz.SetProviders(false, []authz.Provider{&fakeProvider{}})
-	defer authz.SetProviders(true, nil)
 
 	assertRepos := func(t *testing.T, ctx context.Context, want []*types.Repo) {
 		t.Helper()
@@ -603,7 +548,7 @@ func TestRepoStore_List_permissionsUserMapping(t *testing.T) {
 	}
 
 	logger := logtest.Scoped(t)
-	db := NewDB(logger, dbtest.NewDB(logger, t))
+	db := NewDB(logger, dbtest.NewDB(t))
 	ctx := context.Background()
 
 	// Set up three users: alice, bob and admin
@@ -751,9 +696,15 @@ VALUES
 		t.Fatal(err)
 	}
 
-	before := globals.PermissionsUserMapping()
-	globals.SetPermissionsUserMapping(&schema.PermissionsUserMapping{Enabled: true})
-	defer globals.SetPermissionsUserMapping(before)
+	conf.Mock(&conf.Unified{
+		SiteConfiguration: schema.SiteConfiguration{
+			PermissionsUserMapping: &schema.PermissionsUserMapping{
+				Enabled: true,
+				BindID:  "email",
+			},
+		},
+	})
+	t.Cleanup(func() { conf.Mock(nil) })
 
 	// Alice should see "alice_private_repo" and public repos, but not "bob_private_repo"
 	aliceCtx := actor.WithActor(ctx, &actor.Actor{UID: alice.ID})
@@ -828,7 +779,7 @@ func benchmarkAuthzQuery(b *testing.B, numRepos, numUsers, reposPerUser int) {
 	})
 
 	logger := logtest.Scoped(b)
-	db := NewDB(logger, dbtest.NewDB(logger, b))
+	db := NewDB(logger, dbtest.NewDB(b))
 	ctx := context.Background()
 
 	b.Logf("Creating %d repositories...", numRepos)
@@ -887,7 +838,7 @@ func benchmarkAuthzQuery(b *testing.B, numRepos, numUsers, reposPerUser int) {
 	for i := 1; i <= numUsers; i++ {
 		objectIDs := make(map[int]struct{})
 		// Assign a random set of repos to the user
-		for j := 0; j < reposPerUser; j++ {
+		for range reposPerUser {
 			repoID := rand.Intn(numRepos) + 1
 			objectIDs[repoID] = struct{}{}
 		}
@@ -922,7 +873,7 @@ func benchmarkAuthzQuery(b *testing.B, numRepos, numUsers, reposPerUser int) {
 	b.ResetTimer()
 
 	b.Run("list repos", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			fetchMinRepos()
 		}
 	})

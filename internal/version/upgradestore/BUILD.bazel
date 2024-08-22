@@ -9,9 +9,9 @@ go_library(
         "upgrade.go",
     ],
     importpath = "github.com/sourcegraph/sourcegraph/internal/version/upgradestore",
+    tags = [TAG_INFRA_RELEASE],
     visibility = ["//:__subpackages__"],
     deps = [
-        "//internal/conf/deploy",
         "//internal/database",
         "//internal/database/basestore",
         "//internal/hostname",
@@ -32,6 +32,7 @@ go_test(
     ],
     embed = [":upgradestore"],
     tags = [
+        TAG_INFRA_RELEASE,
         # Test requires localhost database
         "requires-network",
     ],

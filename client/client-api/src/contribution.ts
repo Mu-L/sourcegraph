@@ -1,6 +1,6 @@
-import { Primitive } from 'utility-types'
+import type { Primitive } from 'utility-types'
 
-import { Expression, TemplateExpression } from '@sourcegraph/template-parser'
+import type { Expression, TemplateExpression } from '@sourcegraph/template-parser'
 
 /**
  * A key path that refers to a location in a JSON document.
@@ -57,7 +57,7 @@ export interface ActionContribution {
      * a noop.
      *
      * See "[Builtin commands](../../../../doc/extensions/authoring/builtin_commands.md)" (online at
-     * https://docs.sourcegraph.com/extensions/authoring/builtin_commands) for documentation on
+     * https://sourcegraph.com/docs/extensions/authoring/builtin_commands) for documentation on
      * builtin client commands.
      *
      * Extensions: The command must be registered (unless it is a builtin command). Extensions can
@@ -126,6 +126,24 @@ export interface ActionContribution {
      * (e.g., because the client is not graphical), then the client may hide the item from the toolbar.
      */
     actionItem?: ActionItem
+
+    /**
+     * Properties to enable event telemetry to be recorded when an action is executed.
+     */
+    telemetryProps: {
+        /**
+         * feature must be camelCase and '.'-delimited, e.g. 'myFeature.subFeature'.
+         *
+         * Most ActionContribution features should be prefixed with 'blob.' to indicate that they are actions
+         * that occur on text blobs.
+         */
+        feature: string
+
+        // No `action` prop is provided, because action items only log telemetry when executed (and thus use an
+        // 'executed' action.
+
+        privateMetadata?: { [key: string]: any }
+    }
 }
 
 /**

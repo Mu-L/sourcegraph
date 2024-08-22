@@ -9,12 +9,10 @@ import (
 
 	"github.com/davecgh/go-spew/spew"
 
-	"github.com/sourcegraph/sourcegraph/internal/auth/providers"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc/auth"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc/gitlab"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
-	"github.com/sourcegraph/sourcegraph/schema"
 )
 
 func init() {
@@ -36,7 +34,7 @@ type mockGitLab struct {
 	projs map[int]*gitlab.Project
 
 	// users is a list of all users
-	users []*gitlab.User
+	users []*gitlab.AuthUser
 
 	// privateGuest is a map from GitLab user ID to list of metadata-accessible private project IDs on GitLab
 	privateGuest map[int32][]int
@@ -68,7 +66,7 @@ type mockGitLabOp struct {
 	t *testing.T
 
 	// users is a list of users on the GitLab instance
-	users []*gitlab.User
+	users []*gitlab.AuthUser
 
 	// publicProjs is the list of public project IDs
 	publicProjs []int
@@ -268,7 +266,7 @@ func (m *mockGitLab) getAcctID(c *gitlab.Client) int32 {
 	return 0
 }
 
-func (m *mockGitLab) ListUsers(c *gitlab.Client, ctx context.Context, urlStr string) (users []*gitlab.User, nextPageURL *string, err error) {
+func (m *mockGitLab) ListUsers(c *gitlab.Client, ctx context.Context, urlStr string) (users []*gitlab.AuthUser, nextPageURL *string, err error) {
 	key := ""
 	if c.Auth != nil {
 		key = c.Auth.Hash()
@@ -284,7 +282,7 @@ func (m *mockGitLab) ListUsers(c *gitlab.Client, ctx context.Context, urlStr str
 		m.t.Fatalf("could not parse ListUsers urlStr %q: %s", urlStr, err)
 	}
 
-	var matchingUsers []*gitlab.User
+	var matchingUsers []*gitlab.AuthUser
 	for _, user := range m.users {
 		userMatches := true
 		if qExternUID := u.Query().Get("extern_uid"); qExternUID != "" {
@@ -322,7 +320,7 @@ func (m *mockGitLab) ListUsers(c *gitlab.Client, ctx context.Context, urlStr str
 	}
 	p := page - 1
 
-	var pagedUsers []*gitlab.User
+	var pagedUsers []*gitlab.AuthUser
 
 	if perPage*p > len(matchingUsers)-1 {
 		pagedUsers = nil
@@ -342,36 +340,6 @@ func (m *mockGitLab) ListUsers(c *gitlab.Client, ctx context.Context, urlStr str
 	return pagedUsers, nextPageURL, nil
 }
 
-type mockAuthnProvider struct {
-	configID  providers.ConfigID
-	serviceID string
-}
-
-func (m mockAuthnProvider) ConfigID() providers.ConfigID {
-	return m.configID
-}
-
-func (m mockAuthnProvider) Config() schema.AuthProviders {
-	return schema.AuthProviders{
-		Gitlab: &schema.GitLabAuthProvider{
-			Type: m.configID.Type,
-			Url:  m.configID.ID,
-		},
-	}
-}
-
-func (m mockAuthnProvider) CachedInfo() *providers.Info {
-	return &providers.Info{ServiceID: m.serviceID}
-}
-
-func (m mockAuthnProvider) Refresh(ctx context.Context) error {
-	panic("should not be called")
-}
-
-func (m mockAuthnProvider) ExternalAccountInfo(ctx context.Context, account extsvc.Account) (*extsvc.PublicAccountData, error) {
-	panic("should not be called")
-}
-
 func acct(t *testing.T, userID int32, serviceType, serviceID, accountID string) *extsvc.Account {
 	var data extsvc.AccountData
 
@@ -381,7 +349,7 @@ func acct(t *testing.T, userID int32, serviceType, serviceID, accountID string) 
 			t.Fatalf("Could not convert accountID to number: %s", err)
 		}
 
-		if err := gitlab.SetExternalAccountData(&data, &gitlab.User{ID: int32(gitlabAcctID)}, nil); err != nil {
+		if err := gitlab.SetExternalAccountData(&data, &gitlab.AuthUser{ID: int32(gitlabAcctID)}, nil); err != nil {
 			t.Fatalf("unexpected error: %s", err)
 		}
 	}

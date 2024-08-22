@@ -3,7 +3,6 @@ package database
 import (
 	"context"
 	"fmt"
-	"math"
 	"testing"
 	"time"
 
@@ -24,7 +23,7 @@ func TestExecutorsList(t *testing.T) {
 	}
 
 	logger := logtest.Scoped(t)
-	db := NewDB(logger, dbtest.NewDB(logger, t))
+	db := NewDB(logger, dbtest.NewDB(t))
 	store := db.Executors().(*executorStore)
 	ctx := context.Background()
 
@@ -132,8 +131,8 @@ func TestExecutorsList(t *testing.T) {
 		if n := len(testCase.expectedIDs); n == 0 {
 			runTest(testCase, 0, 0)
 		} else {
-			for lo := 0; lo < n; lo++ {
-				if numErrors := runTest(testCase, lo, int(math.Min(float64(lo)+3, float64(n)))); numErrors > 0 {
+			for lo := range n {
+				if numErrors := runTest(testCase, lo, min(lo+3, n)); numErrors > 0 {
 					break
 				}
 			}
@@ -147,7 +146,7 @@ func TestExecutorsGetByID(t *testing.T) {
 	}
 
 	logger := logtest.Scoped(t)
-	db := NewDB(logger, dbtest.NewDB(logger, t))
+	db := NewDB(logger, dbtest.NewDB(t))
 	store := db.Executors().(*executorStore)
 	ctx := context.Background()
 
@@ -211,7 +210,7 @@ func TestExecutorsGetByHostname(t *testing.T) {
 	}
 
 	logger := logtest.Scoped(t)
-	db := NewDB(logger, dbtest.NewDB(logger, t))
+	db := NewDB(logger, dbtest.NewDB(t))
 	store := db.Executors().(*executorStore)
 	ctx := context.Background()
 
@@ -277,11 +276,11 @@ func TestExecutorsDeleteInactiveHeartbeats(t *testing.T) {
 	}
 
 	logger := logtest.Scoped(t)
-	db := NewDB(logger, dbtest.NewDB(logger, t))
+	db := NewDB(logger, dbtest.NewDB(t))
 	store := db.Executors().(*executorStore)
 	ctx := context.Background()
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		db.Executors().UpsertHeartbeat(ctx, types.Executor{Hostname: fmt.Sprintf("h%02d", i+1), QueueName: "q1"})
 	}
 
@@ -325,7 +324,7 @@ func TestExecutorsUpsertHeartbeat(t *testing.T) {
 	}
 
 	logger := logtest.Scoped(t)
-	db := NewDB(logger, dbtest.NewDB(logger, t))
+	db := NewDB(logger, dbtest.NewDB(t))
 	ctx := context.Background()
 
 	tests := []struct {

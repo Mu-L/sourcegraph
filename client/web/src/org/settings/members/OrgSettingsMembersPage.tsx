@@ -6,34 +6,35 @@ import { useNavigate } from 'react-router-dom'
 import { pluralize } from '@sourcegraph/common'
 import { useMutation } from '@sourcegraph/http-client'
 import { UserAvatar } from '@sourcegraph/shared/src/components/UserAvatar'
+import { EVENT_LOGGER } from '@sourcegraph/shared/src/telemetry/web/eventLogger'
 import {
-    Container,
-    PageHeader,
+    Alert,
     Button,
+    Container,
+    ErrorAlert,
     Input,
     Link,
     LoadingSpinner,
-    Alert,
-    ErrorAlert,
+    PageHeader,
     PageSwitcher,
+    Text,
     Tooltip,
     useDebounce,
 } from '@sourcegraph/wildcard'
 
-import { AuthenticatedUser } from '../../../auth'
+import type { AuthenticatedUser } from '../../../auth'
 import { usePageSwitcherPagination } from '../../../components/FilteredConnection/hooks/usePageSwitcherPagination'
 import { PageTitle } from '../../../components/PageTitle'
-import {
+import type {
     OrgAreaOrganizationFields,
+    OrganizationMemberNode,
     OrganizationSettingsMembersResult,
     OrganizationSettingsMembersVariables,
-    OrganizationMemberNode,
     RemoveUserFromOrganizationResult,
     RemoveUserFromOrganizationVariables,
 } from '../../../graphql-operations'
-import { eventLogger } from '../../../tracking/eventLogger'
 import { userURL } from '../../../user'
-import { OrgAreaRouteContext } from '../../area/OrgArea'
+import type { OrgAreaRouteContext } from '../../area/OrgArea'
 import { ORGANIZATION_MEMBERS_QUERY, REMOVE_USER_FROM_ORGANIZATION_QUERY } from '../../backend'
 
 import { InviteForm } from './InviteForm'
@@ -104,22 +105,17 @@ const UserNode: React.FunctionComponent<UserNodeProps> = ({
                         )}
                     </div>
                 </div>
-                <div className="flex-1 d-flex align-items-center justify-content-between">
-                    <span className="text-muted flex-1">{node.siteAdmin ? 'Admin' : 'Member'}</span>
-                    <div>
-                        {authenticatedUser && org.viewerCanAdminister && (
-                            <Button
-                                className="site-admin-detail-list__action test-remove-org-member"
-                                onClick={remove}
-                                disabled={loading}
-                                variant="secondary"
-                                size="sm"
-                            >
-                                {isSelf ? 'Leave organization' : 'Remove from organization'}
-                            </Button>
-                        )}
-                    </div>
-                </div>
+                {authenticatedUser && org.viewerCanAdminister && (
+                    <Button
+                        className="site-admin-detail-list__action test-remove-org-member"
+                        onClick={remove}
+                        disabled={loading}
+                        variant="secondary"
+                        size="sm"
+                    >
+                        {isSelf ? 'Leave organization' : 'Remove from organization'}
+                    </Button>
+                )}
             </div>
             {error && <ErrorAlert className="mt-2" error={error} />}
         </li>
@@ -135,10 +131,12 @@ export const OrgSettingsMembersPage: React.FunctionComponent<Props> = ({
     org,
     authenticatedUser,
     onOrganizationUpdate,
+    telemetryRecorder,
 }) => {
     React.useEffect(() => {
-        eventLogger.logViewEvent('OrgMembers')
-    }, [])
+        EVENT_LOGGER.logViewEvent('OrgMembers')
+        telemetryRecorder.recordEvent('org.members', 'view')
+    }, [telemetryRecorder])
 
     const navigate = useNavigate()
     const [onlyMemberRemovalAttempted, setOnlyMemberRemovalAttempted] = React.useState(false)
@@ -189,13 +187,14 @@ export const OrgSettingsMembersPage: React.FunctionComponent<Props> = ({
 
     const onDidUpdate = React.useCallback(
         (didRemoveSelf: boolean) => {
+            telemetryRecorder.recordEvent('org.members', 'remove')
             if (didRemoveSelf) {
                 navigate('/user/settings')
             } else {
                 refetch()
             }
         },
-        [refetch, navigate]
+        [refetch, navigate, telemetryRecorder]
     )
 
     const totalCount = connection?.totalCount || 0
@@ -214,6 +213,7 @@ export const OrgSettingsMembersPage: React.FunctionComponent<Props> = ({
                     authenticatedUser={authenticatedUser}
                     onOrganizationUpdate={onOrganizationUpdate}
                     onDidUpdateOrganizationMembers={refetch}
+                    telemetryRecorder={telemetryRecorder}
                 />
             )}
             <Container className="mt-3">
@@ -243,20 +243,13 @@ export const OrgSettingsMembersPage: React.FunctionComponent<Props> = ({
                 ) : null}
                 {loading && <LoadingSpinner />}
                 {error && <ErrorAlert className="mb-3" error={error} />}
+
+                {totalCount > 0 && (
+                    <Text>
+                        {`${totalCount} ${debouncedSearchQuery ? 'matching' : ''} ${pluralize('member', totalCount)}`}
+                    </Text>
+                )}
                 <ul className="list-group list-group-flush test-org-members mt-4">
-                    {totalCount > 0 && (
-                        <li className="d-flex mb-2 align-items-center justify-content-between">
-                            <strong className="flex-1">
-                                {`${totalCount} ${pluralize('person', totalCount, 'people')} in the ${
-                                    org.name
-                                } organization`}
-                            </strong>
-                            <div className="flex-1 d-flex align-items-center justify-content-between">
-                                <strong>Role</strong>
-                                <strong>Action</strong>
-                            </div>
-                        </li>
-                    )}
                     {(connection?.nodes || []).map(node => (
                         <UserNode
                             key={node.id}

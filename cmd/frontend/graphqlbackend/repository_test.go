@@ -5,19 +5,18 @@ import (
 	"fmt"
 	"testing"
 
-	mockrequire "github.com/derision-test/go-mockgen/testutil/require"
+	mockrequire "github.com/derision-test/go-mockgen/v2/testutil/require"
 	"github.com/hexops/autogold/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/backend"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/backend"
 	"github.com/sourcegraph/sourcegraph/internal/api"
-	"github.com/sourcegraph/sourcegraph/internal/database"
+	"github.com/sourcegraph/sourcegraph/internal/database/dbmocks"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbutil"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver/gitdomain"
-	"github.com/sourcegraph/sourcegraph/internal/search/result"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 
@@ -27,8 +26,7 @@ import (
 const exampleCommitSHA1 = "1234567890123456789012345678901234567890"
 
 func TestRepository_Commit(t *testing.T) {
-	backend.Mocks.Repos.ResolveRev = func(ctx context.Context, repo *types.Repo, rev string) (api.CommitID, error) {
-		assert.Equal(t, api.RepoID(2), repo.ID)
+	backend.Mocks.Repos.ResolveRev = func(ctx context.Context, repo api.RepoName, rev string) (api.CommitID, error) {
 		assert.Equal(t, "abc", rev)
 		return exampleCommitSHA1, nil
 	}
@@ -37,10 +35,10 @@ func TestRepository_Commit(t *testing.T) {
 		backend.Mocks = backend.MockServices{}
 	}()
 
-	repos := database.NewMockRepoStore()
+	repos := dbmocks.NewMockRepoStore()
 	repos.GetFunc.SetDefaultReturn(&types.Repo{ID: 2, Name: "github.com/gorilla/mux"}, nil)
 
-	db := database.NewMockDB()
+	db := dbmocks.NewMockDB()
 	db.ReposFunc.SetDefaultReturn(repos)
 
 	RunTest(t, &Test{
@@ -67,18 +65,18 @@ func TestRepository_Commit(t *testing.T) {
 }
 
 func TestRepository_Changelist(t *testing.T) {
-	repo := &types.Repo{ID: 2, Name: "github.com/gorilla/mux"}
+	repo := &types.Repo{ID: 2, Name: "perforce.sgdev.org/gorilla/mux", ExternalRepo: api.ExternalRepoSpec{ServiceType: extsvc.TypePerforce}}
 
-	backend.Mocks.Repos.ResolveRev = func(ctx context.Context, repo *types.Repo, rev string) (api.CommitID, error) {
-		assert.Equal(t, api.RepoID(2), repo.ID)
+	backend.Mocks.Repos.ResolveRev = func(ctx context.Context, repo api.RepoName, rev string) (api.CommitID, error) {
+		assert.Equal(t, api.RepoName("perforce.sgdev.org/gorilla/mux"), repo)
 		return exampleCommitSHA1, nil
 	}
 
-	repos := database.NewMockRepoStore()
+	repos := dbmocks.NewMockRepoStore()
 	repos.GetFunc.SetDefaultReturn(repo, nil)
 	repos.GetByNameFunc.SetDefaultReturn(repo, nil)
 
-	repoCommitsChangelists := database.NewMockRepoCommitsChangelistsStore()
+	repoCommitsChangelists := dbmocks.NewMockRepoCommitsChangelistsStore()
 	repoCommitsChangelists.GetRepoCommitChangelistFunc.SetDefaultReturn(&types.RepoCommit{
 		ID:                   1,
 		RepoID:               2,
@@ -86,7 +84,7 @@ func TestRepository_Changelist(t *testing.T) {
 		PerforceChangelistID: 123,
 	}, nil)
 
-	db := database.NewMockDB()
+	db := dbmocks.NewMockDB()
 	db.ReposFunc.SetDefaultReturn(repos)
 	db.RepoCommitsChangelistsFunc.SetDefaultReturn(repoCommitsChangelists)
 
@@ -94,7 +92,7 @@ func TestRepository_Changelist(t *testing.T) {
 		Schema: mustParseGraphQLSchema(t, db),
 		Query: `
 				{
-					repository(name: "github.com/gorilla/mux") {
+					repository(name: "perforce.sgdev.org/gorilla/mux") {
 						changelist(cid: "123") {
 							cid
 							canonicalURL
@@ -110,7 +108,37 @@ func TestRepository_Changelist(t *testing.T) {
 					"repository": {
 						"changelist": {
 							"cid": "123",
-							"canonicalURL": "/github.com/gorilla/mux/-/changelist/123",
+							"canonicalURL": "/perforce.sgdev.org/gorilla/mux/-/changelist/123",
+"commit": {
+	"oid": "%s"
+}
+						}
+					}
+				}
+			`, exampleCommitSHA1),
+	})
+
+	RunTest(t, &Test{
+		Schema: mustParseGraphQLSchema(t, db),
+		Query: `
+				{
+					repository(name: "perforce.sgdev.org/gorilla/mux") {
+						changelist(cid: "changelist/123") {
+							cid
+							canonicalURL
+							commit {
+								oid
+							}
+						}
+					}
+				}
+			`,
+		ExpectedResult: fmt.Sprintf(`
+				{
+					"repository": {
+						"changelist": {
+							"cid": "123",
+							"canonicalURL": "/perforce.sgdev.org/gorilla/mux/-/changelist/123",
 "commit": {
 	"oid": "%s"
 }
@@ -151,12 +179,12 @@ func TestRepositoryHydration(t *testing.T) {
 	t.Run("hydrated without errors", func(t *testing.T) {
 		minimalRepo, hydratedRepo := makeRepos()
 
-		rs := database.NewMockRepoStore()
+		rs := dbmocks.NewMockRepoStore()
 		rs.GetFunc.SetDefaultReturn(hydratedRepo, nil)
-		db := database.NewMockDB()
+		db := dbmocks.NewMockDB()
 		db.ReposFunc.SetDefaultReturn(rs)
 
-		repoResolver := NewRepositoryResolver(db, gitserver.NewClient(db), minimalRepo)
+		repoResolver := NewRepositoryResolver(db, gitserver.NewTestClient(t), minimalRepo)
 		assertRepoResolverHydrated(ctx, t, repoResolver, hydratedRepo)
 		mockrequire.CalledOnce(t, rs.GetFunc)
 	})
@@ -166,12 +194,12 @@ func TestRepositoryHydration(t *testing.T) {
 
 		dbErr := errors.New("cannot load repo")
 
-		rs := database.NewMockRepoStore()
+		rs := dbmocks.NewMockRepoStore()
 		rs.GetFunc.SetDefaultReturn(nil, dbErr)
-		db := database.NewMockDB()
+		db := dbmocks.NewMockDB()
 		db.ReposFunc.SetDefaultReturn(rs)
 
-		repoResolver := NewRepositoryResolver(db, gitserver.NewClient(db), minimalRepo)
+		repoResolver := NewRepositoryResolver(db, gitserver.NewTestClient(t), minimalRepo)
 		_, err := repoResolver.Description(ctx)
 		require.ErrorIs(t, err, dbErr)
 
@@ -208,11 +236,8 @@ func assertRepoResolverHydrated(ctx context.Context, t *testing.T, r *Repository
 func TestRepositoryLabel(t *testing.T) {
 	test := func(name string) string {
 		r := &RepositoryResolver{
+			name:   api.RepoName(name),
 			logger: logtest.Scoped(t),
-			RepoMatch: result.RepoMatch{
-				Name: api.RepoName(name),
-				ID:   api.RepoID(0),
-			},
 		}
 		markdown, _ := r.Label()
 		html, err := markdown.HTML()
@@ -258,7 +283,7 @@ func TestRepository_DefaultBranch(t *testing.T) {
 			gsClient := gitserver.NewMockClient()
 			gsClient.GetDefaultBranchFunc.SetDefaultReturn(tt.getDefaultBranchRefName, "", tt.getDefaultBranchErr)
 
-			res := &RepositoryResolver{RepoMatch: result.RepoMatch{Name: "repo"}, logger: logtest.Scoped(t), gitserverClient: gsClient}
+			res := &RepositoryResolver{name: "repo", logger: logtest.Scoped(t), gitserverClient: gsClient}
 			branch, err := res.DefaultBranch(ctx)
 			if tt.wantErr != nil && err != nil {
 				if tt.wantErr.Error() != err.Error() {

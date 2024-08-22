@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/inconshreveable/log15"
+	"github.com/inconshreveable/log15" //nolint:logging // TODO move all logging to sourcegraph/log
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -24,7 +24,7 @@ const (
 	envLogDir = "LOG_DIR"
 )
 
-func run(ctx context.Context, wg *sync.WaitGroup, env string) {
+func run(ctx context.Context, wg *sync.WaitGroup, config *Config) {
 	defer wg.Done()
 
 	bc, err := newClient()
@@ -33,11 +33,6 @@ func run(ctx context.Context, wg *sync.WaitGroup, env string) {
 	}
 
 	sc, err := newStreamClient()
-	if err != nil {
-		panic(err)
-	}
-
-	config, err := loadQueries(env)
 	if err != nil {
 		panic(err)
 	}
@@ -54,7 +49,7 @@ func run(ctx context.Context, wg *sync.WaitGroup, env string) {
 
 	loopSearch := func(ctx context.Context, c genericClient, qc *QueryConfig) {
 		if qc.Interval == 0 {
-			qc.Interval = time.Minute
+			qc.Interval = 5 * time.Minute
 		}
 
 		log := log15.New("name", qc.Name, "query", qc.Query, "type", c.clientType())
@@ -196,10 +191,16 @@ func main() {
 	defer cleanup()
 
 	env := os.Getenv("SEARCH_BLITZ_ENV")
+	queryFile := os.Getenv("SEARCH_BLITZ_QUERY_FILE")
+
+	config, err := loadConfig(queryFile, env)
+	if err != nil {
+		panic(err)
+	}
 
 	wg := sync.WaitGroup{}
 	wg.Add(1)
-	go run(ctx, &wg, env)
+	go run(ctx, &wg, config)
 
 	wg.Add(1)
 	srv := startServer(&wg)

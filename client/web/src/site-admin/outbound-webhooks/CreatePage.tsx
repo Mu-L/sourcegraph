@@ -1,28 +1,30 @@
-import { FC, useEffect, useState } from 'react'
+import { type FC, useEffect, useState } from 'react'
 
 import { mdiWebhook } from '@mdi/js'
 import { noop } from 'lodash'
 import { useNavigate } from 'react-router-dom'
 
 import { useMutation } from '@sourcegraph/http-client'
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { Container, ErrorAlert, Form, Input, PageHeader } from '@sourcegraph/wildcard'
 
 import { PageTitle } from '../../components/PageTitle'
-import { CreateOutboundWebhookResult, CreateOutboundWebhookVariables } from '../../graphql-operations'
+import type { CreateOutboundWebhookResult, CreateOutboundWebhookVariables } from '../../graphql-operations'
 import { generateSecret } from '../../util/security'
 
 import { CREATE_OUTBOUND_WEBHOOK } from './backend'
 import { EventTypes } from './create-edit/EventTypes'
 import { SubmitButton } from './create-edit/SubmitButton'
 
-export interface CreatePageProps extends TelemetryProps {}
+export interface CreatePageProps extends TelemetryProps, TelemetryV2Props {}
 
-export const CreatePage: FC<CreatePageProps> = ({ telemetryService }) => {
+export const CreatePage: FC<CreatePageProps> = ({ telemetryService, telemetryRecorder }) => {
     const navigate = useNavigate()
     useEffect(() => {
         telemetryService.logPageView('OutboundWebhooksCreatePage')
-    }, [telemetryService])
+        telemetryRecorder.recordEvent('admin.outboundWebhooks.create', 'view')
+    }, [telemetryService, telemetryRecorder])
 
     const [url, setURL] = useState('')
     const [secret, setSecret] = useState(generateSecret())

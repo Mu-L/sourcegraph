@@ -1,4 +1,4 @@
-import { FC, useState } from 'react'
+import { type FC, useState } from 'react'
 
 import { mdiChevronUp, mdiChevronDown, mdiFileDocumentOutline } from '@mdi/js'
 import classNames from 'classnames'
@@ -21,7 +21,7 @@ import {
 import { DiffStatStack } from '../components/diff/DiffStat'
 import { usePageSwitcherPagination } from '../components/FilteredConnection/hooks/usePageSwitcherPagination'
 import { ConnectionLoading, ConnectionError } from '../components/FilteredConnection/ui'
-import {
+import type {
     SiteConfigurationChangeNode,
     SiteConfigurationHistoryResult,
     SiteConfigurationHistoryVariables,
@@ -39,6 +39,9 @@ export const SiteConfigurationChangeList: FC = () => {
     >({
         query: SITE_CONFIGURATION_CHANGE_CONNECTION_QUERY,
         variables: {},
+        options: {
+            fetchPolicy: 'network-only',
+        },
         getConnection: ({ data }) => data?.site?.configuration?.history || undefined,
     })
 
@@ -100,7 +103,7 @@ export const SiteConfigurationHistoryItem: FC<SiteConfigurationHistoryItemProps>
             {node.author.displayName ?? node.author.username}
         </Link>
     ) : (
-        'Site configuration file set in SITE_CONFIG_FILE environment variable updated'
+        'Site configuration updated'
     )
 
     return (

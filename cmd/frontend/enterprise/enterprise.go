@@ -6,9 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/envvar"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/webhooks"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/webhooks"
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/auth"
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/types"
@@ -39,6 +38,10 @@ type Services struct {
 
 	// Handler for exporting code insights data.
 	CodeInsightsDataExportHandler http.Handler
+
+	// Handler for exporting search jobs data.
+	SearchJobsDataExportHandler http.Handler
+	SearchJobsLogsHandler       http.Handler
 
 	// Handler for completions stream.
 	NewChatCompletionsStreamHandler NewChatCompletionsStreamHandler
@@ -116,6 +119,8 @@ func DefaultServices() Services {
 		NewDotcomLicenseCheckHandler:    func() http.Handler { return makeNotFoundHandler("dotcom license check handler") },
 		NewChatCompletionsStreamHandler: func() http.Handler { return makeNotFoundHandler("chat completions streaming endpoint") },
 		NewCodeCompletionsHandler:       func() http.Handler { return makeNotFoundHandler("code completions streaming endpoint") },
+		SearchJobsDataExportHandler:     makeNotFoundHandler("search jobs data export handler"),
+		SearchJobsLogsHandler:           makeNotFoundHandler("search jobs logs handler"),
 	}
 }
 
@@ -137,12 +142,6 @@ func (e *emptyWebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	makeNotFoundHandler(e.name)
 }
 
-type ErrBatchChangesDisabledDotcom struct{}
-
-func (e ErrBatchChangesDisabledDotcom) Error() string {
-	return "batch changes is not available on Sourcegraph.com; use Sourcegraph Cloud or self-hosted instead"
-}
-
 type ErrBatchChangesDisabled struct{}
 
 func (e ErrBatchChangesDisabled) Error() string {
@@ -160,11 +159,6 @@ func (e ErrBatchChangesDisabledForUser) Error() string {
 func BatchChangesEnabledForSite() error {
 	if !conf.BatchChangesEnabled() {
 		return ErrBatchChangesDisabled{}
-	}
-
-	// Batch Changes are disabled on sourcegraph.com
-	if envvar.SourcegraphDotComMode() {
-		return ErrBatchChangesDisabledDotcom{}
 	}
 
 	return nil

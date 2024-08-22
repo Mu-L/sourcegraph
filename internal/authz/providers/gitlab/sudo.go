@@ -7,10 +7,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/sourcegraph/sourcegraph/internal/auth/providers"
 	"github.com/sourcegraph/sourcegraph/internal/authz"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc/gitlab"
+	"github.com/sourcegraph/sourcegraph/internal/featureflag"
 	"github.com/sourcegraph/sourcegraph/internal/httpcli"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
@@ -24,13 +24,12 @@ type SudoProvider struct {
 	// is set per client and defines which user to impersonate.
 	sudoToken string
 
-	urn               string
-	clientProvider    *gitlab.ClientProvider
-	clientURL         *url.URL
-	codeHost          *extsvc.CodeHost
-	gitlabProvider    string
-	authnConfigID     providers.ConfigID
-	useNativeUsername bool
+	urn            string
+	clientProvider *gitlab.ClientProvider
+	clientURL      *url.URL
+	codeHost       *extsvc.CodeHost
+
+	syncInternalRepoPermissions bool
 }
 
 var _ authz.Provider = (*SudoProvider)(nil)
@@ -42,36 +41,23 @@ type SudoProviderOp struct {
 	// BaseURL is the URL of the GitLab instance.
 	BaseURL *url.URL
 
-	// AuthnConfigID identifies the authn provider to use to lookup users on the GitLab instance.
-	// This should be the authn provider that's used to sign into the GitLab instance.
-	AuthnConfigID providers.ConfigID
-
-	// GitLabProvider is the id of the authn provider to GitLab. It will be used in the
-	// `users?extern_uid=$uid&provider=$provider` API query.
-	GitLabProvider string
-
 	// SudoToken is an access token with sudo *and* api scope.
 	//
 	// 🚨 SECURITY: This value contains secret information that must not be shown to non-site-admins.
 	SudoToken string
 
-	// UseNativeUsername, if true, maps Sourcegraph users to GitLab users using username equivalency
-	// instead of the authn provider user ID. This is *very* insecure (Sourcegraph usernames can be
-	// changed at the user's will) and should only be used in development environments.
-	UseNativeUsername bool
+	SyncInternalRepoPermissions bool
 }
 
 func newSudoProvider(op SudoProviderOp, cli httpcli.Doer) *SudoProvider {
 	return &SudoProvider{
 		sudoToken: op.SudoToken,
 
-		urn:               op.URN,
-		clientProvider:    gitlab.NewClientProvider(op.URN, op.BaseURL, cli),
-		clientURL:         op.BaseURL,
-		codeHost:          extsvc.NewCodeHost(op.BaseURL, extsvc.TypeGitLab),
-		authnConfigID:     op.AuthnConfigID,
-		gitlabProvider:    op.GitLabProvider,
-		useNativeUsername: op.UseNativeUsername,
+		urn:                         op.URN,
+		clientProvider:              gitlab.NewClientProvider(op.URN, op.BaseURL, cli),
+		clientURL:                   op.BaseURL,
+		codeHost:                    extsvc.NewCodeHost(op.BaseURL, extsvc.TypeGitLab),
+		syncInternalRepoPermissions: op.SyncInternalRepoPermissions,
 	}
 }
 
@@ -101,35 +87,13 @@ func (p *SudoProvider) ServiceType() string {
 	return p.codeHost.ServiceType
 }
 
-// FetchAccount satisfies the authz.Provider interface. It iterates through the current list of
-// linked external accounts, find the one (if it exists) that matches the authn provider specified
-// in the SudoProvider struct, and fetches the user account from the GitLab API using that identity.
-func (p *SudoProvider) FetchAccount(ctx context.Context, user *types.User, current []*extsvc.Account, _ []string) (mine *extsvc.Account, err error) {
+// FetchAccount satisfies the authz.Provider interface.
+func (p *SudoProvider) FetchAccount(ctx context.Context, user *types.User) (mine *extsvc.Account, err error) {
 	if user == nil {
 		return nil, nil
 	}
 
-	var glUser *gitlab.User
-	if p.useNativeUsername {
-		glUser, err = p.fetchAccountByUsername(ctx, user.Username)
-	} else {
-		// resolve the GitLab account using the authn provider (specified by p.AuthnConfigID)
-		authnProvider := providers.GetProviderByConfigID(p.authnConfigID)
-		if authnProvider == nil {
-			return nil, nil
-		}
-		var authnAcct *extsvc.Account
-		for _, acct := range current {
-			if acct.ServiceID == authnProvider.CachedInfo().ServiceID && acct.ServiceType == authnProvider.ConfigID().Type {
-				authnAcct = acct
-				break
-			}
-		}
-		if authnAcct == nil {
-			return nil, nil
-		}
-		glUser, err = p.fetchAccountByExternalUID(ctx, authnAcct.AccountID)
-	}
+	glUser, err := p.fetchAccountByUsername(ctx, user.Username)
 	if err != nil {
 		return nil, err
 	}
@@ -154,25 +118,7 @@ func (p *SudoProvider) FetchAccount(ctx context.Context, user *types.User, curre
 	return &glExternalAccount, nil
 }
 
-func (p *SudoProvider) fetchAccountByExternalUID(ctx context.Context, uid string) (*gitlab.User, error) {
-	q := make(url.Values)
-	q.Add("extern_uid", uid)
-	q.Add("provider", p.gitlabProvider)
-	q.Add("per_page", "2")
-	glUsers, _, err := p.clientProvider.GetPATClient(p.sudoToken, "").ListUsers(ctx, "users?"+q.Encode())
-	if err != nil {
-		return nil, err
-	}
-	if len(glUsers) >= 2 {
-		return nil, errors.Errorf("failed to determine unique GitLab user for query %q", q.Encode())
-	}
-	if len(glUsers) == 0 {
-		return nil, nil
-	}
-	return glUsers[0], nil
-}
-
-func (p *SudoProvider) fetchAccountByUsername(ctx context.Context, username string) (*gitlab.User, error) {
+func (p *SudoProvider) fetchAccountByUsername(ctx context.Context, username string) (*gitlab.AuthUser, error) {
 	q := make(url.Values)
 	q.Add("username", username)
 	q.Add("per_page", "2")
@@ -211,24 +157,35 @@ func (p *SudoProvider) FetchUserPerms(ctx context.Context, account *extsvc.Accou
 	}
 
 	client := p.clientProvider.GetPATClient(p.sudoToken, strconv.Itoa(int(user.ID)))
-	return listProjects(ctx, client)
+	return listProjects(ctx, client, p.syncInternalRepoPermissions)
 }
 
 // listProjects is a helper function to request for all private projects that are accessible
 // (access level: 20 => Reporter access) by the authenticated or impersonated user in the client.
 // It may return partial but valid results in case of error, and it is up to callers to decide
 // whether to discard.
-func listProjects(ctx context.Context, client *gitlab.Client) (*authz.ExternalUserPermissions, error) {
+func listProjects(ctx context.Context, client *gitlab.Client, listInternalRepos bool) (*authz.ExternalUserPermissions, error) {
+	flags := featureflag.FromContext(ctx)
+	experimentalVisibility := flags.GetBoolOr("gitLabProjectVisibilityExperimental", false)
+
 	q := make(url.Values)
-	q.Add("min_access_level", "20") // 20 => Reporter access (i.e. have access to project code)
-	q.Add("per_page", "100")        // 100 is the maximum page size
+	q.Add("per_page", "100") // 100 is the maximum page size
+	q.Add("simple", "true")  // Return limited fields for each project since we don't need all fields for permissions
+	if !experimentalVisibility {
+		q.Add("min_access_level", "20") // 20 => Reporter access (i.e. have access to project code)
+	}
 
 	// 100 matches the maximum page size, thus a good default to avoid multiple allocations
 	// when appending the first 100 results to the slice.
 	projectIDs := make([]extsvc.RepoID, 0, 100)
 
+	repoVisibility := []string{"private"}
+	if listInternalRepos {
+		repoVisibility = append(repoVisibility, "internal")
+	}
+
 	// This method is meant to return only private or internal projects
-	for _, visibility := range []string{"private", "internal"} {
+	for _, visibility := range repoVisibility {
 		q.Set("visibility", visibility)
 
 		// The next URL to request for projects, and it is reused in the succeeding for loop.
@@ -243,6 +200,12 @@ func listProjects(ctx context.Context, client *gitlab.Client) (*authz.ExternalUs
 			}
 
 			for _, p := range projects {
+				if experimentalVisibility && !p.ContentsVisible() {
+					// If feature flag is enabled and user cannot see the contents
+					// of the project, skip the project
+					continue
+				}
+
 				projectIDs = append(projectIDs, extsvc.RepoID(strconv.Itoa(p.ID)))
 			}
 

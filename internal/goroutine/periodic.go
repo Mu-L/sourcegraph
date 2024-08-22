@@ -8,7 +8,7 @@ import (
 	"github.com/derision-test/glock"
 	"github.com/sourcegraph/conc"
 	"github.com/sourcegraph/log"
-	oteltrace "go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/sourcegraph/sourcegraph/internal/goroutine/recorder"
 	"github.com/sourcegraph/sourcegraph/internal/metrics"
@@ -16,13 +16,15 @@ import (
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
 
-type getIntervalFunc func() time.Duration
-type getConcurrencyFunc func() int
+type (
+	getIntervalFunc    func() time.Duration
+	getConcurrencyFunc func() int
+)
 
 // PeriodicGoroutine represents a goroutine whose main behavior is reinvoked periodically.
 //
 // See
-// https://docs.sourcegraph.com/dev/background-information/backgroundroutine
+// https://docs-legacy.sourcegraph.com/dev/background-information/backgroundroutine
 // for more information and a step-by-step guide on how to implement a
 // PeriodicBackgroundRoutine.
 type PeriodicGoroutine struct {
@@ -45,14 +47,6 @@ type PeriodicGoroutine struct {
 }
 
 var _ recorder.Recordable = &PeriodicGoroutine{}
-
-// fullErrorHandler implements Handler and ErrorHandler.
-// Cannot be named errorHandler because gomockgen tries to generate 2 mocks that
-// conflicts (because of ErrorHandler).
-type fullErrorHandler interface {
-	Handler
-	ErrorHandler
-}
 
 // Handler represents the main behavior of a PeriodicGoroutine. Additional
 // interfaces like ErrorHandler can also be implemented.
@@ -117,14 +111,6 @@ func WithInitialDelay(delay time.Duration) Option {
 	return func(p *PeriodicGoroutine) { p.initialDelay = delay }
 }
 
-func withClock(clock glock.Clock) Option {
-	return func(p *PeriodicGoroutine) { p.clock = clock }
-}
-
-func withConcurrencyClock(clock glock.Clock) Option {
-	return func(p *PeriodicGoroutine) { p.concurrencyClock = clock }
-}
-
 // NewPeriodicGoroutine creates a new PeriodicGoroutine with the given handler. The context provided will propagate into
 // the executing goroutine and will terminate the goroutine if cancelled.
 func NewPeriodicGoroutine(ctx context.Context, handler Handler, options ...Option) *PeriodicGoroutine {
@@ -144,8 +130,8 @@ func NewPeriodicGoroutine(ctx context.Context, handler Handler, options ...Optio
 	// enabled, caller should use goroutine.WithOperation
 	if r.operation == nil {
 		r.operation = observation.NewContext(
-			log.Scoped("periodic", "periodic goroutine handler"),
-			observation.Tracer(oteltrace.NewNoopTracerProvider().Tracer("noop")),
+			log.Scoped("periodic"),
+			observation.Tracer(noop.NewTracerProvider().Tracer("noop")),
 			observation.Metrics(metrics.NoOpRegisterer),
 		).Operation(observation.Op{
 			Name:        r.name,
@@ -195,12 +181,13 @@ func (r *PeriodicGoroutine) Start() {
 // Stop will cancel the context passed to the handler function to stop the current
 // iteration of work, then break the loop in the Start method so that no new work
 // is accepted. This method blocks until Start has returned.
-func (r *PeriodicGoroutine) Stop() {
+func (r *PeriodicGoroutine) Stop(context.Context) error {
 	if r.recorder != nil {
 		go r.recorder.LogStop(r)
 	}
 	r.cancel()
 	<-r.finished
+	return nil
 }
 
 func (r *PeriodicGoroutine) runHandlerPool() {
@@ -255,7 +242,7 @@ func (r *PeriodicGoroutine) startPool(concurrency int) func() {
 	g := conc.NewWaitGroup()
 	ctx, cancel := context.WithCancel(context.Background())
 
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		g.Go(func() { r.runHandlerPeriodically(ctx) })
 	}
 
@@ -273,10 +260,7 @@ func (r *PeriodicGoroutine) runHandlerPeriodically(monitorCtx context.Context) {
 	handlerCtx, cancel := context.WithCancel(r.ctx)
 	defer cancel()
 
-	go func() {
-		<-monitorCtx.Done()
-		cancel()
-	}()
+	context.AfterFunc(monitorCtx, cancel)
 
 	select {
 	// Initial delay sleep - might be a zero-duration value if it wasn't set,
@@ -382,11 +366,11 @@ func (r *PeriodicGoroutine) withOperation(ctx context.Context, f func(ctx contex
 
 func (r *PeriodicGoroutine) withRecorder(ctx context.Context, f func(ctx context.Context) error) error {
 	if r.recorder == nil {
-		return f(ctx)
+		return runAndConvertPanicToError(ctx, f)
 	}
 
 	start := time.Now()
-	err := f(ctx)
+	err := runAndConvertPanicToError(ctx, f)
 	duration := time.Since(start)
 
 	go func() {
@@ -395,6 +379,21 @@ func (r *PeriodicGoroutine) withRecorder(ctx context.Context, f func(ctx context
 	}()
 
 	return err
+}
+
+// runAndConvertPanicToError invokes f with the given ctx and recovers any panics
+// by turning them into an error instead.
+func runAndConvertPanicToError(ctx context.Context, f func(ctx context.Context) error) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			if e, ok := r.(error); ok {
+				err = errors.Wrap(e, "panic occurred")
+			} else {
+				err = errors.Newf("panic occurred: %v", r)
+			}
+		}
+	}()
+	return f(ctx)
 }
 
 func typeFromOperations(operation *observation.Operation) recorder.RoutineType {

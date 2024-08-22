@@ -1,24 +1,24 @@
 import React, { useEffect, useMemo } from 'react'
 
 import { useLocation } from 'react-router-dom'
-import { Observable, Subscription } from 'rxjs'
+import { type Observable, Subscription } from 'rxjs'
 
-import { Panel, useBuiltinTabbedPanelViews } from '@sourcegraph/branded/src/components/panel/TabbedPanelContent'
+import { type Panel, useBuiltinTabbedPanelViews } from '@sourcegraph/branded/src/components/panel/TabbedPanelContent'
 import { PanelContent } from '@sourcegraph/branded/src/components/panel/views/PanelContent'
-import { isDefined, isErrorLike } from '@sourcegraph/common'
-import { FetchFileParameters } from '@sourcegraph/shared/src/backend/file'
-import { ExtensionsControllerProps } from '@sourcegraph/shared/src/extensions/controller'
-import { Scalars } from '@sourcegraph/shared/src/graphql-operations'
-import { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
-import { Settings, SettingsCascadeOrError, SettingsCascadeProps } from '@sourcegraph/shared/src/settings/settings'
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
-import { AbsoluteRepoFile, ModeSpec, parseQueryAndHash } from '@sourcegraph/shared/src/util/url'
+import { SourcegraphURL, isDefined, isErrorLike } from '@sourcegraph/common'
+import type { FetchFileParameters } from '@sourcegraph/shared/src/backend/file'
+import type { Scalars } from '@sourcegraph/shared/src/graphql-operations'
+import type { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
+import type { Settings, SettingsCascadeOrError, SettingsCascadeProps } from '@sourcegraph/shared/src/settings/settings'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import { type AbsoluteRepoFile, type ModeSpec } from '@sourcegraph/shared/src/util/url'
 import { Text } from '@sourcegraph/wildcard'
 
-import { CodeIntelligenceProps } from '../../../codeintel'
+import type { CodeIntelligenceProps } from '../../../codeintel'
 import { ReferencesPanel } from '../../../codeintel/ReferencesPanel'
 import { useFeatureFlag } from '../../../featureFlags/useFeatureFlag'
-import { OwnConfigProps } from '../../../own/OwnConfigProps'
+import type { OwnConfigProps } from '../../../own/OwnConfigProps'
 import { RepoRevisionSidebarCommits } from '../../RepoRevisionSidebarCommits'
 import { FileOwnershipPanel } from '../own/FileOwnershipPanel'
 
@@ -26,11 +26,11 @@ interface Props
     extends AbsoluteRepoFile,
         ModeSpec,
         SettingsCascadeProps,
-        ExtensionsControllerProps,
         PlatformContextProps,
         Pick<CodeIntelligenceProps, 'useCodeIntel'>,
         OwnConfigProps,
-        TelemetryProps {
+        TelemetryProps,
+        TelemetryV2Props {
     repoID: Scalars['ID']
     isPackage: boolean
     repoName: string
@@ -45,7 +45,6 @@ export type BlobPanelTabID = 'info' | 'def' | 'references' | 'impl' | 'typedef' 
  * A React hook that registers panel views for the blob.
  */
 function useBlobPanelViews({
-    extensionsController,
     revision,
     filePath,
     repoID,
@@ -54,22 +53,20 @@ function useBlobPanelViews({
     platformContext,
     useCodeIntel,
     telemetryService,
+    telemetryRecorder,
     fetchHighlightedFileLineRanges,
     ownEnabled,
 }: Props): void {
     const subscriptions = useMemo(() => new Subscription(), [])
 
-    const preferAbsoluteTimestamps = preferAbsoluteTimestampsFromSettings(settingsCascade)
     const defaultPageSize = defaultPageSizeFromSettings(settingsCascade)
 
     const location = useLocation()
 
     const position = useMemo(() => {
-        const parsedHash = parseQueryAndHash(location.search, location.hash)
-        return parsedHash.line !== undefined
-            ? { line: parsedHash.line, character: parsedHash.character || 0 }
-            : undefined
-    }, [location.hash, location.search])
+        const lineRange = SourcegraphURL.from(location).lineRange
+        return lineRange.line !== undefined ? { line: lineRange.line, character: lineRange.character || 0 } : undefined
+    }, [location])
 
     const [enableOwnershipPanels] = useFeatureFlag('enable-ownership-panels', true)
 
@@ -88,8 +85,8 @@ function useBlobPanelViews({
                               <ReferencesPanel
                                   settingsCascade={settingsCascade}
                                   platformContext={platformContext}
-                                  extensionsController={extensionsController}
                                   telemetryService={telemetryService}
+                                  telemetryRecorder={telemetryRecorder}
                                   key="references"
                                   fetchHighlightedFileLineRanges={fetchHighlightedFileLineRanges}
                                   useCodeIntel={useCodeIntel}
@@ -119,8 +116,8 @@ function useBlobPanelViews({
                                       repoID={repoID}
                                       revision={revision}
                                       filePath={filePath}
-                                      preferAbsoluteTimestamps={preferAbsoluteTimestamps}
                                       defaultPageSize={defaultPageSize}
+                                      telemetryRecorder={telemetryRecorder}
                                   />
                               </PanelContent>
                           ),
@@ -138,6 +135,7 @@ function useBlobPanelViews({
                                       revision={revision}
                                       filePath={filePath}
                                       telemetryService={telemetryService}
+                                      telemetryRecorder={telemetryRecorder}
                                   />
                               </PanelContent>
                           ),
@@ -151,14 +149,13 @@ function useBlobPanelViews({
             position,
             settingsCascade,
             platformContext,
-            extensionsController,
             telemetryService,
+            telemetryRecorder,
             fetchHighlightedFileLineRanges,
             useCodeIntel,
             repoID,
             revision,
             filePath,
-            preferAbsoluteTimestamps,
             defaultPageSize,
             ownEnabled,
             enableOwnershipPanels,
@@ -166,13 +163,6 @@ function useBlobPanelViews({
     )
 
     useEffect(() => () => subscriptions.unsubscribe(), [subscriptions])
-}
-
-function preferAbsoluteTimestampsFromSettings(settingsCascade: SettingsCascadeOrError<Settings>): boolean {
-    if (settingsCascade.final && !isErrorLike(settingsCascade.final)) {
-        return settingsCascade.final['history.preferAbsoluteTimestamps'] as boolean
-    }
-    return false
 }
 
 function defaultPageSizeFromSettings(settingsCascade: SettingsCascadeOrError<Settings>): number | undefined {

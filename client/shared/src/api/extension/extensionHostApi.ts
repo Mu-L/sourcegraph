@@ -1,25 +1,29 @@
 import { proxy } from 'comlink'
 import { castArray, isEqual } from 'lodash'
-import { combineLatest, concat, Observable, of, Subscribable } from 'rxjs'
+import { combineLatest, concat, type Observable, of } from 'rxjs'
 import { catchError, defaultIfEmpty, distinctUntilChanged, map, switchMap } from 'rxjs/operators'
-import { ProviderResult } from 'sourcegraph'
+import type { ProviderResult } from 'sourcegraph'
 
-import { fromHoverMerged, TextDocumentIdentifier, TextDocumentPositionParameters } from '@sourcegraph/client-api'
-import { LOADING, MaybeLoadingResult } from '@sourcegraph/codeintellify'
+import {
+    fromHoverMerged,
+    type TextDocumentIdentifier,
+    type TextDocumentPositionParameters,
+} from '@sourcegraph/client-api'
+import { LOADING, type MaybeLoadingResult } from '@sourcegraph/codeintellify'
 import { combineLatestOrDefault, isDefined, isExactly, isNot, logger } from '@sourcegraph/common'
-import * as clientType from '@sourcegraph/extension-api-types'
-import { Context } from '@sourcegraph/template-parser'
+import type * as clientType from '@sourcegraph/extension-api-types'
+import type { Context } from '@sourcegraph/template-parser'
 
 import type { ReferenceContext, DocumentSelector } from '../../codeintel/legacy-extensions/api'
 import { getModeFromPath } from '../../languages'
-import { parseRepoURI } from '../../util/url'
+import { parseRepoGitURI } from '../../util/url'
 import { match } from '../client/types/textDocument'
-import { FlatExtensionHostAPI } from '../contract'
-import { ExtensionViewer, ViewerId, ViewerWithPartialModel } from '../viewerTypes'
+import type { FlatExtensionHostAPI } from '../contract'
+import type { ExtensionViewer, ViewerId, ViewerWithPartialModel } from '../viewerTypes'
 
 import { ExtensionCodeEditor } from './api/codeEditor'
 import { providerResultToObservable, proxySubscribable } from './api/common'
-import { computeContext, ContributionScope } from './api/context/context'
+import { computeContext, type ContributionScope } from './api/context/context'
 import {
     evaluateContributions,
     filterContributions,
@@ -31,7 +35,7 @@ import { ExtensionDocument } from './api/textDocument'
 import { fromLocation, toPosition } from './api/types'
 import { ExtensionWorkspaceRoot } from './api/workspaceRoot'
 import { updateContext } from './extensionHost'
-import { ExtensionHostState } from './extensionHostState'
+import type { ExtensionHostState } from './extensionHostState'
 import { addWithRollback } from './util'
 
 export function createExtensionHostAPI(state: ExtensionHostState): FlatExtensionHostAPI {
@@ -308,13 +312,14 @@ export function createExtensionHostAPI(state: ExtensionHostState): FlatExtension
                                     const { languageId } = getTextDocument(activeEditor.resource)
                                     return Object.assign(activeEditor, { model: { languageId } })
                                 }
-                                case 'DirectoryViewer':
+                                case 'DirectoryViewer': {
                                     return activeEditor
+                                }
                             }
                         })
                     ),
                     state.settings,
-                    state.context as Subscribable<Context<unknown>>,
+                    state.context as Observable<Context<unknown>>,
                 ]).pipe(
                     map(([multiContributions, activeEditor, settings, context]) => {
                         // Merge in extra context.
@@ -374,7 +379,7 @@ export function providersForDocument<P>(
     return entries.filter(provider =>
         match(selector(provider), {
             uri: document.uri,
-            languageId: getModeFromPath(parseRepoURI(document.uri).filePath || ''),
+            languageId: getModeFromPath(parseRepoGitURI(document.uri).filePath || ''),
         })
     )
 }
@@ -426,7 +431,7 @@ export function callProviders<TRegisteredProvider, TProviderResult, TMergedResul
                         concat(
                             [LOADING],
                             providerResultToObservable(safeInvokeProvider(provider)).pipe(
-                                defaultIfEmpty<typeof LOADING | TProviderResult | null | undefined>(null),
+                                defaultIfEmpty(null),
                                 catchError(error => {
                                     logError(error)
                                     return [null]
@@ -438,7 +443,7 @@ export function callProviders<TRegisteredProvider, TProviderResult, TMergedResul
             )
         )
         .pipe(
-            defaultIfEmpty<(typeof LOADING | TProviderResult | null | undefined)[]>([]),
+            defaultIfEmpty([]),
             map(results => ({
                 isLoading: results.some(hover => hover === LOADING),
                 result: mergeResult(results),

@@ -21,8 +21,8 @@ func TestInsertDependencyRepo(t *testing.T) {
 	instant := timeutil.Now()
 	logger := logtest.Scoped(t)
 	ctx := context.Background()
-	db := database.NewDB(logger, dbtest.NewDB(logger, t))
-	store := New(&observation.TestContext, db)
+	db := database.NewDB(logger, dbtest.NewDB(t))
+	store := New(observation.TestContextTB(t), db)
 
 	batches := [][]shared.MinimalPackageRepoRef{
 		{
@@ -102,8 +102,8 @@ func TestListPackageRepoRefs(t *testing.T) {
 
 	logger := logtest.Scoped(t)
 	ctx := context.Background()
-	db := database.NewDB(logger, dbtest.NewDB(logger, t))
-	store := New(&observation.TestContext, db)
+	db := database.NewDB(logger, dbtest.NewDB(t))
+	store := New(observation.TestContextTB(t), db)
 
 	batches := [][]shared.MinimalPackageRepoRef{
 		{
@@ -185,6 +185,72 @@ func TestListPackageRepoRefs(t *testing.T) {
 	}
 }
 
+func TestListPackageRepoRefsFuzzyExactMatchOrdering(t *testing.T) {
+	if testing.Short() {
+		t.Skip()
+	}
+
+	logger := logtest.Scoped(t)
+	ctx := context.Background()
+	db := database.NewDB(logger, dbtest.NewDB(t))
+	store := New(observation.TestContextTB(t), db)
+
+	pkgs := []shared.MinimalPackageRepoRef{
+		{Scheme: "npm", Name: "foo", Versions: []shared.MinimalPackageRepoRefVersion{{Version: "1.0.0"}}},
+		{Scheme: "npm", Name: "reactify", Versions: []shared.MinimalPackageRepoRefVersion{{Version: "1.0.0"}}},
+		{Scheme: "npm", Name: "react", Versions: []shared.MinimalPackageRepoRefVersion{{Version: "1.0.0"}}},
+		{Scheme: "npm", Name: "react-dom", Versions: []shared.MinimalPackageRepoRefVersion{{Version: "1.0.0"}}},
+		{Scheme: "npm", Name: "react-docs", Versions: []shared.MinimalPackageRepoRefVersion{{Version: "1.0.0"}}},
+	}
+
+	// Inserting each package separetely to ensure that the ordering is stable.
+	// `InsertPackageRepoRefs` internall sorts the provided package list by name/schema.
+	for _, pkg := range pkgs {
+		if _, _, err := store.InsertPackageRepoRefs(ctx, []shared.MinimalPackageRepoRef{pkg}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, test := range []struct {
+		opts    ListDependencyReposOpts
+		results []string
+	}{
+		// no exact-match present, order by id
+		{
+			opts: ListDependencyReposOpts{
+				Name:      "react-do",
+				Scheme:    "npm",
+				Fuzziness: FuzzinessWildcard,
+			},
+			results: []string{"react-dom", "react-docs"},
+		},
+		// exact match present, order by exact match and then by id
+		{
+			opts: ListDependencyReposOpts{
+				Name:      "react",
+				Scheme:    "npm",
+				Fuzziness: FuzzinessWildcard,
+			},
+			results: []string{"react", "reactify", "react-dom", "react-docs"},
+		},
+	} {
+		listedPkgs, _, _, err := store.ListPackageRepoRefs(ctx, test.opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		pkgNames := make([]string, 0)
+
+		for _, pkg := range listedPkgs {
+			pkgNames = append(pkgNames, string(pkg.Name))
+		}
+
+		if diff := cmp.Diff(test.results, pkgNames); diff != "" {
+			t.Errorf("mismatch (-want, +got): %s", diff)
+		}
+	}
+}
+
 func TestListPackageRepoRefsFuzzy(t *testing.T) {
 	if testing.Short() {
 		t.Skip()
@@ -192,8 +258,8 @@ func TestListPackageRepoRefsFuzzy(t *testing.T) {
 
 	logger := logtest.Scoped(t)
 	ctx := context.Background()
-	db := database.NewDB(logger, dbtest.NewDB(logger, t))
-	store := New(&observation.TestContext, db)
+	db := database.NewDB(logger, dbtest.NewDB(t))
+	store := New(observation.TestContextTB(t), db)
 
 	pkgs := []shared.MinimalPackageRepoRef{
 		{Scheme: "npm", Name: "bar", Versions: []shared.MinimalPackageRepoRefVersion{{Version: "2.0.0"}}},
@@ -316,8 +382,8 @@ func TestDeletePackageRepoRefsByID(t *testing.T) {
 
 	logger := logtest.Scoped(t)
 	ctx := context.Background()
-	db := database.NewDB(logger, dbtest.NewDB(logger, t))
-	store := New(&observation.TestContext, db)
+	db := database.NewDB(logger, dbtest.NewDB(t))
+	store := New(observation.TestContextTB(t), db)
 
 	repos := []shared.MinimalPackageRepoRef{
 		// Test same-set flushes

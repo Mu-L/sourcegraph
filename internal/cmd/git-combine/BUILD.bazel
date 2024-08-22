@@ -1,11 +1,12 @@
-load("//dev:go_defs.bzl", "go_test")
 load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+load("//dev:go_defs.bzl", "go_test")
 
 go_library(
     name = "git-combine_lib",
     srcs = ["git-combine.go"],
     embedsrcs = ["default-branch.sh"],
     importpath = "github.com/sourcegraph/sourcegraph/internal/cmd/git-combine",
+    tags = [TAG_PLATFORM_SEARCH],
     visibility = ["//visibility:private"],
     deps = [
         "//lib/errors",
@@ -20,6 +21,7 @@ go_library(
 go_binary(
     name = "git-combine",
     embed = [":git-combine_lib"],
+    tags = [TAG_PLATFORM_SEARCH],
     visibility = ["//:__subpackages__"],
 )
 
@@ -28,6 +30,7 @@ go_test(
     timeout = "short",
     srcs = ["git-combine_test.go"],
     embed = [":git-combine_lib"],
+    tags = [TAG_PLATFORM_SEARCH],
     deps = [
         "@com_github_go_git_go_git_v5//plumbing",
         "@com_github_go_git_go_git_v5//plumbing/object",

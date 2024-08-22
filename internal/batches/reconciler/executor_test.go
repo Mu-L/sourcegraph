@@ -14,9 +14,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/sourcegraph/sourcegraph/internal/gitserver"
-	"github.com/sourcegraph/sourcegraph/internal/httpcli"
-
 	"github.com/sourcegraph/log/logtest"
 
 	"github.com/sourcegraph/sourcegraph/internal/actor"
@@ -27,12 +24,15 @@ import (
 	btypes "github.com/sourcegraph/sourcegraph/internal/batches/types"
 	"github.com/sourcegraph/sourcegraph/internal/batches/webhooks"
 	"github.com/sourcegraph/sourcegraph/internal/database"
+	"github.com/sourcegraph/sourcegraph/internal/database/dbmocks"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbtest"
 	et "github.com/sourcegraph/sourcegraph/internal/encryption/testing"
 	"github.com/sourcegraph/sourcegraph/internal/errcode"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc/auth"
+	"github.com/sourcegraph/sourcegraph/internal/gitserver"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver/gitdomain"
 	gitprotocol "github.com/sourcegraph/sourcegraph/internal/gitserver/protocol"
+	"github.com/sourcegraph/sourcegraph/internal/httpcli"
 	"github.com/sourcegraph/sourcegraph/internal/observation"
 	"github.com/sourcegraph/sourcegraph/internal/repos"
 
@@ -76,11 +76,11 @@ func TestExecutor_ExecutePlan(t *testing.T) {
 
 	logger := logtest.Scoped(t)
 	ctx := context.Background()
-	db := database.NewDB(logger, dbtest.NewDB(logger, t))
+	db := database.NewDB(logger, dbtest.NewDB(t))
 
 	now := timeutil.Now()
 	clock := func() time.Time { return now }
-	bstore := store.NewWithClock(db, &observation.TestContext, et.TestKey{}, clock)
+	bstore := store.NewWithClock(db, observation.TestContextTB(t), et.TestKey{}, clock)
 	wstore := database.OutboundWebhookJobsWith(bstore, nil)
 
 	admin := bt.CreateTestUser(t, db, true)
@@ -93,10 +93,8 @@ func TestExecutor_ExecutePlan(t *testing.T) {
 		Name: repo.Name,
 		VCS:  protocol.VCSInfo{URL: repo.URI},
 	})
-	defer state.Unmock()
 
-	btypes.MockInternalClientExternalURL("https://sourcegraph.test")
-	t.Cleanup(btypes.ResetInternalClient)
+	mockExternalURL(t, "https://sourcegraph.test")
 
 	githubPR := buildGithubPR(clock(), btypes.ChangesetExternalStateOpen)
 	githubHeadRef := gitdomain.EnsureRefPrefix(githubPR.HeadRefName)
@@ -295,7 +293,7 @@ func TestExecutor_ExecutePlan(t *testing.T) {
 			wantChangeset: bt.ChangesetAssertions{
 				PublicationState: btypes.ChangesetPublicationStateUnpublished,
 			},
-			wantErr: errors.New("pushing commit: creating commit from patch for repository \"\": \n```\n$ \narchived\n```"),
+			wantErr: errors.New("creating commit from patch for repository \"\": \n```\n$ \narchived\n```"),
 		},
 		"general push error": {
 			hasCurrentSpec: true,
@@ -850,7 +848,6 @@ func TestExecutor_ExecutePlan(t *testing.T) {
 
 				afterDone(bstore)
 				webhook, err := wstore.GetLast(ctx)
-
 				if err != nil {
 					t.Fatalf("could not get latest webhook job: %s", err)
 				}
@@ -876,10 +873,10 @@ func TestExecutor_ExecutePlan_PublishedChangesetDuplicateBranch(t *testing.T) {
 	}
 
 	logger := logtest.Scoped(t)
-	ctx := context.Background()
-	db := database.NewDB(logger, dbtest.NewDB(logger, t))
+	ctx := actor.WithInternalActor(context.Background())
+	db := database.NewDB(logger, dbtest.NewDB(t))
 
-	bstore := store.New(db, &observation.TestContext, et.TestKey{})
+	bstore := store.New(db, observation.TestContextTB(t), et.TestKey{})
 
 	repo, _ := bt.CreateTestRepo(t, ctx, db)
 
@@ -919,9 +916,9 @@ func TestExecutor_ExecutePlan_PublishedChangesetDuplicateBranch(t *testing.T) {
 
 func TestExecutor_ExecutePlan_AvoidLoadingChangesetSource(t *testing.T) {
 	logger := logtest.Scoped(t)
-	ctx := context.Background()
-	db := database.NewDB(logger, dbtest.NewDB(logger, t))
-	bstore := store.New(db, &observation.TestContext, et.TestKey{})
+	ctx := actor.WithInternalActor(context.Background())
+	db := database.NewDB(logger, dbtest.NewDB(t))
+	bstore := store.New(db, observation.TestContextTB(t), et.TestKey{})
 	repo, _ := bt.CreateTestRepo(t, ctx, db)
 
 	changesetSpec := bt.BuildChangesetSpec(t, bt.TestSpecOpts{
@@ -998,9 +995,9 @@ func TestLoadChangesetSource(t *testing.T) {
 func TestExecutor_UserCredentialsForGitserver(t *testing.T) {
 	logger := logtest.Scoped(t)
 	ctx := actor.WithInternalActor(context.Background())
-	db := database.NewDB(logger, dbtest.NewDB(logger, t))
+	db := database.NewDB(logger, dbtest.NewDB(t))
 
-	bstore := store.New(db, &observation.TestContext, et.TestKey{})
+	bstore := store.New(db, observation.TestContextTB(t), et.TestKey{})
 
 	admin := bt.CreateTestUser(t, db, true)
 	user := bt.CreateTestUser(t, db, false)
@@ -1181,7 +1178,7 @@ func TestExecutor_UserCredentialsForGitserver(t *testing.T) {
 			})
 
 			_, err := executePlan(
-				actor.WithActor(ctx, actor.FromUser(tt.user.ID)),
+				actor.WithInternalActor(ctx),
 				logtest.Scoped(t),
 				gitserverClient,
 				sourcer,
@@ -1211,13 +1208,12 @@ func TestExecutor_UserCredentialsForGitserver(t *testing.T) {
 func TestDecorateChangesetBody(t *testing.T) {
 	ctx := context.Background()
 
-	ns := database.NewMockNamespaceStore()
+	ns := dbmocks.NewMockNamespaceStore()
 	ns.GetByIDFunc.SetDefaultHook(func(_ context.Context, _ int32, user int32) (*database.Namespace, error) {
 		return &database.Namespace{Name: "my-user", User: user}, nil
 	})
 
-	btypes.MockInternalClientExternalURL("https://sourcegraph.test")
-	t.Cleanup(btypes.ResetInternalClient)
+	mockExternalURL(t, "https://sourcegraph.test")
 
 	fs := &FakeStore{
 		GetBatchChangeMock: func(ctx context.Context, opts store.GetBatchChangeOpts) (*btypes.BatchChange, error) {

@@ -1,6 +1,7 @@
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { currentUserMock } from '@sourcegraph/shared/src/testing/integration/graphQlResults'
 
-import { SourcegraphContext } from '../jscontext'
+import type { SourcegraphContext } from '../jscontext'
 
 export const siteID = 'TestSiteID'
 export const siteGQLID = 'TestGQLSiteID'
@@ -12,6 +13,8 @@ export const builtinAuthProvider = {
     displayName: 'Builtin username-password authentication',
     isBuiltin: true,
     authenticationURL: '',
+    noSignIn: false,
+    requiredForAuthz: false,
 }
 
 export const createJsContext = ({ sourcegraphBaseUrl }: { sourcegraphBaseUrl: string }): SourcegraphContext => ({
@@ -19,20 +22,33 @@ export const createJsContext = ({ sourcegraphBaseUrl }: { sourcegraphBaseUrl: st
     temporarySettings: null,
     externalURL: sourcegraphBaseUrl,
     accessTokensAllow: 'all-users-create',
+    accessTokensAllowNoExpiration: false,
+    accessTokensExpirationDaysDefault: 60,
+    accessTokensExpirationDaysOptions: [7, 30, 60, 90],
     allowSignup: false,
     batchChangesEnabled: true,
+    applianceUpdateTarget: '',
+    applianceMenuTarget: '',
     batchChangesDisableWebhooksWarning: false,
     batchChangesWebhookLogsEnabled: true,
     codeInsightsEnabled: true,
     executorsEnabled: true,
-    codyEnabled: true,
+    codyEnabledOnInstance: true,
+    codeSearchEnabledOnInstance: true,
+    codeIntelligenceEnabled: true,
+    codeMonitoringEnabled: true,
+    notebooksEnabled: true,
+    searchJobsEnabled: true,
+    searchAggregationEnabled: true,
+    searchContextsEnabled: true,
+    ownEnabled: true,
     codyEnabledForCurrentUser: true,
     codyRequiresVerifiedEmail: false,
     extsvcConfigAllowEdits: false,
     extsvcConfigFileExists: false,
     codeIntelAutoIndexingEnabled: true,
     codeIntelAutoIndexingAllowGlobalPolicies: true,
-    externalServicesUserMode: 'disabled',
+    codeIntelRankingDocumentReferenceCountsEnabled: false,
     productResearchPageEnabled: true,
     assetsRoot: new URL('/.assets', sourcegraphBaseUrl).href,
     deployType: 'dev',
@@ -41,7 +57,6 @@ export const createJsContext = ({ sourcegraphBaseUrl }: { sourcegraphBaseUrl: st
     experimentalFeatures: {},
     isAuthenticatedUser: true,
     licenseInfo: {
-        currentPlan: 'team-0',
         batchChanges: {
             maxNumChangesets: -1,
             unrestricted: true,
@@ -56,14 +71,13 @@ export const createJsContext = ({ sourcegraphBaseUrl }: { sourcegraphBaseUrl: st
     siteID,
     siteGQLID,
     sourcegraphDotComMode: false,
-    sourcegraphAppMode: false,
     userAgentIsBot: false,
     version: '0.0.0',
     xhrHeaders: {},
     authProviders: [builtinAuthProvider],
     authMinPasswordLength: 12,
-    embeddingsEnabled: false,
     runningOnMacOS: true,
-    srcServeGitUrl: 'http://127.0.0.1:3434',
     primaryLoginProvidersCount: 5,
+    // use noOpTelemetryRecorder since this jsContext is only used for integration tests.
+    telemetryRecorder: noOpTelemetryRecorder,
 })

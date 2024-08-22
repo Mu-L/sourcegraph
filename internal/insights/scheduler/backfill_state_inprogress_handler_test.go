@@ -16,6 +16,7 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	edb "github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/database/basestore"
+	"github.com/sourcegraph/sourcegraph/internal/database/dbmocks"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbtest"
 	"github.com/sourcegraph/sourcegraph/internal/insights/pipeline"
 	"github.com/sourcegraph/sourcegraph/internal/insights/priority"
@@ -48,8 +49,8 @@ func Test_MovesBackfillFromProcessingToComplete(t *testing.T) {
 	logger := logtest.Scoped(t)
 	ctx := context.Background()
 	insightsDB := edb.NewInsightsDB(dbtest.NewInsightsDB(logger, t), logger)
-	permStore := store.NewInsightPermissionStore(database.NewMockDB())
-	repos := database.NewMockRepoStore()
+	permStore := store.NewInsightPermissionStore(dbmocks.NewMockDB())
+	repos := dbmocks.NewMockRepoStore()
 	repos.GetFunc.SetDefaultReturn(&itypes.Repo{ID: 1, Name: "repo1"}, nil)
 	insightsStore := store.NewInsightStore(insightsDB)
 	seriesStore := store.New(insightsDB, permStore)
@@ -62,7 +63,7 @@ func Test_MovesBackfillFromProcessingToComplete(t *testing.T) {
 		InsightsDB:     insightsDB,
 		RepoStore:      repos,
 		InsightStore:   seriesStore,
-		ObservationCtx: &observation.TestContext,
+		ObservationCtx: observation.TestContextTB(t),
 		BackfillRunner: &noopBackfillRunner{},
 		CostAnalyzer:   priority.NewQueryAnalyzer(),
 	}
@@ -96,7 +97,7 @@ func Test_MovesBackfillFromProcessingToComplete(t *testing.T) {
 		repoStore:          repos,
 		insightsStore:      seriesStore,
 		backfillRunner:     &noopBackfillRunner{},
-		config:             newHandlerConfig(),
+		config:             newHandlerConfig,
 
 		clock: clock,
 	}
@@ -125,8 +126,8 @@ func Test_PullsByEstimatedCostAge(t *testing.T) {
 	logger := logtest.Scoped(t)
 	ctx := context.Background()
 	insightsDB := edb.NewInsightsDB(dbtest.NewInsightsDB(logger, t), logger)
-	permStore := store.NewInsightPermissionStore(database.NewMockDB())
-	repos := database.NewMockRepoStore()
+	permStore := store.NewInsightPermissionStore(dbmocks.NewMockDB())
+	repos := dbmocks.NewMockRepoStore()
 	repos.GetFunc.SetDefaultReturn(&itypes.Repo{ID: 1, Name: "repo1"}, nil)
 	insightsStore := store.NewInsightStore(insightsDB)
 	seriesStore := store.New(insightsDB, permStore)
@@ -139,7 +140,7 @@ func Test_PullsByEstimatedCostAge(t *testing.T) {
 		InsightsDB:     insightsDB,
 		RepoStore:      repos,
 		InsightStore:   seriesStore,
-		ObservationCtx: &observation.TestContext,
+		ObservationCtx: observation.TestContextTB(t),
 		BackfillRunner: &noopBackfillRunner{},
 		CostAnalyzer:   priority.NewQueryAnalyzer(),
 	}
@@ -188,8 +189,8 @@ func Test_BackfillWithRetry(t *testing.T) {
 	logger := logtest.Scoped(t)
 	ctx := context.Background()
 	insightsDB := edb.NewInsightsDB(dbtest.NewInsightsDB(logger, t), logger)
-	permStore := store.NewInsightPermissionStore(database.NewMockDB())
-	repos := database.NewMockRepoStore()
+	permStore := store.NewInsightPermissionStore(dbmocks.NewMockDB())
+	repos := dbmocks.NewMockRepoStore()
 	repos.GetFunc.SetDefaultReturn(&itypes.Repo{ID: 1, Name: "repo1"}, nil)
 	insightsStore := store.NewInsightStore(insightsDB)
 	seriesStore := store.New(insightsDB, permStore)
@@ -202,7 +203,7 @@ func Test_BackfillWithRetry(t *testing.T) {
 		InsightsDB:     insightsDB,
 		RepoStore:      repos,
 		InsightStore:   seriesStore,
-		ObservationCtx: &observation.TestContext,
+		ObservationCtx: observation.TestContextTB(t),
 		BackfillRunner: &noopBackfillRunner{},
 		CostAnalyzer:   priority.NewQueryAnalyzer(),
 	}
@@ -249,7 +250,7 @@ func Test_BackfillWithRetry(t *testing.T) {
 		repoStore:          repos,
 		insightsStore:      seriesStore,
 		backfillRunner:     runner,
-		config:             newHandlerConfig(),
+		config:             newHandlerConfig,
 		clock:              clock,
 	}
 
@@ -267,8 +268,8 @@ func Test_BackfillWithRetryAndComplete(t *testing.T) {
 	logger := logtest.Scoped(t)
 	ctx := context.Background()
 	insightsDB := edb.NewInsightsDB(dbtest.NewInsightsDB(logger, t), logger)
-	permStore := store.NewInsightPermissionStore(database.NewMockDB())
-	repos := database.NewMockRepoStore()
+	permStore := store.NewInsightPermissionStore(dbmocks.NewMockDB())
+	repos := dbmocks.NewMockRepoStore()
 	repos.GetFunc.SetDefaultReturn(&itypes.Repo{ID: 1, Name: "repo1"}, nil)
 	insightsStore := store.NewInsightStore(insightsDB)
 	seriesStore := store.New(insightsDB, permStore)
@@ -281,7 +282,7 @@ func Test_BackfillWithRetryAndComplete(t *testing.T) {
 		InsightsDB:     insightsDB,
 		RepoStore:      repos,
 		InsightStore:   seriesStore,
-		ObservationCtx: &observation.TestContext,
+		ObservationCtx: observation.TestContextTB(t),
 		BackfillRunner: &noopBackfillRunner{},
 		CostAnalyzer:   priority.NewQueryAnalyzer(),
 	}
@@ -327,7 +328,7 @@ func Test_BackfillWithRetryAndComplete(t *testing.T) {
 		repoStore:          repos,
 		insightsStore:      seriesStore,
 		backfillRunner:     runner,
-		config:             newHandlerConfig(),
+		config:             newHandlerConfig,
 		clock:              clock,
 	}
 
@@ -350,8 +351,8 @@ func Test_BackfillWithRepoNotFound(t *testing.T) {
 	logger := logtest.Scoped(t)
 	ctx := context.Background()
 	insightsDB := edb.NewInsightsDB(dbtest.NewInsightsDB(logger, t), logger)
-	permStore := store.NewInsightPermissionStore(database.NewMockDB())
-	repos := database.NewMockRepoStore()
+	permStore := store.NewInsightPermissionStore(dbmocks.NewMockDB())
+	repos := dbmocks.NewMockRepoStore()
 	repos.GetFunc.SetDefaultHook(func(ctx context.Context, ri api.RepoID) (*itypes.Repo, error) {
 		if ri == 1 {
 			return &itypes.Repo{ID: 1, Name: "repo1"}, nil
@@ -369,7 +370,7 @@ func Test_BackfillWithRepoNotFound(t *testing.T) {
 		InsightsDB:     insightsDB,
 		RepoStore:      repos,
 		InsightStore:   seriesStore,
-		ObservationCtx: &observation.TestContext,
+		ObservationCtx: observation.TestContextTB(t),
 		BackfillRunner: &noopBackfillRunner{},
 		CostAnalyzer:   priority.NewQueryAnalyzer(),
 	}
@@ -409,7 +410,7 @@ func Test_BackfillWithRepoNotFound(t *testing.T) {
 		repoStore:          repos,
 		insightsStore:      seriesStore,
 		backfillRunner:     runner,
-		config:             newHandlerConfig(),
+		config:             newHandlerConfig,
 		clock:              clock,
 	}
 
@@ -433,8 +434,8 @@ func Test_BackfillWithARepoError(t *testing.T) {
 	logger := logtest.Scoped(t)
 	ctx := context.Background()
 	insightsDB := edb.NewInsightsDB(dbtest.NewInsightsDB(logger, t), logger)
-	permStore := store.NewInsightPermissionStore(database.NewMockDB())
-	repos := database.NewMockRepoStore()
+	permStore := store.NewInsightPermissionStore(dbmocks.NewMockDB())
+	repos := dbmocks.NewMockRepoStore()
 	repos.GetFunc.SetDefaultHook(func(ctx context.Context, ri api.RepoID) (*itypes.Repo, error) {
 		if ri == 1 {
 			return &itypes.Repo{ID: 1, Name: "repo1"}, nil
@@ -452,7 +453,7 @@ func Test_BackfillWithARepoError(t *testing.T) {
 		InsightsDB:     insightsDB,
 		RepoStore:      repos,
 		InsightStore:   seriesStore,
-		ObservationCtx: &observation.TestContext,
+		ObservationCtx: observation.TestContextTB(t),
 		BackfillRunner: &noopBackfillRunner{},
 		CostAnalyzer:   priority.NewQueryAnalyzer(),
 	}
@@ -492,7 +493,7 @@ func Test_BackfillWithARepoError(t *testing.T) {
 		repoStore:          repos,
 		insightsStore:      seriesStore,
 		backfillRunner:     runner,
-		config:             newHandlerConfig(),
+		config:             newHandlerConfig,
 		clock:              clock,
 	}
 
@@ -515,8 +516,8 @@ func Test_BackfillWithInterrupt(t *testing.T) {
 	logger := logtest.Scoped(t)
 	ctx := context.Background()
 	insightsDB := edb.NewInsightsDB(dbtest.NewInsightsDB(logger, t), logger)
-	permStore := store.NewInsightPermissionStore(database.NewMockDB())
-	repos := database.NewMockRepoStore()
+	permStore := store.NewInsightPermissionStore(dbmocks.NewMockDB())
+	repos := dbmocks.NewMockRepoStore()
 	repos.GetFunc.SetDefaultReturn(&itypes.Repo{ID: 1, Name: "repo1"}, nil)
 	insightsStore := store.NewInsightStore(insightsDB)
 	seriesStore := store.New(insightsDB, permStore)
@@ -529,7 +530,7 @@ func Test_BackfillWithInterrupt(t *testing.T) {
 		InsightsDB:     insightsDB,
 		RepoStore:      repos,
 		InsightStore:   seriesStore,
-		ObservationCtx: &observation.TestContext,
+		ObservationCtx: observation.TestContextTB(t),
 		BackfillRunner: &noopBackfillRunner{},
 		CostAnalyzer:   priority.NewQueryAnalyzer(),
 	}
@@ -560,6 +561,10 @@ func Test_BackfillWithInterrupt(t *testing.T) {
 		return nil
 	}}
 
+	handlerConf := newHandlerConfig()
+	handlerConf.interruptAfter = time.Second * 5
+	handlerConf.pageSize = 2 // setting the page size to only complete 1/2 repos in 1 iteration
+
 	dequeue, _, _ := monitor.inProgressStore.Dequeue(ctx, "test", nil)
 	handler := inProgressHandler{
 		workerStore:        monitor.newBackfillStore,
@@ -568,11 +573,9 @@ func Test_BackfillWithInterrupt(t *testing.T) {
 		repoStore:          repos,
 		insightsStore:      seriesStore,
 		backfillRunner:     &runner,
-		config:             newHandlerConfig(),
+		config:             func() handlerConfig { return handlerConf },
 		clock:              clock,
 	}
-	handler.config.interruptAfter = time.Second * 5
-	handler.config.pageSize = 2 // setting the page size to only complete 1/2 repos in 1 iteration
 
 	err = handler.Handle(ctx, logger, dequeue)
 	require.NoError(t, err)
@@ -600,8 +603,8 @@ func Test_BackfillCrossingErrorThreshold(t *testing.T) {
 	logger := logtest.Scoped(t)
 	ctx := context.Background()
 	insightsDB := edb.NewInsightsDB(dbtest.NewInsightsDB(logger, t), logger)
-	permStore := store.NewInsightPermissionStore(database.NewMockDB())
-	repos := database.NewMockRepoStore()
+	permStore := store.NewInsightPermissionStore(dbmocks.NewMockDB())
+	repos := dbmocks.NewMockRepoStore()
 	repos.GetFunc.SetDefaultReturn(&itypes.Repo{ID: 1, Name: "repo1"}, nil)
 	insightsStore := store.NewInsightStore(insightsDB)
 	seriesStore := store.New(insightsDB, permStore)
@@ -614,7 +617,7 @@ func Test_BackfillCrossingErrorThreshold(t *testing.T) {
 		InsightsDB:     insightsDB,
 		RepoStore:      repos,
 		InsightStore:   seriesStore,
-		ObservationCtx: &observation.TestContext,
+		ObservationCtx: observation.TestContextTB(t),
 		BackfillRunner: &noopBackfillRunner{},
 		CostAnalyzer:   priority.NewQueryAnalyzer(),
 	}
@@ -647,9 +650,9 @@ func Test_BackfillCrossingErrorThreshold(t *testing.T) {
 		return wantErr
 	}}
 
-	handlerConfig := newHandlerConfig()
-	handlerConfig.errorThresholdFloor = 3 // set this low enough that we will exceed it
-	handlerConfig.interruptAfter = time.Hour * 24
+	handlerConf := newHandlerConfig()
+	handlerConf.errorThresholdFloor = 3 // set this low enough that we will exceed it
+	handlerConf.interruptAfter = time.Hour * 24
 
 	dequeue, _, _ := monitor.inProgressStore.Dequeue(ctx, "test", nil)
 	handler := inProgressHandler{
@@ -659,7 +662,7 @@ func Test_BackfillCrossingErrorThreshold(t *testing.T) {
 		repoStore:          repos,
 		insightsStore:      seriesStore,
 		backfillRunner:     &runner,
-		config:             handlerConfig,
+		config:             func() handlerConfig { return handlerConf },
 		clock:              clock,
 	}
 
@@ -675,7 +678,7 @@ func Test_BackfillCrossingErrorThreshold(t *testing.T) {
 	require.Equal(t, itr.PercentComplete, float64(1))
 
 	// check for incomplete points
-	incomplete, err := seriesStore.LoadAggregatedIncompleteDatapoints(ctx, series.ID)
+	incomplete, err := seriesStore.LoadIncompleteDatapoints(ctx, series.ID)
 	require.NoError(t, err)
 	require.Len(t, incomplete, 12)
 	require.Equal(t, incomplete[0].Reason, store.ReasonExceedsErrorLimit)

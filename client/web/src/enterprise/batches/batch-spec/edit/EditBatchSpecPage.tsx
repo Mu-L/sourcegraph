@@ -1,23 +1,24 @@
-import React, { FC, useCallback, useMemo, useState } from 'react'
+import React, { useCallback, useMemo, useState, type FC } from 'react'
 
 import AlertCircleIcon from 'mdi-react/AlertCircleIcon'
 import { useNavigate, useParams } from 'react-router-dom'
 
 import { useQuery } from '@sourcegraph/http-client'
-import { Settings, SettingsCascadeProps } from '@sourcegraph/shared/src/settings/settings'
+import type { Settings, SettingsCascadeProps } from '@sourcegraph/shared/src/settings/settings'
 import { useTemporarySetting } from '@sourcegraph/shared/src/settings/temporary/useTemporarySetting'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import { useIsLightTheme } from '@sourcegraph/shared/src/theme'
-import { Button, Icon, LoadingSpinner, H3, H4, Alert } from '@sourcegraph/wildcard'
+import { Alert, Button, H3, H4, Icon, LoadingSpinner } from '@sourcegraph/wildcard'
 
-import { AuthenticatedUser } from '../../../../auth'
+import type { AuthenticatedUser } from '../../../../auth'
 import { HeroPage } from '../../../../components/HeroPage'
-import {
+import type {
     CheckExecutorsAccessTokenResult,
     CheckExecutorsAccessTokenVariables,
     GetBatchChangeToEditResult,
     GetBatchChangeToEditVariables,
 } from '../../../../graphql-operations'
-import { NamespaceProps } from '../../../../namespaces'
+import type { NamespaceProps } from '../../../../namespaces'
 import { BatchSpecDownloadLink } from '../../BatchSpec'
 import { EXECUTORS, GET_BATCH_CHANGE_TO_EDIT } from '../../create/backend'
 import { ConfigurationForm } from '../../create/ConfigurationForm'
@@ -25,11 +26,11 @@ import { InsightTemplatesBanner } from '../../create/InsightTemplatesBanner'
 import { SearchTemplatesBanner } from '../../create/SearchTemplatesBanner'
 import { useInsightTemplates } from '../../create/useInsightTemplates'
 import { useSearchTemplate } from '../../create/useSearchTemplate'
-import { BatchSpecContextProvider, useBatchSpecContext, BatchSpecContextState } from '../BatchSpecContext'
+import { BatchSpecContextProvider, useBatchSpecContext, type BatchSpecContextState } from '../BatchSpecContext'
 import { ActionsMenu, ActionsMenuMode } from '../execute/ActionsMenu'
 import { ActionButtons } from '../header/ActionButtons'
 import { BatchChangeHeader } from '../header/BatchChangeHeader'
-import { TabBar, TabsConfig, TabKey } from '../TabBar'
+import { TabBar, type TabKey, type TabsConfig } from '../TabBar'
 
 import { DownloadSpecModal } from './DownloadSpecModal'
 import { EditorFeedbackPanel } from './editor/EditorFeedbackPanel'
@@ -42,7 +43,7 @@ import { WorkspacesPreviewPanel } from './workspaces-preview/WorkspacesPreviewPa
 import layoutStyles from '../Layout.module.scss'
 import styles from './EditBatchSpecPage.module.scss'
 
-export interface EditBatchSpecPageProps extends NamespaceProps, SettingsCascadeProps<Settings> {
+export interface EditBatchSpecPageProps extends NamespaceProps, SettingsCascadeProps<Settings>, TelemetryV2Props {
     authenticatedUser: AuthenticatedUser | null
 }
 
@@ -97,9 +98,7 @@ export const EditBatchSpecPage: FC<EditBatchSpecPageProps> = props => {
     )
 }
 
-interface EditBatchSpecPageContentProps extends SettingsCascadeProps<Settings> {
-    authenticatedUser: AuthenticatedUser | null
-}
+interface EditBatchSpecPageContentProps extends SettingsCascadeProps<Settings>, TelemetryV2Props {}
 
 const EditBatchSpecPageContent: React.FunctionComponent<
     React.PropsWithChildren<EditBatchSpecPageContentProps>
@@ -128,7 +127,7 @@ const MemoizedEditBatchSpecPageContent: React.FunctionComponent<
     batchSpec,
     editor,
     errors,
-    authenticatedUser,
+    telemetryRecorder,
 }) {
     const navigate = useNavigate()
     const isLightTheme = useIsLightTheme()
@@ -175,9 +174,15 @@ const MemoizedEditBatchSpecPageContent: React.FunctionComponent<
                 isExecutionDisabled={editor.isExecutionDisabled}
                 options={editor.executionOptions}
                 onChangeOptions={editor.setExecutionOptions}
+                telemetryRecorder={telemetryRecorder}
             />
             {downloadSpecModalDismissed ? (
-                <BatchSpecDownloadLink name={batchChange.name} originalInput={editor.code} asButton={false}>
+                <BatchSpecDownloadLink
+                    name={batchChange.name}
+                    originalInput={editor.code}
+                    asButton={false}
+                    telemetryRecorder={telemetryRecorder}
+                >
                     or download for src-cli
                 </BatchSpecDownloadLink>
             ) : (
@@ -196,6 +201,7 @@ const MemoizedEditBatchSpecPageContent: React.FunctionComponent<
                     originalInput={editor.code}
                     asButton={true}
                     className="mb-2"
+                    telemetryRecorder={telemetryRecorder}
                 >
                     Download for src-cli
                 </BatchSpecDownloadLink>
@@ -247,7 +253,10 @@ const MemoizedEditBatchSpecPageContent: React.FunctionComponent<
                 />
                 {activeTabKey === 'configuration' ? (
                     <ActionButtons>
-                        <ActionsMenu defaultMode={ActionsMenuMode.ActionsOnlyClose} />
+                        <ActionsMenu
+                            defaultMode={ActionsMenuMode.ActionsOnlyClose}
+                            telemetryRecorder={telemetryRecorder}
+                        />
                     </ActionButtons>
                 ) : (
                     <ActionButtons>{actionButtons}</ActionButtons>
@@ -256,10 +265,14 @@ const MemoizedEditBatchSpecPageContent: React.FunctionComponent<
             <TabBar activeTabKey={activeTabKey} tabsConfig={tabsConfig} />
 
             {activeTabKey === 'configuration' ? (
-                <ConfigurationForm isReadOnly={true} batchChange={batchChange} authenticatedUser={authenticatedUser} />
+                <ConfigurationForm isReadOnly={true} batchChange={batchChange} />
             ) : (
                 <div className={styles.form}>
-                    <LibraryPane name={batchChange.name} onReplaceItem={editor.handleCodeChange} />
+                    <LibraryPane
+                        name={batchChange.name}
+                        onReplaceItem={editor.handleCodeChange}
+                        telemetryRecorder={telemetryRecorder}
+                    />
                     <div className={styles.editorContainer} role="region" aria-label="batch spec editor">
                         <H4 as={H3} className={styles.header}>
                             Batch spec
@@ -276,7 +289,7 @@ const MemoizedEditBatchSpecPageContent: React.FunctionComponent<
                         />
                         <EditorFeedbackPanel errors={errors} />
                     </div>
-                    <WorkspacesPreviewPanel />
+                    <WorkspacesPreviewPanel telemetryRecorder={telemetryRecorder} />
                 </div>
             )}
 
@@ -286,6 +299,7 @@ const MemoizedEditBatchSpecPageContent: React.FunctionComponent<
                     originalInput={editor.code}
                     setDownloadSpecModalDismissed={setDownloadSpecModalDismissed}
                     setIsDownloadSpecModalOpen={setIsDownloadSpecModalOpen}
+                    telemetryRecorder={telemetryRecorder}
                 />
             ) : null}
             {isRunServerSideModalOpen ? (

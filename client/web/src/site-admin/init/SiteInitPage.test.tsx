@@ -1,3 +1,6 @@
+import { afterAll, beforeAll, describe, expect, test } from 'vitest'
+
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { renderWithBrandedContext } from '@sourcegraph/wildcard/src/testing'
 
 import { SiteInitPage } from './SiteInitPage'
@@ -19,11 +22,10 @@ describe('SiteInitPage', () => {
                 needsSiteInit={false}
                 authenticatedUser={null}
                 context={{
-                    authProviders: [],
-                    sourcegraphDotComMode: false,
-                    experimentalFeatures: {},
+                    authPasswordPolicy: {},
                     authMinPasswordLength: 12,
                 }}
+                telemetryRecorder={noOpTelemetryRecorder}
             />,
             { route: '/init', path: '/init', extraRoutes: [{ path: '/search', element: null }] }
         )
@@ -38,11 +40,10 @@ describe('SiteInitPage', () => {
                     needsSiteInit={true}
                     authenticatedUser={{ username: 'alice' }}
                     context={{
-                        authProviders: [],
-                        sourcegraphDotComMode: false,
-                        experimentalFeatures: {},
+                        authPasswordPolicy: {},
                         authMinPasswordLength: 12,
                     }}
+                    telemetryRecorder={noOpTelemetryRecorder}
                 />
             ).asFragment()
         ).toMatchSnapshot())
@@ -54,11 +55,10 @@ describe('SiteInitPage', () => {
                     needsSiteInit={true}
                     authenticatedUser={null}
                     context={{
-                        authProviders: [],
-                        sourcegraphDotComMode: false,
-                        experimentalFeatures: {},
+                        authPasswordPolicy: {},
                         authMinPasswordLength: 12,
                     }}
+                    telemetryRecorder={noOpTelemetryRecorder}
                 />
             ).asFragment()
         ).toMatchSnapshot())

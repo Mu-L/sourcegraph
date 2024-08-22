@@ -1,10 +1,10 @@
-import { MockedResponse } from '@apollo/client/testing'
-import { Meta, Story } from '@storybook/react'
+import type { MockedResponse } from '@apollo/client/testing'
+import type { Meta, StoryFn } from '@storybook/react'
 
 import { getDocumentNode } from '@sourcegraph/http-client'
 
 import { WebStory } from '../../components/WebStory'
-import { ListTeamMembersResult } from '../../graphql-operations'
+import type { ListTeamMembersResult } from '../../graphql-operations'
 import { LIST_TEAM_MEMBERS } from '../members/backend'
 
 import { TeamMembersPage } from './TeamMembersPage'
@@ -12,9 +12,7 @@ import { testContext } from './testContext.mock'
 
 const config: Meta = {
     title: 'web/teams/TeamMembersPage',
-    parameters: {
-        chromatic: { disableSnapshot: false },
-    },
+    parameters: {},
 }
 export default config
 
@@ -60,7 +58,7 @@ const mockResponse: MockedResponse<ListTeamMembersResult> = {
     },
 }
 
-export const Default: Story = function Default() {
+export const Default: StoryFn = function Default() {
     return (
         <WebStory initialEntries={['/teams/team-1/members']} mocks={[mockResponse]}>
             {() => <TeamMembersPage {...testContext} />}

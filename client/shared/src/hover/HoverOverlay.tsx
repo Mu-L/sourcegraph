@@ -1,4 +1,4 @@
-import React, { CSSProperties, useCallback, useState } from 'react'
+import React, { type CSSProperties, useCallback, useState } from 'react'
 
 import { mdiClose } from '@mdi/js'
 import classNames from 'classnames'
@@ -6,9 +6,9 @@ import classNames from 'classnames'
 import { isErrorLike, sanitizeClass } from '@sourcegraph/common'
 import { Card, Icon, Button } from '@sourcegraph/wildcard'
 
-import { ActionItem, ActionItemComponentProps } from '../actions/ActionItem'
-import { PlatformContextProps } from '../platform/context'
-import { TelemetryProps } from '../telemetry/telemetryService'
+import { ActionItem, type ActionItemComponentProps } from '../actions/ActionItem'
+import type { TelemetryV2Props } from '../telemetry'
+import type { TelemetryProps } from '../telemetry/telemetryService'
 
 import { CopyLinkIcon } from './CopyLinkIcon'
 import { toNativeEvent } from './helpers'
@@ -47,7 +47,7 @@ export interface HoverOverlayProps
         ActionItemComponentProps,
         HoverOverlayClassProps,
         TelemetryProps,
-        PlatformContextProps<'settings'> {
+        TelemetryV2Props {
     /** A ref callback to get the root overlay element. Use this to calculate the position. */
     hoverRef?: React.Ref<HTMLDivElement>
 
@@ -93,8 +93,8 @@ export const HoverOverlay: React.FunctionComponent<React.PropsWithChildren<Hover
         hoverRef,
         overlayPosition,
         actionsOrError,
-        platformContext,
         telemetryService,
+        telemetryRecorder,
         extensionsController,
         pinOptions,
         location,
@@ -190,8 +190,8 @@ export const HoverOverlay: React.FunctionComponent<React.PropsWithChildren<Hover
                                         variant="actionItem"
                                         disabledDuringExecution={true}
                                         showLoadingSpinnerDuringExecution={true}
-                                        platformContext={platformContext}
                                         telemetryService={telemetryService}
+                                        telemetryRecorder={telemetryRecorder}
                                         extensionsController={extensionsController}
                                         location={location}
                                         actionItemStyleProps={actionItemStyleProps}

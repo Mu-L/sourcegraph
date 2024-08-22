@@ -15,10 +15,10 @@ import (
 	"github.com/sergi/go-diff/diffmatchpatch"
 
 	"github.com/sourcegraph/sourcegraph/internal/api"
-	"github.com/sourcegraph/sourcegraph/internal/auth/providers"
 	"github.com/sourcegraph/sourcegraph/internal/authz"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc/gitlab"
+	"github.com/sourcegraph/sourcegraph/internal/featureflag"
 	"github.com/sourcegraph/sourcegraph/internal/rcache"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
@@ -29,16 +29,12 @@ func Test_GitLab_FetchAccount(t *testing.T) {
 	type call struct {
 		description string
 
-		user    *types.User
-		current []*extsvc.Account
+		user *types.User
 
 		expMine *extsvc.Account
 	}
 	type test struct {
 		description string
-
-		// authnProviders is the list of auth providers that are mocked
-		authnProviders []providers.Provider
 
 		// op configures the SudoProvider instance
 		op SudoProviderOp
@@ -49,7 +45,7 @@ func Test_GitLab_FetchAccount(t *testing.T) {
 	// Mocks
 	gitlabMock := newMockGitLab(mockGitLabOp{
 		t: t,
-		users: []*gitlab.User{
+		users: []*gitlab.AuthUser{
 			{
 				ID:       101,
 				Username: "b.l",
@@ -75,60 +71,9 @@ func Test_GitLab_FetchAccount(t *testing.T) {
 	// Test cases
 	tests := []test{
 		{
-			description: "1 authn provider, basic authz provider",
-			authnProviders: []providers.Provider{
-				mockAuthnProvider{
-					configID:  providers.ConfigID{ID: "okta.mine", Type: "saml"},
-					serviceID: "https://okta.mine/",
-				},
-			},
+			description: "0 authn providers, native username",
 			op: SudoProviderOp{
-				BaseURL:           mustURL(t, "https://gitlab.mine"),
-				AuthnConfigID:     providers.ConfigID{ID: "okta.mine", Type: "saml"},
-				GitLabProvider:    "okta.mine",
-				UseNativeUsername: false,
-			},
-			calls: []call{
-				{
-					description: "1 account, matches",
-					user:        &types.User{ID: 123},
-					current:     []*extsvc.Account{acct(t, 1, "saml", "https://okta.mine/", "bl")},
-					expMine:     acct(t, 123, extsvc.TypeGitLab, "https://gitlab.mine/", "101"),
-				},
-				{
-					description: "many accounts, none match",
-					user:        &types.User{ID: 123},
-					current: []*extsvc.Account{
-						acct(t, 1, "saml", "https://okta.mine/", "nomatch"),
-						acct(t, 1, "saml", "nomatch", "bl"),
-						acct(t, 1, "nomatch", "https://okta.mine/", "bl"),
-					},
-					expMine: nil,
-				},
-				{
-					description: "many accounts, 1 match",
-					user:        &types.User{ID: 123},
-					current: []*extsvc.Account{
-						acct(t, 1, "saml", "nomatch", "bl"),
-						acct(t, 1, "nomatch", "https://okta.mine/", "bl"),
-						acct(t, 1, "saml", "https://okta.mine/", "bl"),
-					},
-					expMine: acct(t, 123, extsvc.TypeGitLab, "https://gitlab.mine/", "101"),
-				},
-				{
-					description: "no user",
-					user:        nil,
-					current:     nil,
-					expMine:     nil,
-				},
-			},
-		},
-		{
-			description:    "0 authn providers, native username",
-			authnProviders: nil,
-			op: SudoProviderOp{
-				BaseURL:           mustURL(t, "https://gitlab.mine"),
-				UseNativeUsername: true,
+				BaseURL: mustURL(t, "https://gitlab.mine"),
 			},
 			calls: []call{
 				{
@@ -143,69 +88,16 @@ func Test_GitLab_FetchAccount(t *testing.T) {
 				},
 			},
 		},
-		{
-			description:    "0 authn providers, basic authz provider",
-			authnProviders: nil,
-			op: SudoProviderOp{
-				BaseURL:           mustURL(t, "https://gitlab.mine"),
-				AuthnConfigID:     providers.ConfigID{ID: "okta.mine", Type: "saml"},
-				GitLabProvider:    "okta.mine",
-				UseNativeUsername: false,
-			},
-			calls: []call{
-				{
-					description: "no matches",
-					user:        &types.User{ID: 123, Username: "b.l"},
-					expMine:     nil,
-				},
-			},
-		},
-		{
-			description: "2 authn providers, basic authz provider",
-			authnProviders: []providers.Provider{
-				mockAuthnProvider{
-					configID:  providers.ConfigID{ID: "okta.mine", Type: "saml"},
-					serviceID: "https://okta.mine/",
-				},
-				mockAuthnProvider{
-					configID:  providers.ConfigID{ID: "onelogin.mine", Type: "openidconnect"},
-					serviceID: "https://onelogin.mine/",
-				},
-			},
-			op: SudoProviderOp{
-				BaseURL:           mustURL(t, "https://gitlab.mine"),
-				AuthnConfigID:     providers.ConfigID{ID: "onelogin.mine", Type: "openidconnect"},
-				GitLabProvider:    "onelogin.mine",
-				UseNativeUsername: false,
-			},
-			calls: []call{
-				{
-					description: "1 authn provider matches",
-					user:        &types.User{ID: 123},
-					current:     []*extsvc.Account{acct(t, 1, "openidconnect", "https://onelogin.mine/", "bl")},
-					expMine:     acct(t, 123, extsvc.TypeGitLab, "https://gitlab.mine/", "101"),
-				},
-				{
-					description: "0 authn providers match",
-					user:        &types.User{ID: 123},
-					current:     []*extsvc.Account{acct(t, 1, "openidconnect", "https://onelogin.mine/", "nomatch")},
-					expMine:     nil,
-				},
-			},
-		},
 	}
 
 	for _, test := range tests {
 		test := test
 		t.Run(test.description, func(t *testing.T) {
-			providers.MockProviders = test.authnProviders
-			defer func() { providers.MockProviders = nil }()
-
 			ctx := context.Background()
 			authzProvider := newSudoProvider(test.op, nil)
 			for _, c := range test.calls {
 				t.Run(c.description, func(t *testing.T) {
-					acct, err := authzProvider.FetchAccount(ctx, c.user, c.current, nil)
+					acct, err := authzProvider.FetchAccount(ctx, c.user)
 					if err != nil {
 						t.Fatalf("unexpected error: %v", err)
 					}
@@ -258,55 +150,129 @@ func TestSudoProvider_FetchUserPerms(t *testing.T) {
 		}
 	})
 
-	// The OAuthProvider uses the gitlab.Client under the hood,
-	// which uses rcache, a caching layer that uses Redis.
-	// We need to clear the cache before we run the tests
-	rcache.SetupForTest(t)
+	t.Run("feature flag disabled", func(t *testing.T) {
+		// The OAuthProvider uses the gitlab.Client under the hood,
+		// which uses rcache, a caching layer that uses Redis.
+		// We need to clear the cache before we run the tests
+		rcache.SetupForTest(t)
 
-	p := newSudoProvider(
-		SudoProviderOp{
-			BaseURL:   mustURL(t, "https://gitlab.com"),
-			SudoToken: "admin_token",
-		},
-		&mockDoer{
-			do: func(r *http.Request) (*http.Response, error) {
-				visibility := r.URL.Query().Get("visibility")
-				if visibility != "private" && visibility != "internal" {
-					return nil, errors.Errorf("URL visibility: want private or internal, got %s", visibility)
-				}
-				want := fmt.Sprintf("https://gitlab.com/api/v4/projects?min_access_level=20&per_page=100&visibility=%s", visibility)
-				if r.URL.String() != want {
-					return nil, errors.Errorf("URL: want %q but got %q", want, r.URL)
-				}
-
-				want = "admin_token"
-				got := r.Header.Get("Private-Token")
-				if got != want {
-					return nil, errors.Errorf("HTTP Private-Token: want %q but got %q", want, got)
-				}
-
-				want = "999"
-				got = r.Header.Get("Sudo")
-				if got != want {
-					return nil, errors.Errorf("HTTP Sudo: want %q but got %q", want, got)
-				}
-
-				body := `[{"id": 1}, {"id": 2}]`
-				if visibility == "internal" {
-					body = `[{"id": 3}]`
-				}
-				return &http.Response{
-					Status:     http.StatusText(http.StatusOK),
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(bytes.NewReader([]byte(body))),
-				}, nil
+		p := newSudoProvider(
+			SudoProviderOp{
+				BaseURL:                     mustURL(t, "https://gitlab.com"),
+				SudoToken:                   "admin_token",
+				SyncInternalRepoPermissions: true,
 			},
-		},
-	)
+			&mockDoer{
+				do: func(r *http.Request) (*http.Response, error) {
+					visibility := r.URL.Query().Get("visibility")
+					if visibility != "private" && visibility != "internal" {
+						return nil, errors.Errorf("URL visibility: want private or internal, got %s", visibility)
+					}
+					want := fmt.Sprintf("https://gitlab.com/api/v4/projects?min_access_level=20&per_page=100&simple=true&visibility=%s", visibility)
+					if r.URL.String() != want {
+						return nil, errors.Errorf("URL: want %q but got %q", want, r.URL)
+					}
 
-	accountData := json.RawMessage(`{"id": 999}`)
-	repoIDs, err := p.FetchUserPerms(context.Background(),
-		&extsvc.Account{
+					want = "admin_token"
+					got := r.Header.Get("Private-Token")
+					if got != want {
+						return nil, errors.Errorf("HTTP Private-Token: want %q but got %q", want, got)
+					}
+
+					want = "999"
+					got = r.Header.Get("Sudo")
+					if got != want {
+						return nil, errors.Errorf("HTTP Sudo: want %q but got %q", want, got)
+					}
+
+					body := `[{"id": 1, "default_branch": "main"}, {"id": 2, "default_branch": "main"}]`
+					if visibility == "internal" {
+						body = `[{"id": 3, "default_branch": "main"}, {"id": 4}]`
+					}
+					return &http.Response{
+						Status:     http.StatusText(http.StatusOK),
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(bytes.NewReader([]byte(body))),
+					}, nil
+				},
+			},
+		)
+
+		accountData := json.RawMessage(`{"id": 999}`)
+		repoIDs, err := p.FetchUserPerms(context.Background(),
+			&extsvc.Account{
+				AccountSpec: extsvc.AccountSpec{
+					ServiceType: "gitlab",
+					ServiceID:   "https://gitlab.com/",
+				},
+				AccountData: extsvc.AccountData{
+					Data: extsvc.NewUnencryptedData(accountData),
+				},
+			},
+			authz.FetchPermsOptions{},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		expRepoIDs := []extsvc.RepoID{"1", "2", "3", "4"}
+		if diff := cmp.Diff(expRepoIDs, repoIDs.Exacts); diff != "" {
+			t.Fatal(diff)
+		}
+	})
+
+	t.Run("feature flag enabled", func(t *testing.T) {
+		// The OAuthProvider uses the gitlab.Client under the hood,
+		// which uses rcache, a caching layer that uses Redis.
+		// We need to clear the cache before we run the tests
+		rcache.SetupForTest(t)
+		ctx := context.Background()
+		flags := map[string]bool{"gitLabProjectVisibilityExperimental": true}
+		ctx = featureflag.WithFlags(ctx, featureflag.NewMemoryStore(flags, flags, flags))
+
+		p := newSudoProvider(
+			SudoProviderOp{
+				BaseURL:   mustURL(t, "https://gitlab.com"),
+				SudoToken: "admin_token",
+			},
+			&mockDoer{
+				do: func(r *http.Request) (*http.Response, error) {
+					visibility := r.URL.Query().Get("visibility")
+					if visibility != "private" && visibility != "internal" {
+						return nil, errors.Errorf("URL visibility: want private or internal, got %s", visibility)
+					}
+					want := fmt.Sprintf("https://gitlab.com/api/v4/projects?per_page=100&simple=true&visibility=%s", visibility)
+					if r.URL.String() != want {
+						return nil, errors.Errorf("URL: want %q but got %q", want, r.URL)
+					}
+
+					want = "admin_token"
+					got := r.Header.Get("Private-Token")
+					if got != want {
+						return nil, errors.Errorf("HTTP Private-Token: want %q but got %q", want, got)
+					}
+
+					want = "999"
+					got = r.Header.Get("Sudo")
+					if got != want {
+						return nil, errors.Errorf("HTTP Sudo: want %q but got %q", want, got)
+					}
+
+					body := `[{"id": 1, "default_branch": "main"}, {"id": 2, "default_branch": "main"}]`
+					if visibility == "internal" {
+						body = `[{"id": 3, "default_branch": "main"}, {"id": 4}]`
+					}
+					return &http.Response{
+						Status:     http.StatusText(http.StatusOK),
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(bytes.NewReader([]byte(body))),
+					}, nil
+				},
+			},
+		)
+
+		accountData := json.RawMessage(`{"id": 999}`)
+		acct := &extsvc.Account{
 			AccountSpec: extsvc.AccountSpec{
 				ServiceType: "gitlab",
 				ServiceID:   "https://gitlab.com/",
@@ -314,17 +280,36 @@ func TestSudoProvider_FetchUserPerms(t *testing.T) {
 			AccountData: extsvc.AccountData{
 				Data: extsvc.NewUnencryptedData(accountData),
 			},
-		},
-		authz.FetchPermsOptions{},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
+		}
+		repoIDs, err := p.FetchUserPerms(ctx,
+			acct,
+			authz.FetchPermsOptions{},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	expRepoIDs := []extsvc.RepoID{"1", "2", "3"}
-	if diff := cmp.Diff(expRepoIDs, repoIDs.Exacts); diff != "" {
-		t.Fatal(diff)
-	}
+		expRepoIDs := []extsvc.RepoID{"1", "2"}
+		if diff := cmp.Diff(expRepoIDs, repoIDs.Exacts); diff != "" {
+			t.Fatal(diff)
+		}
+
+		// Now sync internal repositories as well
+		p.syncInternalRepoPermissions = true
+
+		repoIDs, err = p.FetchUserPerms(ctx,
+			acct,
+			authz.FetchPermsOptions{},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		expRepoIDs = []extsvc.RepoID{"1", "2", "3"}
+		if diff := cmp.Diff(expRepoIDs, repoIDs.Exacts); diff != "" {
+			t.Fatal(diff)
+		}
+	})
 }
 
 func TestSudoProvider_FetchRepoPerms(t *testing.T) {

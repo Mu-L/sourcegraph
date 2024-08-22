@@ -2,13 +2,15 @@ package graphql
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
+	genslices "github.com/life4/genesis/slices"
+	"github.com/sourcegraph/scip/bindings/go/scip"
+
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/codenav"
+	"github.com/sourcegraph/sourcegraph/internal/codeintel/codenav/shared"
 	resolverstubs "github.com/sourcegraph/sourcegraph/internal/codeintel/resolvers"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 	"github.com/sourcegraph/sourcegraph/lib/pointers"
@@ -28,18 +30,15 @@ func (r *gitBlobLSIFDataResolver) References(ctx context.Context, args *resolver
 		return nil, err
 	}
 
-	requestArgs := codenav.PositionalRequestArgs{
-		RequestArgs: codenav.RequestArgs{
-			RepositoryID: r.requestState.RepositoryID,
-			Commit:       r.requestState.Commit,
-			Limit:        limit,
-			RawCursor:    rawCursor,
-		},
-		Path:      r.requestState.Path,
-		Line:      int(args.Line),
-		Character: int(args.Character),
+	requestArgs := codenav.OccurrenceRequestArgs{
+		RepositoryID: r.requestState.RepositoryID,
+		Commit:       r.requestState.Commit,
+		Path:         r.requestState.Path,
+		Limit:        limit,
+		RawCursor:    rawCursor,
+		Matcher:      shared.NewStartPositionMatcher(scip.Position{Line: args.Line, Character: args.Character}),
 	}
-	ctx, _, endObservation := observeResolver(ctx, &err, r.operations.references, time.Second, getObservationArgs(requestArgs))
+	ctx, _, endObservation := observeResolver(ctx, &err, r.operations.references, time.Second, getObservationArgs(&requestArgs))
 	defer endObservation()
 
 	// Decode cursor given from previous response or create a new one with default values.
@@ -47,7 +46,7 @@ func (r *gitBlobLSIFDataResolver) References(ctx context.Context, args *resolver
 	// is used to resolve each page. This cursor will be modified in-place to become the
 	// cursor used to fetch the subsequent page of results in this result set.
 	var nextCursor string
-	cursor, err := decodeReferencesCursor(requestArgs.RawCursor)
+	cursor, err := codenav.DecodeCursor(requestArgs.RawCursor)
 	if err != nil {
 		return nil, errors.Wrap(err, fmt.Sprintf("invalid cursor: %q", rawCursor))
 	}
@@ -58,44 +57,19 @@ func (r *gitBlobLSIFDataResolver) References(ctx context.Context, args *resolver
 	}
 
 	if refCursor.Phase != "done" {
-		nextCursor = encodeReferencesCursor(refCursor)
+		nextCursor = refCursor.Encode()
 	}
 
 	if args.Filter != nil && *args.Filter != "" {
 		filtered := refs[:0]
 		for _, loc := range refs {
-			if strings.Contains(loc.Path, *args.Filter) {
+			if strings.Contains(loc.Path.RawValue(), *args.Filter) {
 				filtered = append(filtered, loc)
 			}
 		}
 		refs = filtered
 	}
 
-	return newLocationConnectionResolver(refs, pointers.NonZeroPtr(nextCursor), r.locationResolver), nil
-}
-
-//
-//
-
-// decodeReferencesCursor is the inverse of encodeCursor. If the given encoded string is empty, then
-// a fresh cursor is returned.
-func decodeReferencesCursor(rawEncoded string) (codenav.ReferencesCursor, error) {
-	if rawEncoded == "" {
-		return codenav.ReferencesCursor{Phase: "local"}, nil
-	}
-
-	raw, err := base64.RawURLEncoding.DecodeString(rawEncoded)
-	if err != nil {
-		return codenav.ReferencesCursor{}, err
-	}
-
-	var cursor codenav.ReferencesCursor
-	err = json.Unmarshal(raw, &cursor)
-	return cursor, err
-}
-
-// encodeReferencesCursor returns an encoding of the given cursor suitable for a URL or a GraphQL token.
-func encodeReferencesCursor(cursor codenav.ReferencesCursor) string {
-	rawEncoded, _ := json.Marshal(cursor)
-	return base64.RawURLEncoding.EncodeToString(rawEncoded)
+	refLocs := genslices.Map(refs, shared.UploadUsage.ToLocation)
+	return newLocationConnectionResolver(refLocs, pointers.NonZeroPtr(nextCursor), r.locationResolver), nil
 }

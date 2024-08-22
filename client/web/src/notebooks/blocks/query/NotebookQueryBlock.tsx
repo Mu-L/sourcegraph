@@ -3,32 +3,26 @@ import React, { useState, useCallback, useMemo, useEffect } from 'react'
 import { EditorView } from '@codemirror/view'
 import { mdiPlayCircleOutline, mdiOpenInNew, mdiMagnify } from '@mdi/js'
 import classNames from 'classnames'
-import { Observable, of } from 'rxjs'
+import { type Observable, of } from 'rxjs'
 
-import {
-    StreamingSearchResultsList,
-    CodeMirrorQueryInput,
-    changeListener,
-    createDefaultSuggestions,
-} from '@sourcegraph/branded'
-import { FetchFileParameters } from '@sourcegraph/shared/src/backend/file'
+import { StreamingSearchResultsList, CodeMirrorQueryInput, createDefaultSuggestions } from '@sourcegraph/branded'
+import type { FetchFileParameters } from '@sourcegraph/shared/src/backend/file'
 import { editorHeight } from '@sourcegraph/shared/src/components/CodeMirrorEditor'
-import { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
-import { SearchContextProps } from '@sourcegraph/shared/src/search'
+import type { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
+import type { SearchContextProps } from '@sourcegraph/shared/src/search'
 import { fetchStreamSuggestions } from '@sourcegraph/shared/src/search/suggestions'
-import { SettingsCascadeProps, useExperimentalFeatures } from '@sourcegraph/shared/src/settings/settings'
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import type { SettingsCascadeProps } from '@sourcegraph/shared/src/settings/settings'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { buildSearchURLQuery } from '@sourcegraph/shared/src/util/url'
 import { LoadingSpinner, useObservable, Icon } from '@sourcegraph/wildcard'
 
-import { BlockProps, QueryBlock } from '../..'
-import { AuthenticatedUser } from '../../../auth'
+import type { BlockProps, QueryBlock } from '../..'
+import type { AuthenticatedUser } from '../../../auth'
 import { SearchPatternType } from '../../../graphql-operations'
-import { OwnConfigProps } from '../../../own/OwnConfigProps'
-import { submitSearch } from '../../../search/helpers'
-import { setSearchMode, useNavbarQueryState } from '../../../stores'
+import type { OwnConfigProps } from '../../../own/OwnConfigProps'
 import { blockKeymap, focusEditor as focusCodeMirrorInput } from '../../codemirror-utils'
-import { BlockMenuAction } from '../menu/NotebookBlockMenu'
+import type { BlockMenuAction } from '../menu/NotebookBlockMenu'
 import { useCommonBlockMenuActions } from '../menu/useCommonBlockMenuActions'
 import { NotebookBlock } from '../NotebookBlock'
 import { useModifierKeyLabel } from '../useModifierKeyLabel'
@@ -40,11 +34,13 @@ interface NotebookQueryBlockProps
         Pick<SearchContextProps, 'searchContextsEnabled'>,
         SettingsCascadeProps,
         TelemetryProps,
+        TelemetryV2Props,
         PlatformContextProps<'requestGraphQL' | 'urlToFile' | 'settings'>,
         OwnConfigProps {
     isSourcegraphDotCom: boolean
     fetchHighlightedFileLineRanges: (parameters: FetchFileParameters, force?: boolean) => Observable<string[][]>
     authenticatedUser: AuthenticatedUser | null
+    patternType: SearchPatternType
 }
 
 // Defines the max height for the CodeMirror editor
@@ -64,6 +60,7 @@ export const NotebookQueryBlock: React.FunctionComponent<React.PropsWithChildren
         input,
         output,
         telemetryService,
+        telemetryRecorder,
         settingsCascade,
         isSelected,
         onBlockInputChange,
@@ -72,17 +69,12 @@ export const NotebookQueryBlock: React.FunctionComponent<React.PropsWithChildren
         isSourcegraphDotCom,
         searchContextsEnabled,
         ownEnabled,
+        patternType,
         ...props
     }) => {
-        const [editor, setEditor] = useState<EditorView>()
+        const [editor, setEditor] = useState<EditorView | null>(null)
         const searchResults = useObservable(output ?? of(undefined))
         const [executedQuery, setExecutedQuery] = useState<string>(input.query)
-        const applySuggestionsOnEnter =
-            useExperimentalFeatures(features => features.applySearchQuerySuggestionOnEnter) ?? true
-
-        const caseSensitive = useNavbarQueryState(state => state.searchCaseSensitivity)
-        const searchMode = useNavbarQueryState(state => state.searchMode)
-        const submittedURLQuery = useNavbarQueryState(state => state.searchQueryFromURL)
 
         const onInputChange = useCallback(
             (query: string) => onBlockInputChange(id, { type: 'query', input: { query } }),
@@ -117,10 +109,10 @@ export const NotebookQueryBlock: React.FunctionComponent<React.PropsWithChildren
                     type: 'link',
                     label: 'Open in new tab',
                     icon: <Icon aria-hidden={true} svgPath={mdiOpenInNew} />,
-                    url: `/search?${buildSearchURLQuery(input.query, SearchPatternType.standard, false)}`,
+                    url: `/search?${buildSearchURLQuery(input.query, patternType, false)}`,
                 },
             ],
-            [input]
+            [input, patternType]
         )
 
         const commonMenuActions = linkMenuActions.concat(useCommonBlockMenuActions({ id, ...props }))
@@ -136,9 +128,8 @@ export const NotebookQueryBlock: React.FunctionComponent<React.PropsWithChildren
                 createDefaultSuggestions({
                     isSourcegraphDotCom,
                     fetchSuggestions: fetchStreamSuggestions,
-                    applyOnEnter: applySuggestionsOnEnter,
                 }),
-            [isSourcegraphDotCom, applySuggestionsOnEnter]
+            [isSourcegraphDotCom]
         )
 
         // Focus editor on component creation if necessary
@@ -170,20 +161,20 @@ export const NotebookQueryBlock: React.FunctionComponent<React.PropsWithChildren
                         />
                         <div className={styles.codeMirrorWrapper}>
                             <CodeMirrorQueryInput
+                                ref={setEditor}
                                 value={input.query}
-                                patternType={SearchPatternType.standard}
+                                patternType={patternType}
                                 interpretComments={true}
-                                onEditorCreated={setEditor}
-                                extensions={useMemo(
+                                onChange={onInputChange}
+                                multiLine={true}
+                                extension={useMemo(
                                     () => [
-                                        EditorView.lineWrapping,
                                         queryCompletion,
-                                        changeListener(onInputChange),
                                         blockKeymap({ runBlock }),
                                         maxEditorHeight,
                                         editorAttributes,
                                     ],
-                                    [queryCompletion, runBlock, onInputChange]
+                                    [queryCompletion, runBlock]
                                 )}
                             />
                         </div>
@@ -202,15 +193,12 @@ export const NotebookQueryBlock: React.FunctionComponent<React.PropsWithChildren
                                 results={searchResults}
                                 fetchHighlightedFileLineRanges={fetchHighlightedFileLineRanges}
                                 telemetryService={telemetryService}
+                                telemetryRecorder={telemetryRecorder}
                                 settingsCascade={settingsCascade}
                                 platformContext={props.platformContext}
                                 openMatchesInNewTab={true}
                                 executedQuery={executedQuery}
-                                searchMode={searchMode}
-                                setSearchMode={setSearchMode}
-                                submitSearch={submitSearch}
-                                caseSensitive={caseSensitive}
-                                searchQueryFromURL={submittedURLQuery}
+                                showQueryExamplesOnNoResultsPage={false}
                             />
                         </div>
                     )}

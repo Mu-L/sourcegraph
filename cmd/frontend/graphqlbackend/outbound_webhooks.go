@@ -4,16 +4,16 @@ import (
 	"context"
 	"sort"
 	"strconv"
+	"sync"
 
 	"github.com/graph-gophers/graphql-go"
 	"github.com/graph-gophers/graphql-go/relay"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/auth"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/encryption"
 	"github.com/sourcegraph/sourcegraph/internal/encryption/keyring"
-	"github.com/sourcegraph/sourcegraph/internal/syncx"
+	"github.com/sourcegraph/sourcegraph/internal/gqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 	"github.com/sourcegraph/sourcegraph/internal/webhooks/outbound"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
@@ -24,7 +24,7 @@ const outboundWebhookIDKind = "OutboundWebhook"
 type OutboundWebhookConnectionResolver interface {
 	Nodes() ([]OutboundWebhookResolver, error)
 	TotalCount() (int32, error)
-	PageInfo() (*graphqlutil.PageInfo, error)
+	PageInfo() (*gqlutil.PageInfo, error)
 }
 
 type OutboundWebhookEventTypeResolver interface {
@@ -137,7 +137,7 @@ func (r *schemaResolver) CreateOutboundWebhook(ctx context.Context, args CreateO
 	}
 
 	// Validate the URL
-	err = outbound.CheckAddress(args.Input.URL)
+	err = outbound.CheckURL(args.Input.URL)
 	if err != nil {
 		return nil, errors.Wrap(err, "invalid webhook address")
 	}
@@ -252,14 +252,14 @@ func newOutboundWebhookConnectionResolver(
 ) OutboundWebhookConnectionResolver {
 	limit := opts.Limit
 
-	nodes := syncx.OnceValues(func() ([]*types.OutboundWebhook, error) {
+	nodes := sync.OnceValues(func() ([]*types.OutboundWebhook, error) {
 		opts.Limit += 1
 		return store.List(ctx, opts)
 	})
 
 	return &outboundWebhookConnectionResolver{
 		nodes: nodes,
-		resolvers: syncx.OnceValues(func() ([]OutboundWebhookResolver, error) {
+		resolvers: sync.OnceValues(func() ([]OutboundWebhookResolver, error) {
 			webhooks, err := nodes()
 			if err != nil {
 				return nil, err
@@ -276,7 +276,7 @@ func newOutboundWebhookConnectionResolver(
 
 			return resolvers, nil
 		}),
-		totalCount: syncx.OnceValues(func() (int32, error) {
+		totalCount: sync.OnceValues(func() (int32, error) {
 			count, err := store.Count(ctx, opts.OutboundWebhookCountOpts)
 			return int32(count), err
 		}),
@@ -293,16 +293,16 @@ func (r *outboundWebhookConnectionResolver) TotalCount() (int32, error) {
 	return r.totalCount()
 }
 
-func (r *outboundWebhookConnectionResolver) PageInfo() (*graphqlutil.PageInfo, error) {
+func (r *outboundWebhookConnectionResolver) PageInfo() (*gqlutil.PageInfo, error) {
 	nodes, err := r.nodes()
 	if err != nil {
 		return nil, err
 	}
 
 	if len(nodes) > r.first {
-		return graphqlutil.NextPageCursor(strconv.Itoa(r.first + r.offset)), nil
+		return gqlutil.NextPageCursor(strconv.Itoa(r.first + r.offset)), nil
 	}
-	return graphqlutil.HasNextPage(false), nil
+	return gqlutil.HasNextPage(false), nil
 }
 
 type outboundWebhookEventTypeResolver struct {
@@ -327,7 +327,7 @@ func newOutboundWebhookResolverFromDatabase(ctx context.Context, store database.
 	return &outboundWebhookResolver{
 		store: store,
 		id:    marshalOutboundWebhookID(id),
-		webhook: syncx.OnceValues(func() (*types.OutboundWebhook, error) {
+		webhook: sync.OnceValues(func() (*types.OutboundWebhook, error) {
 			return store.GetByID(ctx, id)
 		}),
 	}

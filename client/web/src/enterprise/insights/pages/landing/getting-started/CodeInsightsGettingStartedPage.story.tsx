@@ -1,12 +1,13 @@
-import { MockedResponse } from '@apollo/client/testing'
-import { Meta } from '@storybook/react'
+import type { MockedResponse } from '@apollo/client/testing'
+import type { Meta } from '@storybook/react'
 
 import { getDocumentNode } from '@sourcegraph/http-client'
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { NOOP_TELEMETRY_SERVICE } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { MockedTestProvider } from '@sourcegraph/shared/src/testing/apollo'
 
 import { WebStory } from '../../../../../components/WebStory'
-import { GetExampleRepositoryResult } from '../../../../../graphql-operations'
+import type { GetExampleRepositoryResult } from '../../../../../graphql-operations'
 
 import { CodeInsightsGettingStartedPage } from './CodeInsightsGettingStartedPage'
 import { GET_EXAMPLE_REPOSITORY } from './components/dynamic-code-insight-example/DynamicCodeInsightExample'
@@ -44,6 +45,9 @@ const FirstExampleRepositoryMock: MockedResponse<GetExampleRepositoryResult> = {
 
 export const CodeInsightsGettingStartedPageStory = () => (
     <MockedTestProvider mocks={[FirstExampleRepositoryMock]}>
-        <CodeInsightsGettingStartedPage telemetryService={NOOP_TELEMETRY_SERVICE} />
+        <CodeInsightsGettingStartedPage
+            telemetryService={NOOP_TELEMETRY_SERVICE}
+            telemetryRecorder={noOpTelemetryRecorder}
+        />
     </MockedTestProvider>
 )

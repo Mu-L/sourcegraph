@@ -7,11 +7,14 @@ import (
 	"os"
 	"runtime"
 
-	"github.com/inconshreveable/log15"
+	"github.com/inconshreveable/log15" //nolint:logging // TODO move all logging to sourcegraph/log
 
 	"github.com/sourcegraph/sourcegraph/internal/errcode"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
+
+type HandlerWithErrorReturnFunc func(http.ResponseWriter, *http.Request) error
+type HandlerWithErrorMiddleware func(HandlerWithErrorReturnFunc) http.Handler
 
 // HandlerWithErrorReturn wraps a http.HandlerFunc-like func that also
 // returns an error.  If the error is nil, this wrapper is a no-op. If
@@ -23,7 +26,7 @@ import (
 // (for example, call out into an external code), then it must use recover
 // to catch potential panics. If Error panics, the panic will propagate upstream.
 type HandlerWithErrorReturn struct {
-	Handler func(http.ResponseWriter, *http.Request) error       // the underlying handler
+	Handler HandlerWithErrorReturnFunc                           // the underlying handler
 	Error   func(http.ResponseWriter, *http.Request, int, error) // called to send an error response (e.g., an error page), it must not panic
 
 	PretendPanic bool
@@ -50,7 +53,6 @@ func (h HandlerWithErrorReturn) ServeHTTP(w http.ResponseWriter, r *http.Request
 
 			err := errors.Errorf("panic: %v\n\nstack trace:\n%s", e, stack)
 			status := http.StatusInternalServerError
-			reportError(r, status, err, true)
 			h.Error(w, r, status, err) // No need to handle a possible panic in h.Error because it's required not to panic.
 		}
 	}()
@@ -58,7 +60,6 @@ func (h HandlerWithErrorReturn) ServeHTTP(w http.ResponseWriter, r *http.Request
 	err := h.Handler(w, r)
 	if err != nil {
 		status := httpErrCode(r, err)
-		reportError(r, status, err, false)
 		h.Error(w, r, status, err)
 	}
 }

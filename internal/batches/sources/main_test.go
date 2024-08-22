@@ -12,7 +12,7 @@ import (
 	"github.com/dnaeon/go-vcr/cassette"
 	"github.com/dnaeon/go-vcr/recorder"
 	"github.com/grafana/regexp"
-	"github.com/inconshreveable/log15"
+	"github.com/inconshreveable/log15" //nolint:logging // TODO move all logging to sourcegraph/log
 
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
 	"github.com/sourcegraph/sourcegraph/internal/httpcli"
@@ -39,7 +39,7 @@ func TestMain(m *testing.M) {
 func newClientFactory(t testing.TB, name string) (*httpcli.Factory, func(testing.TB)) {
 	cassete := filepath.Join("testdata", "sources", strings.ReplaceAll(name, " ", "-"))
 	rec := newRecorder(t, cassete, update(name))
-	mw := httpcli.NewMiddleware(httpcli.GitHubProxyRedirectMiddleware, gitserverRedirectMiddleware)
+	mw := httpcli.NewMiddleware(gitserverRedirectMiddleware)
 	return httpcli.NewFactory(mw, httptestutil.NewRecorderOpt(rec)),
 		func(t testing.TB) { save(t, rec) }
 }

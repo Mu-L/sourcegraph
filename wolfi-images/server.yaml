@@ -1,6 +1,10 @@
-include: ./sourcegraph-base.yaml
+include: ./sourcegraph-template.yaml
 
 contents:
+  keyring:
+  - https://packages.sgdev.org/chainguard/chainguard-enterprise.rsa.pub
+  repositories:
+  - '@chainguard https://packages.sgdev.org/chainguard'
   packages:
     # Included by existing SG base image
     - tini
@@ -21,14 +25,16 @@ contents:
     - pcre
     - posix-libc-utils # Adds locale, used by server postgres init scripts
     - postgresql-12
+    - postgresql-12-client
     - postgresql-12-contrib
-    - prometheus-postgres-exporter=0.13.1-r0 # IMPORTANT: Pinned version for managed updates
+    - prometheus-postgres-exporter
     - prometheus-alertmanager
     - python3
     - posix-libc-utils # Locales
     - prometheus
     - prometheus-alertmanager
     - redis-6.2
+    - redis-cli-6.2
     - sqlite-libs
     - su-exec
 
@@ -36,9 +42,9 @@ contents:
     - ctags@sourcegraph
     - coursier@sourcegraph
     - p4cli@sourcegraph
-    - p4-fusion@sourcegraph
+    - p4-fusion-sg@sourcegraph
     - s3proxy@sourcegraph
-    - grafana@chainguard
+    - grafana-7@chainguard
 
 accounts:
   groups:
@@ -80,5 +86,3 @@ paths:
   - path: /sg_grafana_additional_dashboards
     type: directory
     permissions: 0o755
-
-# MANUAL REBUILD: Fri Jun 23 10:31:13 BST 2023

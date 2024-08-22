@@ -15,11 +15,12 @@ import {
     jsonHighlighting,
     useCodeMirror,
 } from '@sourcegraph/shared/src/components/CodeMirrorEditor'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import { EVENT_LOGGER } from '@sourcegraph/shared/src/telemetry/web/eventLogger'
 import { useIsLightTheme } from '@sourcegraph/shared/src/theme'
 import { Container, H3, Link, LoadingSpinner, PageHeader, Text, useObservable } from '@sourcegraph/wildcard'
 
 import { PageTitle } from '../components/PageTitle'
-import { eventLogger } from '../tracking/eventLogger'
 
 // This seems to be necessary to have properly rounded corners on
 // the right side.
@@ -30,19 +31,20 @@ const theme = EditorView.theme({
     },
 })
 
-interface Props {}
+interface Props extends TelemetryV2Props {}
 
 /**
  * A page displaying information about telemetry pings for the site.
  */
-export const SiteAdminPingsPage: React.FunctionComponent<React.PropsWithChildren<Props>> = () => {
+export const SiteAdminPingsPage: React.FunctionComponent<React.PropsWithChildren<Props>> = ({ telemetryRecorder }) => {
     const isLightTheme = useIsLightTheme()
     const latestPing = useObservable(
         useMemo(() => fromFetch<{}>('/site-admin/pings/latest', { selector: response => checkOk(response).json() }), [])
     )
     useEffect(() => {
-        eventLogger.logViewEvent('SiteAdminPings')
-    }, [])
+        EVENT_LOGGER.logViewEvent('SiteAdminPings')
+        telemetryRecorder.recordEvent('admin.pings', 'view')
+    }, [telemetryRecorder])
 
     const updatesDisabled = window.context.site['update.channel'] !== 'release'
     const jsonEditorContainerRef = useRef<HTMLDivElement | null>(null)
@@ -106,6 +108,8 @@ export const SiteAdminPingsPage: React.FunctionComponent<React.PropsWithChildren
                         The email address of the initial site installer (or if deleted, the first active site admin), to
                         know who to contact regarding sales, product updates, security updates, and policy updates
                     </li>
+                    <li>The external URL of the instance (e.g. "https://sourcegraph.example.com")</li>
+                    <li>The IP address of the instance (e.g. "172.xx.xx.xx")</li>
                     <li>Sourcegraph version string (e.g. "vX.X.X")</li>
                     <li>Dependency versions (e.g. "6.0.9" for Redis, or "13.0" for Postgres)</li>
                     <li>
@@ -361,33 +365,35 @@ export const SiteAdminPingsPage: React.FunctionComponent<React.PropsWithChildren
                     <li>
                         IDE extensions data
                         <ul>
-                            Aggregate counts of current daily, weekly, and monthly searches performed:
                             <li>
-                                <ul>Count of unique users who performed searches</ul>
-                                <ul>Count of total searches performed</ul>
+                                Aggregate counts of current daily, weekly, and monthly searches performed:
+                                <ul>
+                                    <li>Count of unique users who performed searches</li>
+                                    <li>Count of total searches performed</li>
+                                </ul>
                             </li>
                         </ul>
                         <ul>
-                            Aggregate counts of daily user state:
-                            <li>
-                                <ul>Count of unique users who installed the extension</ul>
-                                <ul>Count of unique users who uninstalled the extension</ul>
-                            </li>
+                            <li>Aggregate counts of daily user state:</li>
+                            <ul>
+                                <li>Count of unique users who installed the extension</li>
+                                <li>Count of unique users who uninstalled the extension</li>
+                            </ul>
+                            <li>Aggregate count of daily redirects from extension to Sourcegraph instance</li>
                         </ul>
-                        <ul>Aggregate count of daily redirects from extension to Sourcegraph instance</ul>
                     </li>
                     <li>
                         Migrated extensions data
                         <ul>
-                            Aggregate data of:
-                            <li>
-                                <ul>Count interactions with the Git blame feature</ul>
-                                <ul>Count of unique users who interacted with the Git blame feature</ul>
-                                <ul>Count interactions with the open in editor feature</ul>
-                                <ul>Count of unique users who interacted with the open in editor feature</ul>
-                                <ul>Count interactions with the search exports feature</ul>
-                                <ul>Count of unique users who interacted with the search exports feature</ul>
-                            </li>
+                            <li>Aggregate data of:</li>
+                            <ul>
+                                <li>Count interactions with the Git blame feature</li>
+                                <li>Count of unique users who interacted with the Git blame feature</li>
+                                <li>Count interactions with the open in editor feature</li>
+                                <li>Count of unique users who interacted with the open in editor feature</li>
+                                <li>Count interactions with the search exports feature</li>
+                                <li>Count of unique users who interacted with the search exports feature</li>
+                            </ul>
                         </ul>
                     </li>
                     <li>
@@ -408,6 +414,24 @@ export const SiteAdminPingsPage: React.FunctionComponent<React.PropsWithChildren
                     </li>
                     <li>Histogram of cloned repository sizes</li>
                     <li>Aggregate daily, weekly, monthly repository metadata usage statistics</li>
+                    <li>
+                        Cody providers data
+                        <ul>
+                            <li>
+                                Completions
+                                <ul>
+                                    <li>
+                                        Provider (e.g., "sourcegraph", "anthropic", "openai", "azure-openai",
+                                        "fireworks", "aws-bedrock", "google", etc.)
+                                    </li>
+                                    <li>Chat model (included only for "sourcegraph" provider)</li>
+                                    <li>Fast chat model (included only for "sourcegraph" provider)</li>
+                                    <li>Completion model (included only for "sourcegraph" provider)</li>
+                                </ul>
+                            </li>
+                        </ul>
+                    </li>
+                    <li>Whether Cody context filters are configured in the site config (true/false)</li>
                 </ul>
                 {updatesDisabled && <Text>All telemetry is disabled.</Text>}
             </Container>

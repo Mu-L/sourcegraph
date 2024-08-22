@@ -3,6 +3,7 @@ package background
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"time"
 
 	"github.com/keegancsmith/sqlf"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/sourcegraph/sourcegraph/internal/actor"
 	"github.com/sourcegraph/sourcegraph/internal/codemonitors"
+	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/database/basestore"
 	"github.com/sourcegraph/sourcegraph/internal/featureflag"
@@ -31,7 +33,7 @@ func newTriggerQueryRunner(ctx context.Context, observationCtx *observation.Cont
 	options := workerutil.WorkerOptions{
 		Name:                 "code_monitors_trigger_jobs_worker",
 		Description:          "runs trigger queries for code monitors",
-		NumHandlers:          4,
+		NumHandlers:          conf.CodeMonitors().Concurrency,
 		Interval:             5 * time.Second,
 		HeartbeatInterval:    15 * time.Second,
 		Metrics:              metrics.workerMetrics,
@@ -40,7 +42,7 @@ func newTriggerQueryRunner(ctx context.Context, observationCtx *observation.Cont
 
 	store := createDBWorkerStoreForTriggerJobs(observationCtx, db)
 
-	worker := dbworker.NewWorker[*database.TriggerJob](ctx, store, &queryRunner{db: db}, options)
+	worker := dbworker.NewWorker(ctx, store, &queryRunner{db: db}, options)
 	return worker
 }
 
@@ -101,7 +103,7 @@ func newActionRunner(ctx context.Context, observationCtx *observation.Context, s
 
 	store := createDBWorkerStoreForActionJobs(observationCtx, s)
 
-	worker := dbworker.NewWorker[*database.ActionJob](ctx, store, &actionRunner{s}, options)
+	worker := dbworker.NewWorker(ctx, store, &actionRunner{s}, options)
 	return worker
 }
 
@@ -121,7 +123,7 @@ func newActionJobResetter(_ context.Context, observationCtx *observation.Context
 }
 
 func createDBWorkerStoreForTriggerJobs(observationCtx *observation.Context, s basestore.ShareableStore) dbworkerstore.Store[*database.TriggerJob] {
-	observationCtx = observation.ContextWithLogger(observationCtx.Logger.Scoped("triggerJobs.dbworker.Store", ""), observationCtx)
+	observationCtx = observation.ContextWithLogger(observationCtx.Logger.Scoped("triggerJobs.dbworker.Store"), observationCtx)
 
 	return dbworkerstore.New(observationCtx, s.Handle(), dbworkerstore.Options[*database.TriggerJob]{
 		Name:              "code_monitors_trigger_jobs_worker_store",
@@ -136,7 +138,7 @@ func createDBWorkerStoreForTriggerJobs(observationCtx *observation.Context, s ba
 }
 
 func createDBWorkerStoreForActionJobs(observationCtx *observation.Context, s database.CodeMonitorStore) dbworkerstore.Store[*database.ActionJob] {
-	observationCtx = observation.ContextWithLogger(observationCtx.Logger.Scoped("actionJobs.dbworker.Store", ""), observationCtx)
+	observationCtx = observation.ContextWithLogger(observationCtx.Logger.Scoped("actionJobs.dbworker.Store"), observationCtx)
 
 	return dbworkerstore.New(observationCtx, s.Handle(), dbworkerstore.Options[*database.ActionJob]{
 		Name:              "code_monitors_action_jobs_worker_store",
@@ -179,11 +181,11 @@ func (r *queryRunner) Handle(ctx context.Context, logger log.Logger, triggerJob 
 	ctx = actor.WithActor(ctx, actor.FromUser(m.UserID))
 	ctx = featureflag.WithFlags(ctx, r.db.FeatureFlags())
 
-	results, searchErr := codemonitors.Search(ctx, logger, r.db, q.QueryString, m.ID)
+	results, searchErr := codemonitors.Search(ctx, logger, r.db, q.QueryString, m.ID, triggerJob.ID)
 
 	// Log next_run and latest_result to table cm_queries.
 	newLatestResult := latestResultTime(q.LatestResult, results, searchErr)
-	err = cm.SetQueryTriggerNextRun(ctx, q.ID, cm.Clock()().Add(5*time.Minute), newLatestResult.UTC())
+	err = cm.SetQueryTriggerNextRun(ctx, q.ID, cm.Clock()().Add(conf.CodeMonitors().PollInterval), newLatestResult.UTC())
 	if err != nil {
 		return err
 	}
@@ -214,19 +216,13 @@ type actionRunner struct {
 
 func (r *actionRunner) Handle(ctx context.Context, logger log.Logger, j *database.ActionJob) (err error) {
 	logger.Info("actionRunner.Handle starting")
-	defer func() {
-		if err != nil {
-			logger.Error("actionRunner.Handle", log.Error(err))
-		}
-	}()
-
 	switch {
 	case j.Email != nil:
-		return r.handleEmail(ctx, j)
+		return errors.Wrap(r.handleEmail(ctx, j), "Email")
 	case j.Webhook != nil:
-		return r.handleWebhook(ctx, j)
+		return errors.Wrap(r.handleWebhook(ctx, j), "Webhook")
 	case j.SlackWebhook != nil:
-		return r.handleSlackWebhook(ctx, j)
+		return errors.Wrap(r.handleSlackWebhook(ctx, j), "SlackWebhook")
 	default:
 		return errors.New("job must be one of type email, webhook, or slack webhook")
 	}
@@ -254,7 +250,7 @@ func (r *actionRunner) handleEmail(ctx context.Context, j *database.ActionJob) e
 		return errors.Wrap(err, "ListRecipients")
 	}
 
-	externalURL, err := getExternalURL(ctx)
+	externalURL, err := url.Parse(conf.Get().ExternalURL)
 	if err != nil {
 		return err
 	}
@@ -282,7 +278,7 @@ func (r *actionRunner) handleEmail(ctx context.Context, j *database.ActionJob) e
 		if rec.NamespaceUserID == nil {
 			return errors.New("nil recipient")
 		}
-		err = SendEmailForNewSearchResult(ctx, database.NewDBWith(log.Scoped("handleEmail", ""), r.CodeMonitorStore), *rec.NamespaceUserID, data)
+		err = SendEmailForNewSearchResult(ctx, database.NewDBWith(log.Scoped("handleEmail"), r.CodeMonitorStore), *rec.NamespaceUserID, data)
 		if err != nil {
 			return err
 		}
@@ -307,7 +303,7 @@ func (r *actionRunner) handleWebhook(ctx context.Context, j *database.ActionJob)
 		return errors.Wrap(err, "GetWebhookAction")
 	}
 
-	externalURL, err := getExternalURL(ctx)
+	externalURL, err := url.Parse(conf.Get().ExternalURL)
 	if err != nil {
 		return err
 	}
@@ -343,7 +339,7 @@ func (r *actionRunner) handleSlackWebhook(ctx context.Context, j *database.Actio
 		return errors.Wrap(err, "GetSlackWebhookAction")
 	}
 
-	externalURL, err := getExternalURL(ctx)
+	externalURL, err := url.Parse(conf.Get().ExternalURL)
 	if err != nil {
 		return err
 	}

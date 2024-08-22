@@ -10,12 +10,13 @@ import { useDeepCompareEffectNoCheck } from 'use-deep-compare-effect'
 
 import { wrapRemoteObservable } from '@sourcegraph/shared/src/api/client/api/common'
 import { ShortcutProvider } from '@sourcegraph/shared/src/react-shortcuts'
-import { Filter } from '@sourcegraph/shared/src/search/stream'
+import type { Filter } from '@sourcegraph/shared/src/search/stream'
 import { AnchorLink, setLinkComponent, useObservable, WildcardThemeContext } from '@sourcegraph/wildcard'
 
-import { ExtensionCoreAPI } from '../../../contract'
+import type { ExtensionCoreAPI } from '../../../contract'
+import type { VsCodeApi } from '../../../vsCodeApi'
 import { createEndpointsForWebToNode } from '../../comlink/webviewEndpoint'
-import { createPlatformContext, WebviewPageProps } from '../../platform/context'
+import { createPlatformContext, type WebviewPageProps } from '../../platform/context'
 import { adaptSourcegraphThemeToEditorTheme } from '../../theming/sourcegraphTheme'
 import { AuthSidebarCta, AuthSidebarView } from '../auth/AuthSidebarView'
 import { HistoryHomeSidebar } from '../history/HistorySidebarView'
@@ -24,7 +25,9 @@ import { createSearchSidebarAPI } from './api'
 import { ContextInvalidatedSidebarView } from './ContextInvalidatedSidebarView'
 import { SearchSidebarView } from './SearchSidebarView'
 
-const vsCodeApi = window.acquireVsCodeApi()
+declare const acquireVsCodeApi: () => VsCodeApi
+
+const vsCodeApi = acquireVsCodeApi()
 
 const { proxy, expose } = createEndpointsForWebToNode(vsCodeApi)
 

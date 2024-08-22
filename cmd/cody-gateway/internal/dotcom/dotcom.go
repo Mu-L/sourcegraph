@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/Khan/genqlient/graphql"
+	"github.com/sourcegraph/sourcegraph/internal/version"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -25,14 +26,20 @@ import (
 //	println(resp.GetDotcom().ProductSubscriptionByAccessToken.LlmProxyAccess.Enabled)
 //
 // The client generator automatically ensures we're up-to-date with the GraphQL schema.
-func NewClient(endpoint, token string) graphql.Client {
+func NewClient(endpoint, token, clientID, env string) graphql.Client {
 	return &tracedClient{graphql.NewClient(endpoint, &http.Client{
 		Transport: &tokenAuthTransport{
-			token:   token,
-			wrapped: http.DefaultTransport,
+			token:       token,
+			wrapped:     http.DefaultTransport,
+			clientID:    clientID,
+			environment: env,
 		},
 	})}
 }
+
+type contextKey int
+
+const contextKeyOp contextKey = iota
 
 // tracedClient instruments graphql.Client with OpenTelemetry tracing.
 type tracedClient struct{ c graphql.Client }
@@ -47,6 +54,8 @@ func (tc *tracedClient) MakeRequest(
 	// Start a span
 	ctx, span := tracer.Start(ctx, fmt.Sprintf("GraphQL: %s", req.OpName),
 		trace.WithAttributes(attribute.String("query", req.Query)))
+
+	ctx = context.WithValue(ctx, contextKeyOp, req.OpName)
 
 	// Do the request
 	err := tc.c.MakeRequest(ctx, req, resp)
@@ -63,13 +72,25 @@ func (tc *tracedClient) MakeRequest(
 	return err
 }
 
-// tokenAuthTransport adds token header authentication to requests.
+// tokenAuthTransport adds token header authentication to requests and sets headers used to help identify Cody Gateway
+// in Cloudflare / sourcegraph.com
 type tokenAuthTransport struct {
-	token   string
-	wrapped http.RoundTripper
+	token       string
+	clientID    string
+	environment string
+	wrapped     http.RoundTripper
 }
 
 func (t *tokenAuthTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// HACK: We use the query to denote the type of a GraphQL request,
+	// e.g. /.api/graphql?Repositories, which in our case is basically the
+	// operation name.
+	req.URL.RawQuery = req.Context().Value(contextKeyOp).(string)
+
 	req.Header.Set("Authorization", fmt.Sprintf("token %s", t.token))
+	if t.clientID != "" {
+		req.Header.Set("X-Sourcegraph-Client-ID", t.clientID)
+	}
+	req.Header.Set("User-Agent", fmt.Sprintf("Cody-Gateway/%s %s", t.environment, version.Version()))
 	return t.wrapped.RoundTrip(req)
 }

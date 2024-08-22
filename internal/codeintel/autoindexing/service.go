@@ -8,7 +8,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/sourcegraph/sourcegraph/internal/api"
-	"github.com/sourcegraph/sourcegraph/internal/authz"
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/autoindexing/internal/enqueuer"
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/autoindexing/internal/inference"
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/autoindexing/internal/jobselector"
@@ -18,6 +17,7 @@ import (
 	uploadsshared "github.com/sourcegraph/sourcegraph/internal/codeintel/uploads/shared"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
+	"github.com/sourcegraph/sourcegraph/internal/gitserver/gitdomain"
 	"github.com/sourcegraph/sourcegraph/internal/observation"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
@@ -35,7 +35,6 @@ func newService(
 	observationCtx *observation.Context,
 	store store.Store,
 	inferenceSvc InferenceService,
-	repoUpdater RepoUpdaterClient,
 	repoStore database.RepoStore,
 	gitserverClient gitserver.Client,
 ) *Service {
@@ -51,13 +50,12 @@ func newService(
 		repoStore,
 		inferenceSvc,
 		gitserverClient,
-		log.Scoped("autoindexing job selector", ""),
+		log.Scoped("autoindexing job selector"),
 	)
 
 	indexEnqueuer := enqueuer.NewIndexEnqueuer(
 		observationCtx,
 		store,
-		repoUpdater,
 		repoStore,
 		gitserverClient,
 		jobSelector,
@@ -91,19 +89,23 @@ func (s *Service) InferIndexConfiguration(ctx context.Context, repositoryID int,
 	}
 
 	if commit == "" {
-		var ok bool
-		commit, ok, err = s.gitserverClient.Head(ctx, authz.DefaultSubRepoPermsChecker, repo.Name)
-		if err != nil || !ok {
-			return nil, errors.Wrapf(err, "gitserver.Head: error resolving HEAD for %d", repositoryID)
+		_, commitSHA, err := s.gitserverClient.GetDefaultBranch(ctx, repo.Name, false)
+		if err != nil {
+			return nil, errors.Wrapf(err, "gitserver.GetDefaultBranch: error resolving HEAD for %d", repositoryID)
 		}
+		// If we're dealing with an empty repo, we can't infer anything.
+		if commitSHA == "" {
+			return nil, nil
+		}
+		commit = string(commitSHA)
 	} else {
-		exists, err := s.gitserverClient.CommitExists(ctx, authz.DefaultSubRepoPermsChecker, repo.Name, api.CommitID(commit))
+		// Verify that the commit exists.
+		_, err := s.gitserverClient.GetCommit(ctx, repo.Name, api.CommitID(commit))
+		if errors.HasType[*gitdomain.RevisionNotFoundError](err) {
+			return nil, errors.Newf("revision %s not found for %d", commit, repositoryID)
+		}
 		if err != nil {
 			return nil, errors.Wrapf(err, "gitserver.CommitExists: error checking %s for %d", commit, repositoryID)
-		}
-
-		if !exists {
-			return nil, errors.Newf("revision %s not found for %d", commit, repositoryID)
 		}
 	}
 	trace.AddEvent("found", attribute.String("commit", commit))
@@ -127,12 +129,12 @@ func (s *Service) GetInferenceScript(ctx context.Context) (string, error) {
 	return s.store.GetInferenceScript(ctx)
 }
 
-func (s *Service) QueueIndexes(ctx context.Context, repositoryID int, rev, configuration string, force, bypassLimit bool) ([]uploadsshared.Index, error) {
-	return s.indexEnqueuer.QueueIndexes(ctx, repositoryID, rev, configuration, force, bypassLimit)
+func (s *Service) QueueAutoIndexJobs(ctx context.Context, repositoryID int, rev, configuration string, force, bypassLimit bool) ([]uploadsshared.AutoIndexJob, error) {
+	return s.indexEnqueuer.QueueAutoIndexJobs(ctx, repositoryID, rev, configuration, force, bypassLimit)
 }
 
-func (s *Service) QueueIndexesForPackage(ctx context.Context, pkg dependencies.MinimialVersionedPackageRepo, assumeSynced bool) error {
-	return s.indexEnqueuer.QueueIndexesForPackage(ctx, pkg, assumeSynced)
+func (s *Service) QueueAutoIndexJobsForPackage(ctx context.Context, pkg dependencies.MinimialVersionedPackageRepo) error {
+	return s.indexEnqueuer.QueueAutoIndexJobsForPackage(ctx, pkg)
 }
 
 func (s *Service) InferIndexJobsFromRepositoryStructure(ctx context.Context, repositoryID int, commit string, localOverrideScript string, bypassLimit bool) (*shared.InferenceResult, error) {
@@ -141,10 +143,6 @@ func (s *Service) InferIndexJobsFromRepositoryStructure(ctx context.Context, rep
 
 func IsLimitError(err error) bool {
 	return errors.As(err, &inference.LimitError{})
-}
-
-func (s *Service) GetRepositoriesForIndexScan(ctx context.Context, processDelay time.Duration, allowGlobalPolicies bool, repositoryMatchLimit *int, limit int, now time.Time) ([]int, error) {
-	return s.store.GetRepositoriesForIndexScan(ctx, processDelay, allowGlobalPolicies, repositoryMatchLimit, limit, now)
 }
 
 func (s *Service) RepositoryIDsWithConfiguration(ctx context.Context, offset, limit int) ([]uploadsshared.RepositoryWithAvailableIndexers, int, error) {

@@ -9,6 +9,7 @@ go_library(
         "select_job.go",
     ],
     importpath = "github.com/sourcegraph/sourcegraph/internal/own/search",
+    tags = [TAG_SEARCHSUITE],
     visibility = ["//:__subpackages__"],
     deps = [
         "//internal/api",
@@ -35,10 +36,11 @@ go_test(
         "select_job_test.go",
     ],
     embed = [":search"],
+    tags = [TAG_SEARCHSUITE],
     deps = [
         "//internal/api",
-        "//internal/authz",
         "//internal/database",
+        "//internal/database/dbmocks",
         "//internal/gitserver",
         "//internal/own",
         "//internal/search",

@@ -2,13 +2,12 @@ import React from 'react'
 
 import { startCase } from 'lodash'
 
-import 'storybook-addon-designs'
+import '@storybook/addon-designs'
 
-import { logger } from '@sourcegraph/common'
-
+import { logger } from '../../../utils'
 import { Icon } from '../../Icon'
-import { Button, ButtonProps } from '../Button'
-import { BUTTON_VARIANTS } from '../constants'
+import { Button, type ButtonProps } from '../Button'
+import type { BUTTON_VARIANTS } from '../constants'
 
 import styles from './ButtonVariants.module.scss'
 

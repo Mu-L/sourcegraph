@@ -6,7 +6,6 @@ go_library(
     srcs = [
         "buf.go",
         "client.go",
-        "enterprise.go",
         "go_checks.go",
         "godirective.go",
         "gogenerate.go",
@@ -17,10 +16,10 @@ go_library(
         "prettier.go",
         "runner.go",
         "shell.go",
-        "svg.go",
         "usage_linter.go",
     ],
     importpath = "github.com/sourcegraph/sourcegraph/dev/sg/linters",
+    tags = [TAG_INFRA_DEVINFRA],
     visibility = ["//visibility:public"],
     deps = [
         "//dev/sg/buf",
@@ -48,6 +47,7 @@ go_test(
         "gomod_test.go",
     ],
     embed = [":linters"],
+    tags = [TAG_INFRA_DEVINFRA],
     deps = [
         "//dev/sg/internal/repo",
         "//dev/sg/internal/std",

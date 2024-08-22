@@ -12,25 +12,24 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/sourcegraph/sourcegraph/cmd/cody-gateway/internal/actor"
-	"github.com/sourcegraph/sourcegraph/cmd/cody-gateway/internal/auth"
 	"github.com/sourcegraph/sourcegraph/cmd/cody-gateway/internal/httpapi/requestlogger"
 	"github.com/sourcegraph/sourcegraph/cmd/cody-gateway/internal/response"
+	"github.com/sourcegraph/sourcegraph/internal/authbearer"
 	"github.com/sourcegraph/sourcegraph/internal/instrumentation"
 	"github.com/sourcegraph/sourcegraph/internal/redispool"
 	sgtrace "github.com/sourcegraph/sourcegraph/internal/trace"
 	"github.com/sourcegraph/sourcegraph/internal/version"
-	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
 
 // NewDiagnosticsHandler creates a handler for diagnostic endpoints typically served
 // on "/-/..." paths. It should be placed before any authentication middleware, since
 // we do a simple auth on a static secret instead that is uniquely generated per
 // deployment.
-func NewDiagnosticsHandler(baseLogger log.Logger, next http.Handler, secret string, sources *actor.Sources) http.Handler {
-	baseLogger = baseLogger.Scoped("diagnostics", "healthz checks")
+func NewDiagnosticsHandler(baseLogger log.Logger, next http.Handler, redisCache redispool.KeyValue, secret string, sources *actor.Sources) http.Handler {
+	baseLogger = baseLogger.Scoped("diagnostics")
 
 	hasValidSecret := func(l log.Logger, w http.ResponseWriter, r *http.Request) (yes bool) {
-		token, err := auth.ExtractBearer(r.Header)
+		token, err := authbearer.ExtractBearer(r.Header)
 		if err != nil {
 			response.JSONError(l, w, http.StatusBadRequest, err)
 			return false
@@ -58,7 +57,7 @@ func NewDiagnosticsHandler(baseLogger log.Logger, next http.Handler, secret stri
 				return
 			}
 
-			if err := healthz(r.Context()); err != nil {
+			if err := healthz(r.Context(), redisCache); err != nil {
 				logger.Error("check failed", log.Error(err))
 
 				w.WriteHeader(http.StatusInternalServerError)
@@ -110,25 +109,6 @@ func NewDiagnosticsHandler(baseLogger log.Logger, next http.Handler, secret stri
 	})
 }
 
-func healthz(ctx context.Context) error {
-	// Check redis health
-	rpool, ok := redispool.Cache.Pool()
-	if !ok {
-		return errors.New("redis: not available")
-	}
-	rconn, err := rpool.GetContext(ctx)
-	if err != nil {
-		return errors.Wrap(err, "redis: failed to get conn")
-	}
-	defer rconn.Close()
-
-	data, err := rconn.Do("PING")
-	if err != nil {
-		return errors.Wrap(err, "redis: failed to ping")
-	}
-	if data != "PONG" {
-		return errors.New("redis: failed to ping: no pong received")
-	}
-
-	return nil
+func healthz(ctx context.Context, cache redispool.KeyValue) error {
+	return cache.WithContext(ctx).Ping()
 }

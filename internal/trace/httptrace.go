@@ -17,7 +17,6 @@ import (
 
 	"github.com/sourcegraph/log"
 
-	"github.com/sourcegraph/sourcegraph/internal/conf/conftypes"
 	"github.com/sourcegraph/sourcegraph/internal/env"
 	"github.com/sourcegraph/sourcegraph/internal/trace/policy"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
@@ -108,8 +107,8 @@ var (
 //
 // 🚨 SECURITY: This handler is served to all clients, even on private servers to clients who have
 // not authenticated. It must not reveal any sensitive information.
-func HTTPMiddleware(l log.Logger, next http.Handler, siteConfig conftypes.SiteConfigQuerier) http.Handler {
-	l = l.Scoped("http", "http tracing middleware")
+func HTTPMiddleware(l log.Logger, next http.Handler) http.Handler {
+	l = l.Scoped("http")
 	return loggingRecoverer(l, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 
@@ -125,7 +124,7 @@ func HTTPMiddleware(l log.Logger, next http.Handler, siteConfig conftypes.SiteCo
 			// We set X-Trace-URL to a configured URL template for traces.
 			// X-Trace for the trace ID is set in instrumentation.HTTPMiddleware,
 			// which is a more bare-bones OpenTelemetry handler.
-			traceURL = URL(trace.TraceID, siteConfig)
+			traceURL = URL(trace.TraceID)
 			rw.Header().Set("X-Trace-URL", traceURL)
 			logger = logger.WithTrace(trace)
 		}
@@ -296,7 +295,8 @@ func User(ctx context.Context, userID int32) {
 
 // SetRequestErrorCause will set the error for the request to err. This is
 // used in the reporting layer to inspect the error for richer reporting to
-// Sentry.
+// Sentry. The error gets logged by internal/trace.HTTPMiddleware, so there
+// is no need to log this error independently.
 func SetRequestErrorCause(ctx context.Context, err error) {
 	if p, ok := ctx.Value(requestErrorCauseKey).(*error); ok {
 		*p = err

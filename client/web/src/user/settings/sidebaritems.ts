@@ -1,4 +1,6 @@
-import { UserSettingsSidebarItems } from './UserSettingsSidebar'
+import { canWriteBatchChanges } from '../../batches/utils'
+
+import type { UserSettingsSidebarItems } from './UserSettingsSidebar'
 
 export const userSettingsSideBarItems: UserSettingsSidebarItems = [
     {
@@ -10,13 +12,23 @@ export const userSettingsSideBarItems: UserSettingsSidebarItems = [
         label: 'Profile',
         to: '/profile',
         exact: true,
-        condition: ({ isSourcegraphApp }) => !isSourcegraphApp,
+    },
+    {
+        to: '/batch-changes',
+        label: 'Batch Changes',
+        condition: ({ batchChangesEnabled, user: { viewerCanAdminister }, authenticatedUser }) =>
+            batchChangesEnabled && viewerCanAdminister && canWriteBatchChanges(authenticatedUser),
+    },
+    {
+        to: '/executors/secrets',
+        label: 'Executor secrets',
+        condition: ({ batchChangesEnabled, user: { viewerCanAdminister }, authenticatedUser }) =>
+            batchChangesEnabled && viewerCanAdminister && canWriteBatchChanges(authenticatedUser),
     },
     {
         label: 'Emails',
         to: '/emails',
         exact: true,
-        condition: ({ isSourcegraphApp }) => !isSourcegraphApp,
     },
     {
         label: 'Access tokens',
@@ -27,7 +39,6 @@ export const userSettingsSideBarItems: UserSettingsSidebarItems = [
         label: 'Account security',
         to: '/security',
         exact: true,
-        condition: ({ isSourcegraphApp }) => !isSourcegraphApp,
     },
     {
         label: 'Quotas',
@@ -39,5 +50,15 @@ export const userSettingsSideBarItems: UserSettingsSidebarItems = [
         label: 'Product research',
         to: '/product-research',
         condition: () => window.context.productResearchPageEnabled,
+    },
+    {
+        label: 'Permissions',
+        to: '/permissions',
+        exact: true,
+    },
+    {
+        to: '/event-log',
+        label: 'Event log',
+        condition: ({ user: { viewerCanAdminister } }) => viewerCanAdminister,
     },
 ]

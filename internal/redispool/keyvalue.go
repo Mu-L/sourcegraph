@@ -2,7 +2,6 @@ package redispool
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	"github.com/gomodule/redigo/redis"
@@ -13,9 +12,7 @@ import (
 //
 // The purpose of KeyValue is to provide a more ergonomic way to interact with
 // a key value store. Additionally it makes it possible to replace the store
-// with something which is note redis. For example this will be used in
-// Sourcegraph App to use in-memory or postgres as a backing store to avoid
-// shipping redis.
+// with something which is not redis.
 //
 // To understand the behaviour of a method in this interface view the
 // corresponding redis documentation at https://redis.io/commands/COMMANDNAME/
@@ -23,11 +20,15 @@ import (
 type KeyValue interface {
 	Get(key string) Value
 	GetSet(key string, value any) Value
+	MGet(keys []string) Values
+
 	Set(key string, value any) error
 	SetEx(key string, ttlSeconds int, value any) error
 	SetNx(key string, value any) (bool, error)
 	Incr(key string) (int, error)
 	Incrby(key string, value int) (int, error)
+	IncrByInt64(key string, value int64) (int64, error)
+	DecrByInt64(key string, value int64) (int64, error)
 	Del(key string) error
 
 	TTL(key string) (int, error)
@@ -43,15 +44,26 @@ type KeyValue interface {
 	LLen(key string) (int, error)
 	LRange(key string, start, stop int) Values
 
+	// Ping checks the connection to the redis server.
+	Ping() error
+
+	// Keys returns all keys matching the glob pattern. NOTE: this command takes time
+	// linear in the number of keys, and should not be run over large keyspaces.
+	Keys(pattern string) ([]string, error)
+
 	// WithContext will return a KeyValue that should respect ctx for all
 	// blocking operations.
 	WithContext(ctx context.Context) KeyValue
+	WithLatencyRecorder(r LatencyRecorder) KeyValue
 
-	// Pool returns the underlying redis pool if set. If ok is false redis is
-	// disabled and you are in the Sourcegraph App. The intention of this API
-	// is Pool is only for advanced use cases and the caller should provide an
-	// alternative if redis is not available.
-	Pool() (pool *redis.Pool, ok bool)
+	// WithPrefix wraps r to return a RedisKeyValue that prefixes all keys with 'prefix:'
+	WithPrefix(prefix string) KeyValue
+
+	// Pool returns the underlying redis pool.
+	// The intention of this API is Pool is only for advanced use cases and the caller
+	// should consider if they need to use it. Pool is very hard to mock, while
+	// the other functions on this interface are trivial to mock.
+	Pool() *redis.Pool
 }
 
 // Value is a response from an operation on KeyValue. It provides convenient
@@ -79,6 +91,10 @@ func (v Value) Bytes() ([]byte, error) {
 
 func (v Value) Int() (int, error) {
 	return redis.Int(v.reply, v.err)
+}
+
+func (v Value) Int64() (int64, error) {
+	return redis.Int64(v.reply, v.err)
 }
 
 func (v Value) String() (string, error) {
@@ -112,43 +128,13 @@ func (v Values) StringMap() (map[string]string, error) {
 	return redis.StringMap(v.reply, v.err)
 }
 
-type redisKeyValue struct {
-	pool   *redis.Pool
-	ctx    context.Context
-	prefix string
-}
+type LatencyRecorder func(call string, latency time.Duration, err error)
 
-// MemoryKeyValue is the special URI which is recognized by NewKeyValue to
-// create an in memory key value.
-const MemoryKeyValueURI = "redis+memory:memory"
-
-const dbKeyValueURIScheme = "redis+postgres"
-
-// DBKeyValueURI returns a URI to connect to the DB backed redis with the
-// specified namespace.
-func DBKeyValueURI(namespace string) string {
-	return dbKeyValueURIScheme + ":" + namespace
-}
-
-// NewKeyValue returns a KeyValue for addr. addr is treated as follows:
-//
-//  1. if addr == MemoryKeyValueURI we use a KeyValue that lives
-//     in memory of the current process.
-//  2. if addr was created by DBKeyValueURI we use a KeyValue that is backed
-//     by postgres.
-//  3. otherwise treat as a redis address.
+// NewKeyValue returns a KeyValue for addr.
 //
 // poolOpts is a required argument which sets defaults in the case we connect
 // to redis. If used we only override TestOnBorrow and Dial.
 func NewKeyValue(addr string, poolOpts *redis.Pool) KeyValue {
-	if addr == MemoryKeyValueURI {
-		return MemoryKeyValue()
-	}
-
-	if schema, namespace, ok := strings.Cut(addr, ":"); ok && schema == dbKeyValueURIScheme {
-		return DBKeyValue(namespace)
-	}
-
 	poolOpts.TestOnBorrow = func(c redis.Conn, t time.Time) error {
 		_, err := c.Do("PING")
 		return err
@@ -156,40 +142,60 @@ func NewKeyValue(addr string, poolOpts *redis.Pool) KeyValue {
 	poolOpts.Dial = func() (redis.Conn, error) {
 		return dialRedis(addr)
 	}
-	return RedisKeyValue(poolOpts)
+	return &redisKeyValue{pool: poolOpts}
 }
 
-// RedisKeyValue returns a KeyValue backed by pool.
-//
-// Note: RedisKeyValue additionally implements
-//
-//	interface {
-//	  // WithPrefix wraps r to return a RedisKeyValue that prefixes all keys with
-//	  // prefix + ":".
-//	  WithPrefix(prefix string) KeyValue
-//	}
-func RedisKeyValue(pool *redis.Pool) KeyValue {
+// NewTestKeyValue returns a KeyValue connected to a local Redis server for integration tests.
+func NewTestKeyValue() KeyValue {
+	pool := &redis.Pool{
+		MaxIdle:     3,
+		IdleTimeout: 240 * time.Second,
+		Dial: func() (redis.Conn, error) {
+			return redis.Dial("tcp", "127.0.0.1:6379")
+		},
+		TestOnBorrow: func(c redis.Conn, t time.Time) error {
+			_, err := c.Do("PING")
+			return err
+		},
+	}
 	return &redisKeyValue{pool: pool}
 }
 
-func (r redisKeyValue) Get(key string) Value {
-	return r.do("GET", r.prefix+key)
+// redisKeyValue is a KeyValue backed by pool
+type redisKeyValue struct {
+	pool     *redis.Pool
+	ctx      context.Context
+	prefix   string
+	recorder *LatencyRecorder
+}
+
+func (r *redisKeyValue) Ping() error {
+	// The 'ping' command takes no arguments
+	return r.do("PING", []string{}, []any{}).err
+}
+
+func (r *redisKeyValue) Get(key string) Value {
+	return r.doSimple("GET", key)
 }
 
 func (r *redisKeyValue) GetSet(key string, val any) Value {
-	return r.do("GETSET", r.prefix+key, val)
+	return r.doSimple("GETSET", key, val)
+}
+
+func (r *redisKeyValue) MGet(keys []string) Values {
+	return Values(r.do("MGET", keys, []any{}))
 }
 
 func (r *redisKeyValue) Set(key string, val any) error {
-	return r.do("SET", r.prefix+key, val).err
+	return r.doSimple("SET", key, val).err
 }
 
 func (r *redisKeyValue) SetEx(key string, ttlSeconds int, val any) error {
-	return r.do("SETEX", r.prefix+key, ttlSeconds, val).err
+	return r.doSimple("SETEX", key, ttlSeconds, val).err
 }
 
 func (r *redisKeyValue) SetNx(key string, val any) (bool, error) {
-	_, err := r.do("SET", r.prefix+key, val, "NX").String()
+	_, err := r.doSimple("SET", key, val, "NX").String()
 	if err == redis.ErrNil {
 		return false, nil
 	}
@@ -197,53 +203,61 @@ func (r *redisKeyValue) SetNx(key string, val any) (bool, error) {
 }
 
 func (r *redisKeyValue) Incr(key string) (int, error) {
-	return r.do("INCR", r.prefix+key).Int()
+	return r.doSimple("INCR", key).Int()
 }
 
 func (r *redisKeyValue) Incrby(key string, value int) (int, error) {
-	return r.do("INCRBY", r.prefix+key, value).Int()
+	return r.doSimple("INCRBY", key, value).Int()
+}
+
+func (r *redisKeyValue) IncrByInt64(key string, value int64) (int64, error) {
+	return r.doSimple("INCRBY", key, value).Int64()
+}
+
+func (r *redisKeyValue) DecrByInt64(key string, value int64) (int64, error) {
+	return r.doSimple("DECRBY", key, value).Int64()
 }
 
 func (r *redisKeyValue) Del(key string) error {
-	return r.do("DEL", r.prefix+key).err
+	return r.doSimple("DEL", key).err
 }
 
 func (r *redisKeyValue) TTL(key string) (int, error) {
-	return r.do("TTL", r.prefix+key).Int()
+	return r.doSimple("TTL", key).Int()
 }
 
 func (r *redisKeyValue) Expire(key string, ttlSeconds int) error {
-	return r.do("EXPIRE", r.prefix+key, ttlSeconds).err
+	return r.doSimple("EXPIRE", key, ttlSeconds).err
 }
 
 func (r *redisKeyValue) HGet(key, field string) Value {
-	return r.do("HGET", r.prefix+key, field)
+	return r.doSimple("HGET", key, field)
 }
 
 func (r *redisKeyValue) HGetAll(key string) Values {
-	return Values(r.do("HGETALL", r.prefix+key))
+	return Values(r.doSimple("HGETALL", key))
 }
 
 func (r *redisKeyValue) HSet(key, field string, val any) error {
-	return r.do("HSET", r.prefix+key, field, val).err
+	return r.doSimple("HSET", key, field, val).err
 }
 
 func (r *redisKeyValue) HDel(key, field string) Value {
-	return r.do("HDEL", r.prefix+key, field)
+	return r.doSimple("HDEL", key, field)
 }
 
 func (r *redisKeyValue) LPush(key string, value any) error {
-	return r.do("LPUSH", r.prefix+key, value).err
+	return r.doSimple("LPUSH", key, value).err
 }
 func (r *redisKeyValue) LTrim(key string, start, stop int) error {
-	return r.do("LTRIM", r.prefix+key, start, stop).err
+	return r.doSimple("LTRIM", key, start, stop).err
 }
 func (r *redisKeyValue) LLen(key string) (int, error) {
-	raw := r.do("LLEN", r.prefix+key)
+	raw := r.doSimple("LLEN", key)
 	return redis.Int(raw.reply, raw.err)
 }
 func (r *redisKeyValue) LRange(key string, start, stop int) Values {
-	return Values(r.do("LRANGE", r.prefix+key, start, stop))
+	return Values(r.doSimple("LRANGE", key, start, stop))
 }
 
 func (r *redisKeyValue) WithContext(ctx context.Context) KeyValue {
@@ -254,8 +268,15 @@ func (r *redisKeyValue) WithContext(ctx context.Context) KeyValue {
 	}
 }
 
-// WithPrefix wraps r to return a RedisKeyValue that prefixes all keys with
-// prefix + ":".
+func (r *redisKeyValue) WithLatencyRecorder(rec LatencyRecorder) KeyValue {
+	return &redisKeyValue{
+		pool:     r.pool,
+		ctx:      r.ctx,
+		prefix:   r.prefix,
+		recorder: &rec,
+	}
+}
+
 func (r *redisKeyValue) WithPrefix(prefix string) KeyValue {
 	return &redisKeyValue{
 		pool:   r.pool,
@@ -264,11 +285,19 @@ func (r *redisKeyValue) WithPrefix(prefix string) KeyValue {
 	}
 }
 
-func (r *redisKeyValue) Pool() (*redis.Pool, bool) {
-	return r.pool, true
+func (r *redisKeyValue) Keys(pattern string) ([]string, error) {
+	return Values(r.doSimple("KEYS", pattern)).Strings()
 }
 
-func (r *redisKeyValue) do(commandName string, args ...any) Value {
+func (r *redisKeyValue) Pool() *redis.Pool {
+	return r.pool
+}
+
+func (r *redisKeyValue) doSimple(commandName string, key string, args ...any) Value {
+	return r.do(commandName, []string{key}, args)
+}
+
+func (r *redisKeyValue) do(commandName string, keys []string, args []any) Value {
 	var c redis.Conn
 	if r.ctx != nil {
 		var err error
@@ -276,13 +305,27 @@ func (r *redisKeyValue) do(commandName string, args ...any) Value {
 		if err != nil {
 			return Value{err: err}
 		}
-		defer c.Close()
 	} else {
 		c = r.pool.Get()
-		defer c.Close()
+	}
+	defer c.Close()
+
+	var start time.Time
+	if r.recorder != nil {
+		start = time.Now()
 	}
 
-	reply, err := c.Do(commandName, args...)
+	prefixedKeys := make([]any, len(keys))
+	for i, key := range keys {
+		prefixedKeys[i] = r.prefix + key
+	}
+
+	reply, err := c.Do(commandName, append(prefixedKeys, args...)...)
+
+	if r.recorder != nil {
+		elapsed := time.Since(start)
+		(*r.recorder)(commandName, elapsed, err)
+	}
 	return Value{
 		reply: reply,
 		err:   err,

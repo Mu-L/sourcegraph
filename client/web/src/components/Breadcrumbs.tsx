@@ -1,10 +1,10 @@
-import React, { FC, useState, useEffect, useMemo, useCallback, ReactNode } from 'react'
+import React, { type FC, useState, useEffect, useMemo, useCallback, type ReactNode } from 'react'
 
 import { mdiChevronRight } from '@mdi/js'
 import classNames from 'classnames'
 import { sortBy } from 'lodash'
 import { useLocation } from 'react-router-dom'
-import { Unsubscribable } from 'rxjs'
+import type { Unsubscribable } from 'rxjs'
 
 import { isDefined } from '@sourcegraph/common'
 import { Link, Icon } from '@sourcegraph/wildcard'
@@ -77,7 +77,7 @@ export interface BreadcrumbSetters {
      * pass an arbitrary element or a link config object for simpler breadcrumbs.
      * @returns Another breadcrumb setters object to pass down to child components to register child breadcrumbs,
      * with a method to remove the breadcrumb again. The object should be added to a [subscription
-     * bag](https://docs.sourcegraph.com/dev/background-information/languages/typescript#subscription-bag).
+     * bag](https://docs-legacy.sourcegraph.com/dev/background-information/languages/typescript#subscription-bag).
      */
     setBreadcrumb: (breadcrumb: NullableBreadcrumb) => BreadcrumbSetters & Unsubscribable
 }

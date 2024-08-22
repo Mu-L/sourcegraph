@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sourcegraph/log"
+
 	"github.com/sourcegraph/sourcegraph/internal/errcode"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc/auth"
@@ -101,15 +103,22 @@ func newClient(urn string, config *schema.BitbucketCloudConnection, httpClient h
 		return nil, err
 	}
 
+	var auther auth.Authenticator
+	if config.AccessToken != "" {
+		auther = &auth.OAuthBearerToken{Token: config.AccessToken}
+	} else {
+		auther = &auth.BasicAuth{
+			Username: config.Username,
+			Password: config.AppPassword,
+		}
+	}
+
 	return &client{
 		httpClient: httpClient,
 		URL:        extsvc.NormalizeBaseURL(apiURL),
-		Auth: &auth.BasicAuth{
-			Username: config.Username,
-			Password: config.AppPassword,
-		},
+		Auth:       auther,
 		// Default limits are defined in extsvc.GetLimitFromConfig
-		rateLimit: ratelimit.DefaultRegistry.Get(urn),
+		rateLimit: ratelimit.NewInstrumentedLimiter(urn, ratelimit.NewGlobalRateLimiter(log.Scoped("BitbucketCloudClient"), urn)),
 	}, nil
 }
 
@@ -201,7 +210,6 @@ func (c *client) reqPage(ctx context.Context, url string, results any) (*PageTok
 		PageToken: &next,
 		Values:    results,
 	})
-
 	if err != nil {
 		return nil, err
 	}
@@ -238,8 +246,9 @@ func (c *client) do(ctx context.Context, req *http.Request, result any) (code in
 	// If we still don't succeed after waiting a total of 5 min, we give up.
 	var resp *http.Response
 	sleepTime := 10 * time.Second
+	logger := log.Scoped("bitbucketcloud.Client")
 	for {
-		resp, err = oauthutil.DoRequest(ctx, nil, c.httpClient, req, c.Auth)
+		resp, err = oauthutil.DoRequest(ctx, logger, c.httpClient, req, c.Auth)
 		if resp != nil {
 			code = resp.StatusCode
 		}

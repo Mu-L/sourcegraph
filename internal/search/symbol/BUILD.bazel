@@ -1,3 +1,4 @@
+load("//dev:go_mockgen.bzl", "go_mockgen")
 load("//dev:go_defs.bzl", "go_test")
 load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
@@ -5,15 +6,16 @@ go_library(
     name = "symbol",
     srcs = ["symbol.go"],
     importpath = "github.com/sourcegraph/sourcegraph/internal/search/symbol",
+    tags = [TAG_PLATFORM_SEARCH],
     visibility = ["//:__subpackages__"],
     deps = [
-        "//cmd/frontend/backend",
         "//internal/actor",
         "//internal/api",
         "//internal/authz",
         "//internal/search",
         "//internal/search/result",
-        "//internal/search/zoekt",
+        "//internal/search/zoektquery",
+        "//internal/symbols",
         "//internal/trace/policy",
         "//internal/types",
         "//lib/errors",
@@ -32,12 +34,13 @@ go_test(
         "symbol_test.go",
     ],
     embed = [":symbol"],
+    tags = [TAG_PLATFORM_SEARCH],
     deps = [
         "//internal/actor",
         "//internal/api",
+        "//internal/authz",
         "//internal/authz/subrepoperms",
         "//internal/conf",
-        "//internal/search",
         "//internal/search/result",
         "//internal/types",
         "//lib/errors",
@@ -46,4 +49,15 @@ go_test(
         "@com_github_sourcegraph_zoekt//query",
         "@com_github_stretchr_testify//assert",
     ],
+)
+
+go_mockgen(
+    name = "generate_mocks",
+    out = "mocks_test.go",
+    manifests = [
+        "//:mockgen.yaml",
+        "//:mockgen.test.yaml",
+        "//:mockgen.temp.yaml",
+    ],
+    deps = ["@com_github_sourcegraph_zoekt//:zoekt"],
 )

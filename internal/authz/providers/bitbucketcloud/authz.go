@@ -1,9 +1,6 @@
 package bitbucketcloud
 
 import (
-	"fmt"
-	"net/url"
-
 	"github.com/sourcegraph/sourcegraph/internal/licensing"
 
 	"github.com/sourcegraph/sourcegraph/internal/authz"
@@ -24,24 +21,8 @@ import (
 // This constructor does not and should not directly check connectivity to external services - if
 // desired, callers should use `(*Provider).ValidateConnection` directly to get warnings related
 // to connection issues.
-func NewAuthzProviders(db database.DB, conns []*types.BitbucketCloudConnection, authProviders []schema.AuthProviders) *atypes.ProviderInitResult {
+func NewAuthzProviders(db database.DB, conns []*types.BitbucketCloudConnection) *atypes.ProviderInitResult {
 	initResults := &atypes.ProviderInitResult{}
-	bbcloudAuthProviders := make(map[string]*schema.BitbucketCloudAuthProvider)
-	for _, p := range authProviders {
-		if p.Bitbucketcloud != nil {
-			var id string
-			bbURL, err := url.Parse(p.Bitbucketcloud.GetURL())
-			if err != nil {
-				// error reporting for this should happen elsewhere, for now just use what is given
-				id = p.Bitbucketcloud.GetURL()
-			} else {
-				// use codehost normalized URL as ID
-				ch := extsvc.NewCodeHost(bbURL, p.Bitbucketcloud.Type)
-				id = ch.ServiceID
-			}
-			bbcloudAuthProviders[id] = p.Bitbucketcloud
-		}
-	}
 
 	for _, c := range conns {
 		p, err := newAuthzProvider(db, c)
@@ -51,15 +32,6 @@ func NewAuthzProviders(db database.DB, conns []*types.BitbucketCloudConnection, 
 		}
 		if p == nil {
 			continue
-		}
-
-		if _, exists := bbcloudAuthProviders[p.ServiceID()]; !exists {
-			initResults.Warnings = append(initResults.Warnings,
-				fmt.Sprintf("Bitbucket Cloud config for %[1]s has `authorization` enabled, "+
-					"but no authentication provider matching %[1]q was found. "+
-					"Check the [**site configuration**](/site-admin/configuration) to "+
-					"verify an entry in [`auth.providers`](https://docs.sourcegraph.com/admin/auth) exists for %[1]s.",
-					p.ServiceID()))
 		}
 
 		initResults.Providers = append(initResults.Providers, p)

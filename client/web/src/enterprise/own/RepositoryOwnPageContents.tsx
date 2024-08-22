@@ -4,7 +4,7 @@ import { Timestamp } from '@sourcegraph/branded/src/components/Timestamp'
 import { useQuery } from '@sourcegraph/http-client'
 import { H3, Text, Code, Card, LoadingSpinner, ErrorAlert } from '@sourcegraph/wildcard'
 
-import {
+import type {
     GetIngestedCodeownersResult,
     GetIngestedCodeownersVariables,
     IngestedCodeowners,
@@ -14,7 +14,7 @@ import {
 import { DeleteFileButton } from './DeleteFileButton'
 import { GET_INGESTED_CODEOWNERS_QUERY } from './graphqlQueries'
 import { IngestedFileViewer } from './IngestedFileViewer'
-import { RepositoryOwnAreaPageProps } from './RepositoryOwnEditPage'
+import type { RepositoryOwnAreaPageProps } from './RepositoryOwnEditPage'
 import { UploadFileButton } from './UploadFileButton'
 
 import styles from './RepositoryOwnPageContents.module.scss'
@@ -25,8 +25,8 @@ export interface CodeownersIngestedFile {
 }
 
 export const RepositoryOwnPageContents: React.FunctionComponent<
-    Pick<RepositoryOwnAreaPageProps, 'repo' | 'authenticatedUser'>
-> = ({ repo, authenticatedUser }) => {
+    Pick<RepositoryOwnAreaPageProps, 'repo' | 'authenticatedUser' | 'telemetryRecorder'>
+> = ({ repo, authenticatedUser, telemetryRecorder }) => {
     const isAdmin = authenticatedUser?.siteAdmin
 
     const { data, error, loading } = useQuery<GetIngestedCodeownersResult, GetIngestedCodeownersVariables>(
@@ -74,7 +74,10 @@ export const RepositoryOwnPageContents: React.FunctionComponent<
                     {isAdmin && (
                         <UploadFileButton
                             repo={repo}
-                            onComplete={setCodeownersIngestedFile}
+                            onComplete={file => {
+                                setCodeownersIngestedFile(file)
+                                telemetryRecorder.recordEvent('repo.ownership.edit.file', 'upload')
+                            }}
                             fileAlreadyExists={!!codeownersIngestedFile}
                         />
                     )}
@@ -111,7 +114,15 @@ export const RepositoryOwnPageContents: React.FunctionComponent<
                             The following CODEOWNERS file was uploaded to Sourcegraph{' '}
                             <Timestamp date={codeownersIngestedFile.updatedAt} />.
                         </Text>
-                        {isAdmin && <DeleteFileButton repo={repo} onComplete={() => setCodeownersIngestedFile(null)} />}
+                        {isAdmin && (
+                            <DeleteFileButton
+                                repo={repo}
+                                onComplete={() => {
+                                    setCodeownersIngestedFile(null)
+                                    telemetryRecorder.recordEvent('repo.ownership.edit.file', 'delete')
+                                }}
+                            />
+                        )}
                     </div>
                     <IngestedFileViewer contents={codeownersIngestedFile.contents} />
                 </div>
@@ -124,11 +135,14 @@ const getCodeHostName = (repo: RepositoryFields): string => {
     const externalServiceKind = repo.externalURLs[0]?.serviceKind
 
     switch (externalServiceKind) {
-        case 'GITHUB':
+        case 'GITHUB': {
             return 'GitHub'
-        case 'GITLAB':
+        }
+        case 'GITLAB': {
             return 'GitLab'
-        default:
+        }
+        default: {
             return 'code host'
+        }
     }
 }

@@ -22,14 +22,14 @@ import (
 func TestGetBatchChangesUsageStatistics(t *testing.T) {
 	ctx := context.Background()
 	logger := logtest.Scoped(t)
-	db := database.NewDB(logger, dbtest.NewDB(logger, t))
+	db := database.NewDB(logger, dbtest.NewDB(t))
 
 	// Create stub repo.
 	repoStore := db.Repos()
 	esStore := db.ExternalServices()
 
 	// making use of a mock clock here to ensure all time operations are appropriately mocked
-	// https://docs.sourcegraph.com/dev/background-information/languages/testing_go_code#testing-time
+	// https://docs-legacy.sourcegraph.com/dev/background-information/languages/testing_go_code#testing-time
 	clock := glock.NewMockClock()
 	now := clock.Now()
 

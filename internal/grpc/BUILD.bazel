@@ -8,9 +8,9 @@ go_library(
         "panics.go",
     ],
     importpath = "github.com/sourcegraph/sourcegraph/internal/grpc",
+    tags = [TAG_PLATFORM_SOURCE],
     visibility = ["//:__subpackages__"],
     deps = [
-        "//internal/conf",
         "@com_github_sourcegraph_log//:log",
         "@org_golang_google_grpc//:go_default_library",
         "@org_golang_google_grpc//codes",
@@ -28,6 +28,7 @@ go_test(
         "panics_test.go",
     ],
     embed = [":grpc"],
+    tags = [TAG_PLATFORM_SOURCE],
     deps = [
         "@com_github_sourcegraph_log//:log",
         "@com_github_sourcegraph_log//logtest",

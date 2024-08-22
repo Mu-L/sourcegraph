@@ -5,26 +5,14 @@ go_library(
     name = "rubygems",
     srcs = ["client.go"],
     importpath = "github.com/sourcegraph/sourcegraph/internal/extsvc/rubygems",
+    tags = [TAG_PLATFORM_SOURCE],
     visibility = ["//:__subpackages__"],
     deps = [
         "//internal/conf/reposource",
         "//internal/httpcli",
         "//internal/ratelimit",
         "//lib/errors",
-    ],
-)
-
-go_test(
-    name = "client_test",
-    timeout = "short",
-    srcs = ["client_test.go"],
-    data = glob(["testdata/**"]),
-    embed = [":rubygems"],
-    deps = [
-        "//internal/conf/reposource",
-        "//internal/httptestutil",
-        "//internal/unpack",
-        "@com_github_stretchr_testify//require",
+        "@com_github_sourcegraph_log//:log",
     ],
 )
 
@@ -33,10 +21,13 @@ go_test(
     srcs = ["client_test.go"],
     data = glob(["testdata/**"]),
     embed = [":rubygems"],
+    tags = [TAG_PLATFORM_SOURCE],
     deps = [
         "//internal/conf/reposource",
         "//internal/httptestutil",
+        "//internal/ratelimit",
         "//internal/unpack",
         "@com_github_stretchr_testify//require",
+        "@org_golang_x_time//rate",
     ],
 )

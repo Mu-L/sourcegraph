@@ -1,11 +1,10 @@
-import { Omit } from 'utility-types'
+import type { Omit } from 'utility-types'
 
-import { SearchMatch } from '../stream'
+import type { SearchMatch } from '../stream'
 
 import { languageCompletion } from './languageFilter'
-import { predicateCompletion } from './predicates'
 import { selectorCompletion } from './selectFilter'
-import { Filter, Literal } from './token'
+import type { Filter, Literal } from './token'
 
 export enum FilterType {
     after = 'after',
@@ -45,7 +44,6 @@ export enum AliasedFilterType {
     since = 'after',
     until = 'before',
 }
-/* eslint-enable unicorn/prevent-abbreviations */
 
 export const ALIASES: Record<string, string> = {
     r: 'repo',
@@ -63,7 +61,7 @@ export const ALIASES: Record<string, string> = {
 export const resolveFieldAlias = (field: string): string => ALIASES[field] || field
 
 export const isFilterType = (filter: string): filter is FilterType => filter in FilterType
-export const isAliasedFilterType = (filter: string): boolean => filter in AliasedFilterType
+const isAliasedFilterType = (filter: string): boolean => filter in AliasedFilterType
 
 export const filterTypeKeys: FilterType[] = Object.keys(FilterType) as FilterType[]
 export const filterTypeKeysWithAliases: (FilterType | AliasedFilterType)[] = [
@@ -88,7 +86,7 @@ export enum NegatedFilters {
 }
 
 /** The list of filters that are able to be negated. */
-export type NegatableFilter =
+type NegatableFilter =
     | FilterType.repo
     | FilterType.file
     | FilterType.repohasfile
@@ -102,7 +100,7 @@ export const isNegatableFilter = (filter: FilterType): filter is NegatableFilter
     Object.keys(NegatedFilters).includes(filter)
 
 /** The list of all negated filters. i.e. all valid filters that have `-` as a suffix. */
-export const negatedFilters = Object.values(NegatedFilters)
+const negatedFilters = Object.values(NegatedFilters)
 
 export const isNegatedFilter = (filter: string): filter is NegatedFilters =>
     negatedFilters.includes(filter as NegatedFilters)
@@ -157,7 +155,7 @@ interface NegatableFilterDefinition extends Omit<BaseFilterDefinition, 'descript
     description: (negated: boolean) => string
 }
 
-export type FilterDefinition = BaseFilterDefinition | NegatableFilterDefinition
+type FilterDefinition = BaseFilterDefinition | NegatableFilterDefinition
 
 const SOURCEGRAPH_DOT_COM_REPO_COMPLETION: Completion[] = [
     {
@@ -236,7 +234,6 @@ export const FILTERS: Record<NegatableFilter, NegatableFilterDefinition> &
         negatable: true,
         description: negated =>
             `${negated ? 'Exclude' : 'Include only'} results from file paths matching the given search pattern.`,
-        discreteValues: () => [...predicateCompletion('file')],
         placeholder: 'regex',
         suggestions: 'path',
     },
@@ -272,8 +269,19 @@ export const FILTERS: Record<NegatableFilter, NegatableFilterDefinition> &
         placeholder: '"content"',
     },
     [FilterType.patterntype]: {
-        discreteValues: () => ['regexp', 'structural', 'literal', 'standard'].map(value => ({ label: value })),
-        description: 'The pattern type (standard, regexp, literal, structural) in use',
+        discreteValues: () => {
+            const patternTypes = ['keyword', 'literal', 'regexp', 'standard']
+            if (typeof window === 'undefined' || window.context?.experimentalFeatures?.structuralSearch === 'enabled') {
+                patternTypes.push('structural')
+            }
+            return patternTypes.map(value => ({ label: value }))
+        },
+        description: `The pattern type (keyword, literal, regexp, standard${
+            typeof window === 'undefined' || window.context?.experimentalFeatures?.structuralSearch === 'enabled'
+                ? ', structural'
+                : ''
+        }) in use`,
+
         singular: true,
     },
     [FilterType.repo]: {
@@ -281,7 +289,6 @@ export const FILTERS: Record<NegatableFilter, NegatableFilterDefinition> &
         negatable: true,
         discreteValues: (_value, isSourcegraphDotCom) => [
             ...(isSourcegraphDotCom === true ? SOURCEGRAPH_DOT_COM_REPO_COMPLETION : []),
-            ...predicateCompletion('repo'),
         ],
         description: negated =>
             `${negated ? 'Exclude' : 'Include only'} results from repositories matching the given search pattern.`,
@@ -315,32 +322,33 @@ export const FILTERS: Record<NegatableFilter, NegatableFilterDefinition> &
     },
     [FilterType.type]: {
         description: 'Limit results to diffs, commits, file paths, symbols and other entities.',
-        discreteValues: () => [
-            {
-                label: 'diff',
-                description: 'Search for file changes',
-            },
-            {
-                label: 'commit',
-                description: 'Search in commit messages',
-            },
-            {
-                label: 'symbol',
-                description: 'Search for symbol names',
-            },
-            {
-                label: 'repo',
-                description: 'Search for repositories',
-            },
-            {
-                label: 'path',
-                description: 'Search for file/directory names',
-            },
-            {
-                label: 'file',
-                description: 'Search for file content',
-            },
-        ],
+        discreteValues: () =>
+            [
+                {
+                    label: 'diff',
+                    description: 'Search for file changes',
+                },
+                {
+                    label: 'commit',
+                    description: 'Search in commit messages',
+                },
+                {
+                    label: 'symbol',
+                    description: 'Search for symbol names',
+                },
+                {
+                    label: 'repo',
+                    description: 'Search for repositories',
+                },
+                {
+                    label: 'path',
+                    description: 'Search for file/directory names',
+                },
+                {
+                    label: 'file',
+                    description: 'Search for file content',
+                },
+            ].sort((a, b) => a.label.localeCompare(b.label)),
     },
     [FilterType.visibility]: {
         discreteValues: () => ['any', 'private', 'public'].map(value => ({ label: value })),
@@ -504,10 +512,11 @@ export const escapeSpaces = (value: string): string => {
                 current = current + 1
                 continue
             }
-            default:
+            default: {
                 escaped.push(value[current])
                 current = current + 1
                 continue
+            }
         }
     }
     return escaped.join('')

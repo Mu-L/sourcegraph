@@ -21,6 +21,13 @@ import (
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
 
+// GenerationPrivateKeyURL is the URL where Sourcegraph staff can find the private key for
+// generating licenses.
+//
+// NOTE: If you change this, use text search to replace other instances of it (in source code
+// comments).
+const GenerationPrivateKeyURL = "https://team-sourcegraph.1password.com/vaults/dnrhbauihkhjs5ag6vszsme45a/allitems/zkdx6gpw4uqejs3flzj7ef5j4i"
+
 // Info contains information about a license key. In the signed license key that Sourcegraph
 // provides to customers, this value is signed but not encrypted. This value is not secret, and
 // anyone with a license key can view (but not forge) this information.
@@ -34,6 +41,9 @@ type Info struct {
 	Tags []string `json:"t"`
 	// UserCount is the number of users that this license is valid for
 	UserCount uint `json:"u"`
+	// CreatedAt is the date this license was created at. May be zero for
+	// licenses version less than 3.
+	CreatedAt time.Time `json:"c"`
 	// ExpiresAt is the date when this license expires
 	ExpiresAt time.Time `json:"e"`
 	// SalesforceSubscriptionID is the optional Salesforce subscription ID to link licenses
@@ -102,10 +112,15 @@ type encodedInfo struct {
 }
 
 func (l Info) Version() int {
+	// Before version 2, SalesforceSubscriptionID was not yet added.
 	if l.SalesforceSubscriptionID == nil {
 		return 1
 	}
-	return 2
+	// Before version 3, CreatedAt was not yet added.
+	if l.CreatedAt.IsZero() {
+		return 2
+	}
+	return 3
 }
 
 func (l Info) encode() ([]byte, error) {
@@ -116,6 +131,7 @@ func (l Info) encode() ([]byte, error) {
 	return json.Marshal(e)
 }
 
+//nolint:unused // used in tests
 func (l *Info) decode(data []byte) error {
 	var e encodedInfo
 	if err := json.Unmarshal(data, &e); err != nil {

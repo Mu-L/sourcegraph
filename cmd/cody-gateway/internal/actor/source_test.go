@@ -39,16 +39,24 @@ func (m *mockSourceSyncer) Sync(context.Context) (int, error) {
 	return 10, nil
 }
 
+type mockSourceUpdater struct {
+	mockSourceSyncer
+}
+
+var _ SourceUpdater = &mockSourceUpdater{}
+
+func (m *mockSourceUpdater) Update(context.Context, *Actor) error {
+	m.syncCount.Inc()
+	return nil
+}
+
 func TestSourcesWorkers(t *testing.T) {
 	logger := logtest.Scoped(t)
 	// Connect to local redis for testing, this is the same URL used in rcache.SetupForTest
-	p, ok := redispool.NewKeyValue("127.0.0.1:6379", &redis.Pool{
+	p := redispool.NewKeyValue("127.0.0.1:6379", &redis.Pool{
 		MaxIdle:     3,
 		IdleTimeout: 5 * time.Second,
 	}).Pool()
-	if !ok {
-		t.Fatal("real redis is required")
-	}
 	rs := redsync.New(redigo.NewPool(p))
 
 	// Randomized lock name to avoid flakiness when running with count>1
@@ -66,7 +74,8 @@ func TestSourcesWorkers(t *testing.T) {
 		w := NewSources(s1).Worker(observation.NewContext(logger), sourceWorkerMutex1, time.Millisecond)
 		go func() {
 			<-stop1
-			w.Stop()
+			err := w.Stop(context.Background())
+			require.NoError(t, err)
 		}()
 		w.Start()
 	})
@@ -81,7 +90,8 @@ func TestSourcesWorkers(t *testing.T) {
 		w := NewSources(s2).Worker(observation.NewContext(logger), sourceWorkerMutex, time.Millisecond)
 		go func() {
 			<-stop2
-			w.Stop()
+			err := w.Stop(context.Background())
+			require.NoError(t, err)
 		}()
 		w.Start()
 	})
@@ -133,9 +143,31 @@ func TestSourcesSyncAll(t *testing.T) {
 	assert.Equal(t, int32(2), s2.syncCount.Load())
 }
 
+func TestSourcesUpdate(t *testing.T) {
+	t.Parallel()
+
+	var s1 mockSourceSyncer
+	var s2 mockSourceUpdater
+	var s3 mockSourceUpdater
+	act := Actor{
+		Key:    "sgd_qweqweqw",
+		Source: &s2, // belongs to s2 source only
+	}
+	err := act.Update(context.Background())
+	assert.NoError(t, err)
+	assert.Equal(t, int32(0), s1.syncCount.Load())
+	assert.Equal(t, int32(1), s2.syncCount.Load())
+	assert.Equal(t, int32(0), s3.syncCount.Load())
+
+	err = act.Update(context.Background())
+	assert.NoError(t, err)
+	assert.Equal(t, int32(0), s1.syncCount.Load())
+	assert.Equal(t, int32(2), s2.syncCount.Load())
+	assert.Equal(t, int32(0), s3.syncCount.Load())
+}
+
 func TestIsErrNotFromSource(t *testing.T) {
-	var err error
-	err = ErrNotFromSource{Reason: "foo"}
+	var err error = ErrNotFromSource{Reason: "foo"}
 	assert.True(t, IsErrNotFromSource(err))
 	autogold.Expect("token not from source: foo").Equal(t, err.Error())
 
@@ -145,4 +177,10 @@ func TestIsErrNotFromSource(t *testing.T) {
 
 	err = errors.New("foo")
 	assert.False(t, IsErrNotFromSource(err))
+}
+
+func TestErrActorRecentlyUpdated(t *testing.T) {
+	var err error = ErrActorRecentlyUpdated{RetryAt: time.Now().Add(time.Minute)}
+	assert.True(t, IsErrActorRecentlyUpdated(err))
+	assert.Equal(t, "actor was recently updated - try again in 59s", err.Error())
 }

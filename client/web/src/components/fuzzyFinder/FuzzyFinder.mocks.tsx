@@ -1,19 +1,25 @@
 import { useApolloClient } from '@apollo/client'
-import { MockedResponse } from '@apollo/client/testing'
+import type { MockedResponse } from '@apollo/client/testing'
 import * as H from 'history'
 
 import { getDocumentNode } from '@sourcegraph/http-client'
-import { Settings } from '@sourcegraph/shared/src/settings/settings'
+import type { Settings } from '@sourcegraph/shared/src/settings/settings'
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { NOOP_TELEMETRY_SERVICE } from '@sourcegraph/shared/src/telemetry/telemetryService'
 
-import { FileNamesResult, FuzzyFinderRepoResult, FuzzyFinderSymbolsResult, SymbolKind } from '../../graphql-operations'
+import {
+    type FileNamesResult,
+    type FuzzyFinderRepoResult,
+    type FuzzyFinderSymbolsResult,
+    SymbolKind,
+} from '../../graphql-operations'
 import { UserHistory } from '../useUserHistory'
 
 import { FUZZY_GIT_LSFILES_QUERY } from './FuzzyFiles'
 import { FuzzyFinderContainer } from './FuzzyFinder'
 import { FUZZY_REPOS_QUERY } from './FuzzyRepos'
 import { FUZZY_SYMBOLS_QUERY } from './FuzzySymbols'
-import { FuzzyTabKey } from './FuzzyTabs'
+import type { FuzzyTabKey } from './FuzzyTabs'
 
 export interface FuzzyWrapperProps {
     url: string
@@ -36,6 +42,7 @@ export const FuzzyWrapper: React.FunctionComponent<FuzzyWrapperProps> = props =>
             location={history.location}
             settingsCascade={{ final: { experimentalFeatures: props.experimentalFeatures }, subjects: null }}
             telemetryService={NOOP_TELEMETRY_SERVICE}
+            telemetryRecorder={noOpTelemetryRecorder}
             initialQuery={props.initialQuery}
             userHistory={new UserHistory()}
         />
@@ -62,7 +69,6 @@ export const FUZZY_FILES_MOCK: MockedResponse<FileNamesResult> = {
                         'client/branded/.src/components/BrandedStory.tsx/client/branded/srcndedStory.tsx/client/branded/src/components/BrandedStory.tsx/client/branded/src/components/BrandedStory.tsx',
                         'client/branded/.stylelintrc.json',
                         'client/branded/README.md',
-                        'client/branded/babel.config.js',
                         'client/branded/jest.config.js',
                         'client/branded/package.json',
                         'client/branded/src/components/CodeSnippet.tsx',

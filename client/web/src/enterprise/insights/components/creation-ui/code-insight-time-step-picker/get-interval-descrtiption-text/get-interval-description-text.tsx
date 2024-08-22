@@ -1,6 +1,8 @@
-import { ReactNode } from 'react'
+import type { ReactNode } from 'react'
 
-import { InsightStep } from '../../../../pages/insights/creation/search-insight'
+import type { Duration } from 'date-fns'
+
+import type { InsightStep } from '../../../../pages/insights/creation/search-insight'
 
 // eslint-disable-next-line @typescript-eslint/no-namespace
 declare namespace Intl {

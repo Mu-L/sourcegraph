@@ -11,12 +11,13 @@ import {
     mdiNumeric,
     mdiShape,
 } from '@mdi/js'
-import format from 'date-fns/format'
+import { format } from 'date-fns'
 
 import { Timestamp } from '@sourcegraph/branded/src/components/Timestamp'
 import { pluralize } from '@sourcegraph/common'
 import { useQuery } from '@sourcegraph/http-client'
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import {
     Button,
     Container,
@@ -32,7 +33,7 @@ import {
 } from '@sourcegraph/wildcard'
 
 import { PageTitle } from '../components/PageTitle'
-import { BackgroundJobsResult, BackgroundJobsVariables, BackgroundRoutineType } from '../graphql-operations'
+import { type BackgroundJobsResult, type BackgroundJobsVariables, BackgroundRoutineType } from '../graphql-operations'
 import { formatDurationLong } from '../util/time'
 
 import { ValueLegendList } from './analytics/components/ValueLegendList'
@@ -40,7 +41,7 @@ import { BACKGROUND_JOBS, BACKGROUND_JOBS_PAGE_POLL_INTERVAL_MS } from './backen
 
 import styles from './SiteAdminBackgroundJobsPage.module.scss'
 
-export interface SiteAdminBackgroundJobsPageProps extends TelemetryProps {}
+export interface SiteAdminBackgroundJobsPageProps extends TelemetryProps, TelemetryV2Props {}
 
 export type BackgroundJob = BackgroundJobsResult['backgroundJobs']['nodes'][0]
 export type BackgroundRoutine = BackgroundJob['routines'][0]
@@ -63,11 +64,12 @@ const routineTypeToIcon: Record<BackgroundRoutineType, string> = {
 
 export const SiteAdminBackgroundJobsPage: React.FunctionComponent<
     React.PropsWithChildren<SiteAdminBackgroundJobsPageProps>
-> = ({ telemetryService }) => {
+> = ({ telemetryService, telemetryRecorder }) => {
     // Log page view
     useEffect(() => {
         telemetryService.logPageView('SiteAdminBackgroundJobs')
-    }, [telemetryService])
+        telemetryRecorder.recordEvent('admin.backgroundJobs', 'view')
+    }, [telemetryService, telemetryRecorder])
 
     // Data query and polling setting
     const { data, loading, error, stopPolling, startPolling } = useQuery<BackgroundJobsResult, BackgroundJobsVariables>(
@@ -283,7 +285,7 @@ const RoutineItem: React.FunctionComponent<{ routine: BackgroundRoutine }> = ({ 
         .filter((host, index, hosts) => hosts.indexOf(host) === index) // deduplicate
     const commonHostName = allHostNames.length === 1 ? allHostNames[0] : undefined
 
-    const routineTypeDisplayableName = routine.type.toLowerCase().replace(/_/g, ' ')
+    const routineTypeDisplayableName = routine.type.toLowerCase().replaceAll('_', ' ')
 
     const recentRunsTooltipContent = (
         <div>
@@ -495,11 +497,14 @@ function categorizeRunDuration(durationMs: number, routineIntervalMs: number | n
 function getRunDurationTextClass(durationMs: number, routineIntervalMs: number | null): string {
     const category = categorizeRunDuration(durationMs, routineIntervalMs)
     switch (category) {
-        case 'dangerous':
+        case 'dangerous': {
             return 'text-danger'
-        case 'long':
+        }
+        case 'long': {
             return 'text-warning'
-        default:
+        }
+        default: {
             return 'text-success'
+        }
     }
 }

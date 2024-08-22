@@ -6,27 +6,27 @@ import { useLocation } from 'react-router-dom'
 
 import { useQuery } from '@sourcegraph/http-client'
 import { UserAvatar } from '@sourcegraph/shared/src/components/UserAvatar'
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { Link, Icon, H2 } from '@sourcegraph/wildcard'
 
 import { BrandLogo } from '../components/branding/BrandLogo'
-import { UserAreaUserProfileResult, UserAreaUserProfileVariables } from '../graphql-operations'
-import { AuthProvider, SourcegraphContext } from '../jscontext'
-import { useCodySurveyToast } from '../marketing/toast/CodySurveyToast'
+import type { UserAreaUserProfileResult, UserAreaUserProfileVariables } from '../graphql-operations'
+import type { SourcegraphContext } from '../jscontext'
 import { USER_AREA_USER_PROFILE } from '../user/area/UserArea'
 
 import { ExternalsAuth } from './components/ExternalsAuth'
 import { FeatureList } from './components/FeatureList'
-import { SignUpArguments, SignUpForm } from './SignUpForm'
+import { type SignUpArguments, SignUpForm } from './SignUpForm'
 
 import styles from './CloudSignUpPage.module.scss'
 
-interface Props extends TelemetryProps {
+interface Props extends TelemetryProps, TelemetryV2Props {
     source: string | null
     showEmailForm: boolean
     /** Called to perform the signup on the server. */
     onSignUp: (args: SignUpArguments) => Promise<void>
-    context: Pick<SourcegraphContext, 'authProviders' | 'authPasswordPolicy' | 'authMinPasswordLength'>
+    context: Pick<SourcegraphContext, 'externalURL' | 'authPasswordPolicy' | 'authMinPasswordLength'>
     isSourcegraphDotCom: boolean
     isLightTheme: boolean
 }
@@ -56,10 +56,10 @@ export const CloudSignUpPage: React.FunctionComponent<React.PropsWithChildren<Pr
     onSignUp,
     context,
     telemetryService,
+    telemetryRecorder,
     isSourcegraphDotCom,
 }) => {
     const location = useLocation()
-    const { setShouldShowCodySurvey } = useCodySurveyToast()
 
     const queryWithUseEmailToggled = new URLSearchParams(location.search)
     if (showEmailForm) {
@@ -80,18 +80,9 @@ export const CloudSignUpPage: React.FunctionComponent<React.PropsWithChildren<Pr
     })
     const invitedByUser = data?.user
 
-    const logEventAndSetFlags = (type: AuthProvider['serviceType']): void => {
-        setShouldShowCodySurvey(true)
-        const eventType = type === 'builtin' ? 'form' : type
-        telemetryService.log('SignupInitiated', { type: eventType }, { type: eventType })
-    }
-
     const signUpForm = (
         <SignUpForm
-            onSignUp={args => {
-                logEventAndSetFlags('builtin')
-                return onSignUp(args)
-            }}
+            onSignUp={args => onSignUp(args)}
             context={{
                 authProviders: [],
                 authMinPasswordLength: context.authMinPasswordLength,
@@ -100,21 +91,22 @@ export const CloudSignUpPage: React.FunctionComponent<React.PropsWithChildren<Pr
             buttonLabel="Sign up"
             experimental={true}
             className="my-3"
+            telemetryRecorder={telemetryRecorder}
         />
     )
 
     const renderCodeHostAuth = (): JSX.Element => (
         <>
             <ExternalsAuth
+                page="cloud-signup-page"
                 context={context}
                 githubLabel="Continue with GitHub"
                 gitlabLabel="Continue with GitLab"
-                onClick={logEventAndSetFlags}
+                googleLabel="Continue with Google"
+                onClick={() => {}}
+                telemetryRecorder={telemetryRecorder}
+                telemetryService={telemetryService}
             />
-
-            <div className="mb-4">
-                Or, <Link to={`${location.pathname}?${queryWithUseEmailToggled.toString()}`}>continue with email</Link>
-            </div>
         </>
     )
 
@@ -200,11 +192,11 @@ export const CloudSignUpPage: React.FunctionComponent<React.PropsWithChildren<Pr
 
                     <small className="text-muted">
                         By registering, you agree to our{' '}
-                        <Link to="https://about.sourcegraph.com/terms" target="_blank" rel="noopener">
+                        <Link to="https://sourcegraph.com/terms" target="_blank" rel="noopener">
                             Terms of Service
                         </Link>{' '}
                         and{' '}
-                        <Link to="https://about.sourcegraph.com/privacy" target="_blank" rel="noopener">
+                        <Link to="https://sourcegraph.com/privacy" target="_blank" rel="noopener">
                             Privacy Policy
                         </Link>
                         .

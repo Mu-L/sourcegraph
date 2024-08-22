@@ -3,19 +3,24 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "auth",
-    srcs = ["auth.go"],
+    srcs = [
+        "auth.go",
+        "credential.go",
+    ],
     importpath = "github.com/sourcegraph/sourcegraph/internal/github_apps/auth",
+    tags = [TAG_PLATFORM_SOURCE],
     visibility = ["//:__subpackages__"],
     deps = [
         "//internal/encryption",
+        "//internal/encryption/keyring",
         "//internal/extsvc/auth",
         "//internal/extsvc/github",
-        "//internal/extsvc/github/auth",
         "//internal/github_apps/store",
         "//internal/httpcli",
         "//internal/rcache",
+        "//internal/redispool",
+        "//internal/types",
         "//lib/errors",
-        "//schema",
         "@com_github_golang_jwt_jwt_v4//:jwt",
     ],
 )
@@ -25,16 +30,13 @@ go_test(
     srcs = ["auth_test.go"],
     embed = [":auth"],
     tags = [
+        TAG_PLATFORM_SOURCE,
         # Test requires access to redis
         "requires-network",
     ],
     deps = [
         "//internal/encryption/keyring",
-        "//internal/extsvc/auth",
-        "//internal/github_apps/store",
-        "//internal/github_apps/types",
         "//internal/rcache",
-        "//schema",
         "@com_github_google_uuid//:uuid",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",

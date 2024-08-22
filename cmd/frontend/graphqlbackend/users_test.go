@@ -11,29 +11,40 @@ import (
 	gqlerrors "github.com/graph-gophers/graphql-go/errors"
 	"github.com/sourcegraph/log/logtest"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/envvar"
 	"github.com/sourcegraph/sourcegraph/internal/actor"
 	"github.com/sourcegraph/sourcegraph/internal/database"
+	"github.com/sourcegraph/sourcegraph/internal/database/dbmocks"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbtest"
+	"github.com/sourcegraph/sourcegraph/internal/dotcom"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 )
 
 func TestUsers(t *testing.T) {
-	users := database.NewMockUserStore()
+	users := dbmocks.NewMockUserStore()
 	users.GetByCurrentAuthUserFunc.SetDefaultReturn(&types.User{SiteAdmin: true}, nil)
 	users.ListFunc.SetDefaultReturn([]*types.User{{Username: "user1"}, {Username: "user2"}}, nil)
 	users.CountFunc.SetDefaultReturn(2, nil)
+	users.GetByIDFunc.SetDefaultHook(func(ctx context.Context, id int32) (*types.User, error) {
+		if id == 1 {
+			return &types.User{ID: 1, SiteAdmin: true}, nil
+		}
+		return nil, database.NewUserNotFoundError(id)
+	})
 
-	db := database.NewMockDB()
+	db := dbmocks.NewMockDB()
 	db.UsersFunc.SetDefaultReturn(users)
 
 	RunTests(t, []*Test{
 		{
-			Schema: mustParseGraphQLSchema(t, db),
+			Context: actor.WithActor(context.Background(), actor.FromMockUser(1)),
+			Schema:  mustParseGraphQLSchema(t, db),
 			Query: `
 				{
 					users {
-						nodes { username }
+						nodes {
+							username
+							siteAdmin
+						}
 						totalCount
 					}
 				}
@@ -43,10 +54,12 @@ func TestUsers(t *testing.T) {
 					"users": {
 						"nodes": [
 							{
-								"username": "user1"
+								"username": "user1",
+								"siteAdmin": false
 							},
 							{
-								"username": "user2"
+								"username": "user2",
+								"siteAdmin": false
 							}
 						],
 						"totalCount": 2
@@ -58,7 +71,7 @@ func TestUsers(t *testing.T) {
 }
 
 func TestUsers_Pagination(t *testing.T) {
-	users := database.NewMockUserStore()
+	users := dbmocks.NewMockUserStore()
 	users.GetByCurrentAuthUserFunc.SetDefaultReturn(&types.User{SiteAdmin: true}, nil)
 	users.ListFunc.SetDefaultHook(func(ctx context.Context, opt *database.UsersListOptions) ([]*types.User, error) {
 		if opt.LimitOffset.Offset == 2 {
@@ -69,11 +82,12 @@ func TestUsers_Pagination(t *testing.T) {
 		}
 		return []*types.User{
 			{Username: "user1"},
-			{Username: "user2"}}, nil
+			{Username: "user2"},
+		}, nil
 	})
 	users.CountFunc.SetDefaultReturn(4, nil)
 
-	db := database.NewMockDB()
+	db := dbmocks.NewMockDB()
 	db.UsersFunc.SetDefaultReturn(users)
 
 	RunTests(t, []*Test{
@@ -148,7 +162,7 @@ func TestUsers_Pagination_Integration(t *testing.T) {
 	}
 
 	logger := logtest.Scoped(t)
-	db := database.NewDB(logger, dbtest.NewDB(logger, t))
+	db := database.NewDB(logger, dbtest.NewDB(t))
 	ctx := context.Background()
 
 	schema := mustParseGraphQLSchema(t, db)
@@ -248,21 +262,10 @@ type usersQueryTest struct {
 
 func runUsersQuery(t *testing.T, schema *graphql.Schema, want usersQueryTest) {
 	t.Helper()
-
-	if want.dotcom {
-		orig := envvar.SourcegraphDotComMode()
-		envvar.MockSourcegraphDotComMode(true)
-		t.Cleanup(func() {
-			envvar.MockSourcegraphDotComMode(orig)
-		})
-	}
+	dotcom.MockSourcegraphDotComMode(t, want.dotcom)
 
 	type node struct {
 		Username string `json:"username"`
-	}
-
-	type pageInfo struct {
-		HasNextPage bool `json:"hasNextPage"`
 	}
 
 	type users struct {
@@ -324,13 +327,14 @@ func runUsersQuery(t *testing.T, schema *graphql.Schema, want usersQueryTest) {
 		})
 	}
 }
+
 func TestUsers_InactiveSince(t *testing.T) {
 	if testing.Short() {
 		t.Skip()
 	}
 
 	logger := logtest.Scoped(t)
-	db := database.NewDB(logger, dbtest.NewDB(logger, t))
+	db := database.NewDB(logger, dbtest.NewDB(t))
 	ctx := context.Background()
 
 	schema := mustParseGraphQLSchema(t, db)
@@ -340,7 +344,7 @@ func TestUsers_InactiveSince(t *testing.T) {
 		return now.Add(-time.Duration(days) * 24 * time.Hour)
 	}
 
-	var users = []struct {
+	users := []struct {
 		user        database.NewUser
 		lastEventAt time.Time
 	}{
@@ -362,6 +366,8 @@ func TestUsers_InactiveSince(t *testing.T) {
 			Name:      "testevent",
 			Source:    "test",
 		}
+
+		//lint:ignore SA1019 existing usage of deprecated functionality. Use EventRecorder from internal/telemetryrecorder instead.
 		if err := db.EventLogs().Insert(ctx, event); err != nil {
 			t.Fatal(err)
 		}
@@ -432,6 +438,60 @@ func TestUsers_InactiveSince(t *testing.T) {
 				{ "username": "user-4" }
 			], "totalCount": 4 }}
 			`,
+		},
+	})
+}
+
+func TestUsers_CreatePassword(t *testing.T) {
+	users := dbmocks.NewMockUserStore()
+	users.GetByCurrentAuthUserFunc.SetDefaultReturn(&types.User{SiteAdmin: true}, nil)
+
+	db := dbmocks.NewMockDB()
+	db.UsersFunc.SetDefaultReturn(users)
+
+	actorFromSession := actor.FromMockUser(1)
+	actorFromSession.FromSessionCookie = true
+	actorNotFromSession := actor.FromMockUser(2)
+	actorNotFromSession.FromSessionCookie = false
+
+	RunTests(t, []*Test{
+		{
+			Label:   "Actor from session",
+			Context: actor.WithActor(context.Background(), actorFromSession),
+			Schema:  mustParseGraphQLSchema(t, db),
+			Query: `
+				mutation {
+					createPassword(newPassword:"i am gr00t1234!!") {
+					  alwaysNil
+					}
+				  }
+			`,
+			ExpectedResult: `
+				{
+					"createPassword": {
+						"alwaysNil": null
+					}
+				}
+			`,
+		},
+		{
+			Label:   "Actor not from session (token)",
+			Context: actor.WithActor(context.Background(), actorNotFromSession),
+			Schema:  mustParseGraphQLSchema(t, db),
+			Query: `
+				mutation {
+					createPassword(newPassword:"i am gr00t1234!!") {
+					  alwaysNil
+					}
+				  }
+			`,
+			ExpectedResult: `{ "createPassword": null }`,
+			ExpectedErrors: []*gqlerrors.QueryError{
+				{
+					Message: "only allowed from user session",
+					Path:    []any{"createPassword"},
+				},
+			},
 		},
 	})
 }

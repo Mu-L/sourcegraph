@@ -1,11 +1,11 @@
-import React, { FC, forwardRef, ReactElement, useCallback, useEffect, useRef, useState } from 'react'
+import React, { type FC, forwardRef, type ReactElement, useCallback, useEffect, useRef, useState } from 'react'
 
 import { useId } from '@reach/auto-id'
 import { noop } from 'lodash'
 import { useMergeRefs } from 'use-callback-ref'
 
 import { useDebounce } from '../../hooks'
-import { PopoverContent, PopoverOpenEvent, PopoverOpenEventReason, PopoverTail, Position } from '../Popover'
+import { PopoverContent, type PopoverOpenEvent, PopoverOpenEventReason, PopoverTail, type Position } from '../Popover'
 
 import styles from './Tooltip.module.scss'
 
@@ -191,6 +191,8 @@ export const Tooltip: FC<TooltipProps> = props => {
                         returnTargetFocus={false}
                         className={styles.tooltipContent}
                         onOpenChange={handleOpenChange}
+                        overflowToScrollParents={false}
+                        constrainToScrollParents={false}
                     >
                         {content}
                     </PopoverContent>

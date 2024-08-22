@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sourcegraph/sourcegraph/internal/batches/sources"
+
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/graph-gophers/graphql-go/relay"
@@ -44,9 +46,9 @@ func TestServicePermissionLevels(t *testing.T) {
 
 	logger := logtest.Scoped(t)
 	ctx := actor.WithInternalActor(context.Background())
-	db := database.NewDB(logger, dbtest.NewDB(logger, t))
+	db := database.NewDB(logger, dbtest.NewDB(t))
 
-	s := store.New(db, &observation.TestContext, nil)
+	s := store.New(db, observation.TestContextTB(t), nil)
 	svc := New(s)
 
 	admin := bt.CreateTestUser(t, db, true)
@@ -55,6 +57,9 @@ func TestServicePermissionLevels(t *testing.T) {
 	nonOrgMember := bt.CreateTestUser(t, db, false)
 
 	repo, _ := bt.CreateTestRepo(t, ctx, db)
+	bt.MockRepoPermissions(t, db, user.ID, repo.ID)
+	bt.MockRepoPermissions(t, db, otherUser.ID, repo.ID)
+	bt.MockRepoPermissions(t, db, nonOrgMember.ID, repo.ID)
 
 	org := bt.CreateTestOrg(t, db, "test-org-1", admin.ID, user.ID, otherUser.ID)
 
@@ -292,7 +297,7 @@ func TestService(t *testing.T) {
 
 	logger := logtest.Scoped(t)
 	ctx := actor.WithInternalActor(context.Background())
-	db := database.NewDB(logger, dbtest.NewDB(logger, t))
+	db := database.NewDB(logger, dbtest.NewDB(t))
 
 	admin := bt.CreateTestUser(t, db, true)
 	user := bt.CreateTestUser(t, db, false)
@@ -306,7 +311,7 @@ func TestService(t *testing.T) {
 	now := timeutil.Now()
 	clock := func() time.Time { return now }
 
-	s := store.NewWithClock(db, &observation.TestContext, nil, clock)
+	s := store.NewWithClock(db, observation.TestContextTB(t), nil, clock)
 	rs, _ := bt.CreateTestRepos(t, ctx, db, 4)
 
 	fakeSource := &stesting.FakeChangesetSource{}
@@ -316,6 +321,8 @@ func TestService(t *testing.T) {
 	svc.sourcer = sourcer
 
 	t.Run("CheckViewerCanAdminister", func(t *testing.T) {
+		bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 		org := bt.CreateTestOrg(t, db, "test-org-1", user.ID, user2.ID)
 
 		spec := testBatchSpec(user.ID)
@@ -423,6 +430,8 @@ func TestService(t *testing.T) {
 	})
 
 	t.Run("DeleteBatchChange", func(t *testing.T) {
+		bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 		spec := testBatchSpec(admin.ID)
 		if err := s.CreateBatchSpec(ctx, spec); err != nil {
 			t.Fatal(err)
@@ -443,6 +452,8 @@ func TestService(t *testing.T) {
 	})
 
 	t.Run("CloseBatchChange", func(t *testing.T) {
+		bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 		createBatchChange := func(t *testing.T) *btypes.BatchChange {
 			t.Helper()
 
@@ -515,6 +526,8 @@ func TestService(t *testing.T) {
 	})
 
 	t.Run("EnqueueChangesetSync", func(t *testing.T) {
+		bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 		spec := testBatchSpec(user.ID)
 		if err := s.CreateBatchSpec(ctx, spec); err != nil {
 			t.Fatal(err)
@@ -558,6 +571,8 @@ func TestService(t *testing.T) {
 	})
 
 	t.Run("ReenqueueChangeset", func(t *testing.T) {
+		bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 		spec := testBatchSpec(user.ID)
 		if err := s.CreateBatchSpec(ctx, spec); err != nil {
 			t.Fatal(err)
@@ -615,6 +630,8 @@ func TestService(t *testing.T) {
 		}
 
 		t.Run("success", func(t *testing.T) {
+			bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 			opts := CreateBatchSpecOpts{
 				NamespaceUserID:      admin.ID,
 				RawSpec:              bt.TestRawBatchSpec,
@@ -656,6 +673,8 @@ func TestService(t *testing.T) {
 		})
 
 		t.Run("success with YAML raw spec", func(t *testing.T) {
+			bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 			opts := CreateBatchSpecOpts{
 				NamespaceUserID: admin.ID,
 				RawSpec:         bt.TestRawBatchSpecYAML,
@@ -695,6 +714,8 @@ func TestService(t *testing.T) {
 		})
 
 		t.Run("invalid changesetspec id", func(t *testing.T) {
+			bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 			containsInvalidID := []string{changesetSpecRandIDs[0], "foobar"}
 			opts := CreateBatchSpecOpts{
 				NamespaceUserID:      admin.ID,
@@ -708,6 +729,8 @@ func TestService(t *testing.T) {
 		})
 
 		t.Run("namespace user is not admin and not creator", func(t *testing.T) {
+			bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 			opts := CreateBatchSpecOpts{
 				NamespaceUserID: admin.ID,
 				RawSpec:         bt.TestRawBatchSpecYAML,
@@ -728,6 +751,8 @@ func TestService(t *testing.T) {
 		})
 
 		t.Run("missing access to namespace org", func(t *testing.T) {
+			bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 			orgID := bt.CreateTestOrg(t, db, "test-org").ID
 
 			opts := CreateBatchSpecOpts{
@@ -753,6 +778,8 @@ func TestService(t *testing.T) {
 		})
 
 		t.Run("no side-effects if no changeset spec IDs are given", func(t *testing.T) {
+			bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 			// We already have ChangesetSpecs in the database. Here we
 			// want to make sure that the new BatchSpec is created,
 			// without accidently attaching the existing ChangesetSpecs.
@@ -779,6 +806,8 @@ func TestService(t *testing.T) {
 	})
 
 	t.Run("CreateChangesetSpec", func(t *testing.T) {
+		bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 		repo := rs[0]
 		rawSpec := bt.NewRawChangesetSpecGitBranch(relay.MarshalID("Repository", repo.ID), "d34db33f")
 
@@ -864,6 +893,8 @@ index e5af166..d44c3fc 100644
 	})
 
 	t.Run("CreateChangesetSpecs", func(t *testing.T) {
+		bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 		rawSpec := bt.NewRawChangesetSpecGitBranch(relay.MarshalID("Repository", rs[0].ID), "d34db33f")
 
 		t.Run("success", func(t *testing.T) {
@@ -948,6 +979,8 @@ index e5af166..d44c3fc 100644
 	})
 
 	t.Run("MoveBatchChange", func(t *testing.T) {
+		bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 		createBatchChange := func(t *testing.T, name string, authorID, userID, orgID int32) *btypes.BatchChange {
 			t.Helper()
 
@@ -1060,6 +1093,8 @@ index e5af166..d44c3fc 100644
 	})
 
 	t.Run("GetBatchChangeMatchingBatchSpec", func(t *testing.T) {
+		bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 		batchSpec := bt.CreateBatchSpec(t, ctx, s, "matching-batch-spec", admin.ID, 0)
 
 		haveBatchChange, err := svc.GetBatchChangeMatchingBatchSpec(ctx, batchSpec)
@@ -1115,6 +1150,8 @@ index e5af166..d44c3fc 100644
 	})
 
 	t.Run("GetNewestBatchSpec", func(t *testing.T) {
+		bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 		older := bt.CreateBatchSpec(t, ctx, s, "superseding", user.ID, 0)
 		newer := bt.CreateBatchSpec(t, ctx, s, "superseding", user.ID, 0)
 
@@ -1147,6 +1184,8 @@ index e5af166..d44c3fc 100644
 	})
 
 	t.Run("FetchUsernameForBitbucketServerToken", func(t *testing.T) {
+		bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 		fakeSource := &stesting.FakeChangesetSource{Username: "my-bbs-username"}
 		sourcer := stesting.NewFakeSourcer(nil, fakeSource)
 
@@ -1176,14 +1215,20 @@ index e5af166..d44c3fc 100644
 	})
 
 	t.Run("ValidateAuthenticator", func(t *testing.T) {
+		bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 		t.Run("valid", func(t *testing.T) {
 			fakeSource.AuthenticatorIsValid = true
 			fakeSource.ValidateAuthenticatorCalled = false
+			validateArgs := ValidateAuthenticatorArgs{
+				ExternalServiceID:   "https://github.com/",
+				ExternalServiceType: extsvc.KindToType(extsvc.TypeGitHub),
+			}
 			if err := svc.ValidateAuthenticator(
 				ctx,
-				"https://github.com/",
-				extsvc.TypeGitHub,
 				&extsvcauth.OAuthBearerToken{Token: "test123"},
+				sources.AuthenticationStrategyUserCredential,
+				validateArgs,
 			); err != nil {
 				t.Fatal(err)
 			}
@@ -1194,11 +1239,15 @@ index e5af166..d44c3fc 100644
 		t.Run("invalid", func(t *testing.T) {
 			fakeSource.AuthenticatorIsValid = false
 			fakeSource.ValidateAuthenticatorCalled = false
+			validateArgs := ValidateAuthenticatorArgs{
+				ExternalServiceID:   "https://github.com/",
+				ExternalServiceType: extsvc.KindToType(extsvc.TypeGitHub),
+			}
 			if err := svc.ValidateAuthenticator(
 				ctx,
-				"https://github.com/",
-				extsvc.TypeGitHub,
 				&extsvcauth.OAuthBearerToken{Token: "test123"},
+				sources.AuthenticationStrategyUserCredential,
+				validateArgs,
 			); err == nil {
 				t.Fatal("unexpected nil-error returned from ValidateAuthenticator")
 			}
@@ -1209,6 +1258,8 @@ index e5af166..d44c3fc 100644
 	})
 
 	t.Run("CreateChangesetJobs", func(t *testing.T) {
+		bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 		spec := testBatchSpec(admin.ID)
 		if err := s.CreateBatchSpec(ctx, spec); err != nil {
 			t.Fatal(err)
@@ -1465,6 +1516,8 @@ index e5af166..d44c3fc 100644
 	})
 
 	t.Run("ExecuteBatchSpec", func(t *testing.T) {
+		bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 		adminCtx := actor.WithActor(ctx, actor.FromUser(admin.ID))
 		t.Run("success", func(t *testing.T) {
 			spec := testBatchSpec(admin.ID)
@@ -1647,7 +1700,7 @@ index e5af166..d44c3fc 100644
 
 			// Execute BatchSpec by creating execution jobs
 			_, err := svc.ExecuteBatchSpec(adminCtx, ExecuteBatchSpecOpts{BatchSpecRandID: spec.RandID})
-			if !errors.HasType(err, ErrBatchSpecResolutionErrored{}) {
+			if !errors.HasType[ErrBatchSpecResolutionErrored](err) {
 				t.Fatalf("error has wrong type: %T", err)
 			}
 		})
@@ -1713,6 +1766,8 @@ index e5af166..d44c3fc 100644
 	})
 
 	t.Run("CancelBatchSpec", func(t *testing.T) {
+		bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 		t.Run("success", func(t *testing.T) {
 			spec := testBatchSpec(admin.ID)
 			spec.CreatedFromRaw = true
@@ -1820,6 +1875,8 @@ index e5af166..d44c3fc 100644
 	})
 
 	t.Run("ReplaceBatchSpecInput", func(t *testing.T) {
+		bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 		createBatchSpecWithWorkspaces := func(t *testing.T) *btypes.BatchSpec {
 			t.Helper()
 			spec := testBatchSpec(admin.ID)
@@ -2036,6 +2093,8 @@ changesetTemplate:
 	})
 
 	t.Run("CreateBatchSpecFromRaw", func(t *testing.T) {
+		bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 		t.Run("batch change isn't owned by non-admin user", func(t *testing.T) {
 			spec := testBatchSpec(user.ID)
 			if err := s.CreateBatchSpec(ctx, spec); err != nil {
@@ -2166,6 +2225,8 @@ changesetTemplate:
 	})
 
 	t.Run("UpsertBatchSpecInput", func(t *testing.T) {
+		bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 		adminCtx := actor.WithActor(ctx, actor.FromUser(admin.ID))
 		t.Run("new spec", func(t *testing.T) {
 			newSpec, err := svc.UpsertBatchSpecInput(adminCtx, UpsertBatchSpecInputOpts{
@@ -2232,6 +2293,8 @@ changesetTemplate:
 	})
 
 	t.Run("ValidateChangesetSpecs", func(t *testing.T) {
+		bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 		batchSpec := bt.CreateBatchSpec(t, ctx, s, "matching-batch-spec", admin.ID, 0)
 		conflictingRef := "refs/heads/conflicting-head-ref"
 		for _, opts := range []bt.TestSpecOpts{
@@ -2259,6 +2322,8 @@ changesetTemplate:
 	})
 
 	t.Run("ComputeBatchSpecState", func(t *testing.T) {
+		bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 		t.Run("success", func(t *testing.T) {
 			spec := testBatchSpec(admin.ID)
 			spec.CreatedFromRaw = true
@@ -2309,6 +2374,8 @@ changesetTemplate:
 	})
 
 	t.Run("RetryBatchSpecWorkspaces", func(t *testing.T) {
+		bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 		failureMessage := "this failed"
 
 		t.Run("success", func(t *testing.T) {
@@ -2512,6 +2579,8 @@ changesetTemplate:
 	})
 
 	t.Run("RetryBatchSpecExecution", func(t *testing.T) {
+		bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 		failureMessage := "this failed"
 
 		createSpec := func(t *testing.T) *btypes.BatchSpec {
@@ -2808,6 +2877,8 @@ changesetTemplate:
 	})
 
 	t.Run("GetAvailableBulkOperations", func(t *testing.T) {
+		bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 		spec := testBatchSpec(admin.ID)
 		if err := s.CreateBatchSpec(ctx, spec); err != nil {
 			t.Fatal(err)
@@ -2837,7 +2908,7 @@ changesetTemplate:
 				t.Fatal(err)
 			}
 
-			expectedBulkOperations := []string{"REENQUEUE", "PUBLISH", "CLOSE"}
+			expectedBulkOperations := []string{"REENQUEUE", "PUBLISH", "EXPORT"}
 			if !assert.ElementsMatch(t, expectedBulkOperations, bulkOperations) {
 				t.Errorf("wrong bulk operation type returned. want=%q, have=%q", expectedBulkOperations, bulkOperations)
 			}
@@ -2864,7 +2935,7 @@ changesetTemplate:
 				t.Fatal(err)
 			}
 
-			expectedBulkOperations := []string{"DETACH"}
+			expectedBulkOperations := []string{"DETACH", "EXPORT"}
 			if !assert.ElementsMatch(t, expectedBulkOperations, bulkOperations) {
 				t.Errorf("wrong bulk operation type returned. want=%q, have=%q", expectedBulkOperations, bulkOperations)
 			}
@@ -2888,7 +2959,7 @@ changesetTemplate:
 				t.Fatal(err)
 			}
 
-			expectedBulkOperations := []string{"PUBLISH"}
+			expectedBulkOperations := []string{"PUBLISH", "EXPORT"}
 			if !assert.ElementsMatch(t, expectedBulkOperations, bulkOperations) {
 				t.Errorf("wrong bulk operation type returned. want=%q, have=%q", expectedBulkOperations, bulkOperations)
 			}
@@ -2913,7 +2984,7 @@ changesetTemplate:
 				t.Fatal(err)
 			}
 
-			expectedBulkOperations := []string{"CLOSE", "COMMENT", "PUBLISH"}
+			expectedBulkOperations := []string{"CLOSE", "COMMENT", "PUBLISH", "EXPORT"}
 			if !assert.ElementsMatch(t, expectedBulkOperations, bulkOperations) {
 				t.Errorf("wrong bulk operation type returned. want=%q, have=%q", expectedBulkOperations, bulkOperations)
 			}
@@ -2938,7 +3009,7 @@ changesetTemplate:
 				t.Fatal(err)
 			}
 
-			expectedBulkOperations := []string{"CLOSE", "COMMENT", "MERGE", "PUBLISH"}
+			expectedBulkOperations := []string{"CLOSE", "COMMENT", "MERGE", "PUBLISH", "EXPORT"}
 			if !assert.ElementsMatch(t, expectedBulkOperations, bulkOperations) {
 				t.Errorf("wrong bulk operation type returned. want=%q, have=%q", expectedBulkOperations, bulkOperations)
 			}
@@ -2963,7 +3034,7 @@ changesetTemplate:
 				t.Fatal(err)
 			}
 
-			expectedBulkOperations := []string{"COMMENT", "PUBLISH"}
+			expectedBulkOperations := []string{"COMMENT", "PUBLISH", "EXPORT"}
 			if !assert.ElementsMatch(t, expectedBulkOperations, bulkOperations) {
 				t.Errorf("wrong bulk operation type returned. want=%q, have=%q", expectedBulkOperations, bulkOperations)
 			}
@@ -2988,7 +3059,7 @@ changesetTemplate:
 				t.Fatal(err)
 			}
 
-			expectedBulkOperations := []string{"COMMENT", "PUBLISH"}
+			expectedBulkOperations := []string{"COMMENT", "PUBLISH", "EXPORT"}
 			if !assert.ElementsMatch(t, expectedBulkOperations, bulkOperations) {
 				t.Errorf("wrong bulk operation type returned. want=%q, have=%q", expectedBulkOperations, bulkOperations)
 			}
@@ -3011,7 +3082,10 @@ changesetTemplate:
 			})
 
 			assert.NoError(t, err)
-			assert.Empty(t, bulkOperations)
+			expectedBulkOperations := []string{"EXPORT"}
+			if !assert.ElementsMatch(t, expectedBulkOperations, bulkOperations) {
+				t.Errorf("wrong bulk operation type returned. want=%q, have=%q", expectedBulkOperations, bulkOperations)
+			}
 		})
 
 		t.Run("imported changesets", func(t *testing.T) {
@@ -3030,7 +3104,7 @@ changesetTemplate:
 			})
 
 			assert.NoError(t, err)
-			expectedBulkOperations := []string{"COMMENT", "CLOSE", "MERGE"}
+			expectedBulkOperations := []string{"COMMENT", "CLOSE", "MERGE", "EXPORT"}
 			if !assert.ElementsMatch(t, expectedBulkOperations, bulkOperations) {
 				t.Errorf("wrong bulk operation type returned. want=%q, have=%q", expectedBulkOperations, bulkOperations)
 			}
@@ -3075,7 +3149,7 @@ changesetTemplate:
 				t.Fatal(err)
 			}
 
-			expectedBulkOperations := []string{}
+			expectedBulkOperations := []string{"EXPORT"}
 			if !assert.ElementsMatch(t, expectedBulkOperations, bulkOperations) {
 				t.Errorf("wrong bulk operation type returned. want=%q, have=%q", expectedBulkOperations, bulkOperations)
 			}
@@ -3118,7 +3192,7 @@ changesetTemplate:
 				t.Fatal(err)
 			}
 
-			expectedBulkOperations := []string{"COMMENT", "PUBLISH"}
+			expectedBulkOperations := []string{"EXPORT", "COMMENT", "PUBLISH"}
 			if !assert.ElementsMatch(t, expectedBulkOperations, bulkOperations) {
 				t.Errorf("wrong bulk operation type returned. want=%q, have=%q", expectedBulkOperations, bulkOperations)
 			}
@@ -3126,6 +3200,8 @@ changesetTemplate:
 	})
 
 	t.Run("UpsertEmptyBatchChange", func(t *testing.T) {
+		bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
 		t.Run("creates new batch change if it is non-existent", func(t *testing.T) {
 			name := "random-bc-name"
 
@@ -3195,6 +3271,38 @@ changesetTemplate:
 				t.Fatal("expected different spec ID for batch change")
 			}
 		})
+	})
+
+	t.Run("GetChangesetsByIDs", func(t *testing.T) {
+		bt.MockRepoPermissions(t, db, user.ID, rs[0].ID, rs[1].ID, rs[2].ID, rs[3].ID)
+
+		spec := testBatchSpec(admin.ID)
+		if err := s.CreateBatchSpec(ctx, spec); err != nil {
+			t.Fatal(err)
+		}
+
+		batchChange := testBatchChange(admin.ID, spec)
+		if err := s.CreateBatchChange(ctx, batchChange); err != nil {
+			t.Fatal(err)
+		}
+
+		changeset := testChangeset(rs[0].ID, batchChange.ID, btypes.ChangesetExternalStateOpen)
+		if err := s.CreateChangeset(ctx, changeset); err != nil {
+			t.Fatal(err)
+		}
+
+		changesets, err := svc.GetChangesetsByIDs(ctx, batchChange.ID, []int64{changeset.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(changesets) != 1 {
+			t.Fatalf("expected 1 changeset but got %d", len(changesets))
+		}
+
+		if changesets[0].ID != changeset.ID {
+			t.Fatalf("expected changeset ID %d but got %d", changeset.ID, changesets[0].ID)
+		}
 	})
 }
 
@@ -3379,7 +3487,7 @@ func assertAuthError(t *testing.T, err error) {
 	if err == nil {
 		t.Fatalf("expected error. got none")
 	}
-	if !errors.HasType(err, &auth.InsufficientAuthorizationError{}) {
+	if !errors.HasType[*auth.InsufficientAuthorizationError](err) {
 		t.Fatalf("wrong error: %s (%T)", err, err)
 	}
 }
@@ -3391,16 +3499,8 @@ func assertOrgOrAuthError(t *testing.T, err error) {
 		t.Fatal("expected org authorization error, got none")
 	}
 
-	if !errors.HasType(err, auth.ErrNotAnOrgMember) && !errors.HasType(err, &auth.InsufficientAuthorizationError{}) {
+	if !errors.Is(err, auth.ErrNotAnOrgMember) && !errors.HasType[*auth.InsufficientAuthorizationError](err) {
 		t.Fatalf("expected authorization error, got %s", err.Error())
-	}
-}
-
-func assertNoOrgAuthError(t *testing.T, err error) {
-	t.Helper()
-
-	if errors.HasType(err, auth.ErrNotAnOrgMember) {
-		t.Fatal("got org authorization error")
 	}
 }
 
@@ -3408,7 +3508,7 @@ func assertNoAuthError(t *testing.T, err error) {
 	t.Helper()
 
 	// Ignore other errors, we only want to check whether it's an auth error
-	if errors.HasType(err, &auth.InsufficientAuthorizationError{}) || errors.Is(err, auth.ErrNotAnOrgMember) {
+	if errors.HasType[*auth.InsufficientAuthorizationError](err) || errors.Is(err, auth.ErrNotAnOrgMember) {
 		t.Fatalf("got auth error")
 	}
 }

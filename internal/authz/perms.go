@@ -2,6 +2,7 @@ package authz
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -96,6 +97,8 @@ const (
 	SourceUserSync PermsSource = "user_sync"
 	SourceAPI      PermsSource = "api"
 )
+
+func (s PermsSource) ToGraphQL() string { return strings.ToUpper(string(s)) }
 
 func (p *Permission) Attrs() []attribute.KeyValue {
 	return []attribute.KeyValue{
@@ -196,7 +199,7 @@ type UserPendingPermissions struct {
 
 // GenerateSortedIDsSlice returns a sorted slice of the IDs set.
 func (p *UserPendingPermissions) GenerateSortedIDsSlice() []int32 {
-	return p.IDs.Sorted(collections.NaturalCompare[int32])
+	return collections.SortedSetValues(p.IDs)
 }
 
 func (p *UserPendingPermissions) Attrs() []attribute.KeyValue {

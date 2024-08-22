@@ -1,37 +1,49 @@
-import { Meta, Story } from '@storybook/react'
+import type { Meta, StoryFn } from '@storybook/react'
+
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 
 import { WebStory } from '../components/WebStory'
-import { SourcegraphContext } from '../jscontext'
+import type { SourcegraphContext } from '../jscontext'
 
-import { SignInPage, SignInPageProps } from './SignInPage'
+import { SignInPage, type SignInPageProps } from './SignInPage'
 
 const config: Meta = {
     title: 'web/auth/SignInPage',
+    parameters: {},
 }
 
 export default config
 
 const authProviders: SourcegraphContext['authProviders'] = [
     {
+        clientID: '001',
         displayName: 'Builtin username-password authentication',
         isBuiltin: true,
         serviceType: 'builtin',
         authenticationURL: '',
         serviceID: '',
+        noSignIn: false,
+        requiredForAuthz: false,
     },
     {
+        clientID: '002',
         serviceType: 'github',
         displayName: 'GitHub',
         isBuiltin: false,
         authenticationURL: '/.auth/github/login?pc=f00bar',
         serviceID: 'https://github.com',
+        noSignIn: false,
+        requiredForAuthz: false,
     },
     {
+        clientID: '003',
         serviceType: 'gitlab',
         displayName: 'GitLab',
         isBuiltin: false,
         authenticationURL: '/.auth/gitlab/login?pc=f00bar',
         serviceID: 'https://gitlab.com',
+        noSignIn: false,
+        requiredForAuthz: false,
     },
 ]
 
@@ -48,104 +60,179 @@ const context: SignInPageProps['context'] = {
     resetPasswordEnabled: true,
 }
 
-export const Default: Story = () => (
-    <WebStory>{({ isLightTheme }) => <SignInPage context={context} authenticatedUser={null} />}</WebStory>
+export const Default: StoryFn = () => (
+    <WebStory>
+        {() => <SignInPage context={context} authenticatedUser={null} telemetryRecorder={noOpTelemetryRecorder} />}
+    </WebStory>
 )
 
-export const NoBuiltIn: Story = () => (
-    <WebStory>
-        {({ isLightTheme }) => (
-            <SignInPage context={{ ...context, authProviders: noBuiltInAuthProviders }} authenticatedUser={null} />
+export const ShowMore: StoryFn = () => (
+    <WebStory initialEntries={[{ pathname: '/sign-in', search: '?showMore' }]}>
+        {() => (
+            <SignInPage
+                context={{ ...context, primaryLoginProvidersCount: 1 }}
+                authenticatedUser={null}
+                telemetryRecorder={noOpTelemetryRecorder}
+            />
         )}
     </WebStory>
 )
 
-export const NoResetPassword: Story = () => (
+export const Dotcom: StoryFn = () => (
     <WebStory>
-        {({ isLightTheme }) => (
-            <SignInPage context={{ ...context, resetPasswordEnabled: false }} authenticatedUser={null} />
+        {() => (
+            <SignInPage
+                context={{ ...context, sourcegraphDotComMode: true }}
+                authenticatedUser={null}
+                telemetryRecorder={noOpTelemetryRecorder}
+            />
         )}
     </WebStory>
 )
 
-export const NoSignUp: Story = () => (
+export const NoProviders: StoryFn = () => (
     <WebStory>
-        {({ isLightTheme }) => <SignInPage context={{ ...context, allowSignup: false }} authenticatedUser={null} />}
+        {() => (
+            <SignInPage
+                context={{ ...context, authProviders: [] }}
+                authenticatedUser={null}
+                telemetryRecorder={noOpTelemetryRecorder}
+            />
+        )}
     </WebStory>
 )
 
-export const NoAccessRequest: Story = () => (
+export const NoBuiltIn: StoryFn = () => (
     <WebStory>
-        {({ isLightTheme }) => (
+        {() => (
+            <SignInPage
+                context={{ ...context, authProviders: noBuiltInAuthProviders }}
+                authenticatedUser={null}
+                telemetryRecorder={noOpTelemetryRecorder}
+            />
+        )}
+    </WebStory>
+)
+
+export const NoResetPassword: StoryFn = () => (
+    <WebStory>
+        {() => (
+            <SignInPage
+                context={{ ...context, resetPasswordEnabled: false }}
+                authenticatedUser={null}
+                telemetryRecorder={noOpTelemetryRecorder}
+            />
+        )}
+    </WebStory>
+)
+
+export const NoSignUp: StoryFn = () => (
+    <WebStory>
+        {() => (
+            <SignInPage
+                context={{ ...context, allowSignup: false }}
+                authenticatedUser={null}
+                telemetryRecorder={noOpTelemetryRecorder}
+            />
+        )}
+    </WebStory>
+)
+
+export const NoAccessRequest: StoryFn = () => (
+    <WebStory>
+        {() => (
             <SignInPage
                 context={{ ...context, allowSignup: false, authAccessRequest: { enabled: false } }}
                 authenticatedUser={null}
+                telemetryRecorder={noOpTelemetryRecorder}
             />
         )}
     </WebStory>
 )
 
-export const DotComSignUp: Story = () => (
+export const DotComSignUp: StoryFn = () => (
     <WebStory>
-        {({ isLightTheme }) => (
-            <SignInPage context={{ ...context, sourcegraphDotComMode: true }} authenticatedUser={null} />
+        {() => (
+            <SignInPage
+                context={{ ...context, sourcegraphDotComMode: true }}
+                authenticatedUser={null}
+                telemetryRecorder={noOpTelemetryRecorder}
+            />
         )}
     </WebStory>
 )
 
-export const OnlyOnePrimaryProvider: Story = () => (
+export const OnlyOnePrimaryProvider: StoryFn = () => (
     <WebStory>
-        {({ isLightTheme }) => (
-            <SignInPage context={{ ...context, primaryLoginProvidersCount: 1 }} authenticatedUser={null} />
+        {() => (
+            <SignInPage
+                context={{ ...context, primaryLoginProvidersCount: 1 }}
+                authenticatedUser={null}
+                telemetryRecorder={noOpTelemetryRecorder}
+            />
         )}
     </WebStory>
 )
 
-export const OnlyOnePrimaryProviderWithoutBuiltIn: Story = () => (
+export const OnlyOnePrimaryProviderWithoutBuiltIn: StoryFn = () => (
     <WebStory>
-        {({ isLightTheme }) => (
+        {() => (
             <SignInPage
                 context={{ ...context, primaryLoginProvidersCount: 1, authProviders: noBuiltInAuthProviders }}
                 authenticatedUser={null}
+                telemetryRecorder={noOpTelemetryRecorder}
             />
         )}
     </WebStory>
 )
 
-export const ShowMoreProviders: Story = () => (
+export const ShowMoreProviders: StoryFn = () => (
     <WebStory initialEntries={['/sign-in?showMore']}>
-        {({ isLightTheme }) => (
-            <SignInPage context={{ ...context, primaryLoginProvidersCount: 1 }} authenticatedUser={null} />
+        {() => (
+            <SignInPage
+                context={{ ...context, primaryLoginProvidersCount: 1 }}
+                authenticatedUser={null}
+                telemetryRecorder={noOpTelemetryRecorder}
+            />
         )}
     </WebStory>
 )
 
-export const ShowMoreProvidersWithoutBuiltIn: Story = () => (
+export const ShowMoreProvidersWithoutBuiltIn: StoryFn = () => (
     <WebStory initialEntries={['/sign-in?showMore']}>
-        {({ isLightTheme }) => (
+        {() => (
             <SignInPage
                 context={{ ...context, authProviders: noBuiltInAuthProviders, primaryLoginProvidersCount: 1 }}
                 authenticatedUser={null}
+                telemetryRecorder={noOpTelemetryRecorder}
             />
         )}
     </WebStory>
 )
 
-export const OnlyBuiltInAuthProvider: Story = () => (
+export const OnlyBuiltInAuthProvider: StoryFn = () => (
     <WebStory>
-        {({ isLightTheme }) => (
-            <SignInPage context={{ ...context, authProviders: onlyBuiltInAuthProvider }} authenticatedUser={null} />
+        {() => (
+            <SignInPage
+                context={{ ...context, authProviders: onlyBuiltInAuthProvider }}
+                authenticatedUser={null}
+                telemetryRecorder={noOpTelemetryRecorder}
+            />
         )}
     </WebStory>
 )
 
-export const PrefixCanBeChanged: Story = () => {
+export const PrefixCanBeChanged: StoryFn = () => {
     const providers = noBuiltInAuthProviders.map(provider => ({ ...provider, displayPrefix: 'Just login with' }))
 
     return (
         <WebStory>
-            {({ isLightTheme }) => (
-                <SignInPage context={{ ...context, authProviders: providers }} authenticatedUser={null} />
+            {() => (
+                <SignInPage
+                    context={{ ...context, authProviders: providers }}
+                    authenticatedUser={null}
+                    telemetryRecorder={noOpTelemetryRecorder}
+                />
             )}
         </WebStory>
     )

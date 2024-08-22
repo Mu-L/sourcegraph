@@ -11,6 +11,7 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/extsvc/auth"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc/gitlab"
 	"github.com/sourcegraph/sourcegraph/internal/httpcli"
+	"github.com/sourcegraph/sourcegraph/internal/oauthtoken"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
@@ -28,6 +29,8 @@ type OAuthProvider struct {
 	clientURL      *url.URL
 	codeHost       *extsvc.CodeHost
 	db             database.DB
+
+	syncInternalRepoPermissions bool
 }
 
 type OAuthProviderOp struct {
@@ -46,6 +49,10 @@ type OAuthProviderOp struct {
 	TokenType gitlab.TokenType
 
 	DB database.DB
+
+	CLI httpcli.Doer
+
+	SyncInternalRepoPermissions bool
 }
 
 func newOAuthProvider(op OAuthProviderOp, cli httpcli.Doer) *OAuthProvider {
@@ -53,11 +60,12 @@ func newOAuthProvider(op OAuthProviderOp, cli httpcli.Doer) *OAuthProvider {
 		token:     op.Token,
 		tokenType: op.TokenType,
 
-		urn:            op.URN,
-		clientProvider: gitlab.NewClientProvider(op.URN, op.BaseURL, cli),
-		clientURL:      op.BaseURL,
-		codeHost:       extsvc.NewCodeHost(op.BaseURL, extsvc.TypeGitLab),
-		db:             op.DB,
+		urn:                         op.URN,
+		clientProvider:              gitlab.NewClientProvider(op.URN, op.BaseURL, cli),
+		clientURL:                   op.BaseURL,
+		codeHost:                    extsvc.NewCodeHost(op.BaseURL, extsvc.TypeGitLab),
+		db:                          op.DB,
+		syncInternalRepoPermissions: op.SyncInternalRepoPermissions,
 	}
 }
 
@@ -77,7 +85,7 @@ func (p *OAuthProvider) ServiceType() string {
 	return p.codeHost.ServiceType
 }
 
-func (p *OAuthProvider) FetchAccount(context.Context, *types.User, []*extsvc.Account, []string) (mine *extsvc.Account, err error) {
+func (p *OAuthProvider) FetchAccount(context.Context, *types.User) (mine *extsvc.Account, err error) {
 	return nil, nil
 }
 
@@ -111,11 +119,11 @@ func (p *OAuthProvider) FetchUserPerms(ctx context.Context, account *extsvc.Acco
 		Token:              tok.AccessToken,
 		RefreshToken:       tok.RefreshToken,
 		Expiry:             tok.Expiry,
-		RefreshFunc:        database.GetAccountRefreshAndStoreOAuthTokenFunc(p.db.UserExternalAccounts(), account.ID, gitlab.GetOAuthContext(strings.TrimSuffix(p.ServiceID(), "/"))),
+		RefreshFunc:        oauthtoken.GetAccountRefreshAndStoreOAuthTokenFunc(p.db.UserExternalAccounts(), account.ID, gitlab.GetOAuthContext(strings.TrimSuffix(p.ServiceID(), "/"))),
 		NeedsRefreshBuffer: 5,
 	}
 	client := p.clientProvider.NewClient(token)
-	return listProjects(ctx, client)
+	return listProjects(ctx, client, p.syncInternalRepoPermissions)
 }
 
 // FetchRepoPerms is not implemented for the OAuthProvider type.

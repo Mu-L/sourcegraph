@@ -1,21 +1,18 @@
-# Bazel for client/*
+# Bazel for client
 
 See [Bazel at Sourcegraph](./index.md) for general bazel info/setup.
+See [Overview of the Bazel configuration for client](./web_overview.md) for in-depth configuration overview.
 
 ## Tools
 
 The sourcegraph client projects are setup to compile, bundle and test with Bazel. The tools used within Bazel include:
-* Babel for ts\[x\] transpilation
-* Webpack for bundling
-* Jest, Mocha for testing
-* esbuild for experimental bundling as well as internal tooling
+* Esbuild for bundling
+* Vitest, Mocha for testing
 * Node tools such as graphql-codegen for generating graphql schema types
 
 The Bazel rulesets used to support these include:
 * [rules_js](https://github.com/aspect-build/rules_js)
 * [rules_ts](https://github.com/aspect-build/rules_ts)
-* [rules_jest](https://github.com/aspect-build/rules_jest)
-* [rules_webpack](https://github.com/aspect-build/rules_webpack)
 * [rules_esbuild](https://github.com/aspect-build/rules_esbuild)
 
 See [Aspect rules docs](https://docs.aspect.build/rules/) for more information on the Bazel rulesets used.
@@ -24,7 +21,7 @@ See [Aspect rules docs](https://docs.aspect.build/rules/) for more information o
 
 The primary Bazel targets have been configured roughly aligning with the pnpm workspace projects, while often composed of many sub-targets. The primary targets for `client/*` pnpm projects are generated using `bazel configure`. The primary targets include:
 * `:{name}_pkg` for the npm package representing the pnpm project
-* `:test` for the Jest unit tests of the project
+* `:test` for the Vitest unit tests of the project
 * `:{name}_lib` for compiling non-test `*.ts\[x\]` files
 * `:{name}_tests` for compiling unit test `*.ts\[x\]` files
 
@@ -36,25 +33,15 @@ Additional `BUILD.bazel` files may exist throughout subdirectories and is encour
 
 ## Testing
 
-All client tests (of all types such as jest and mocha) can be invoked by `bazel test //client/...` or individual tests can be specified such as `bazel test //client/common:test` or `bazel test //client/web/src/end-to-end:e2e`. Jest tests can be debugged using `bazel run --config=debug //client/common:test`.
-
-### Notes
-
-Currently, it's impossible to use features that Babel will transpile, creating helper methods inside Puppeteer `driver.page.evaluate` calls. E.g., the `for-of` syntax transpiled by Babel creates a helper in the module's top-level scope and uses it in the `evaluate` call. But since the contents of the `evaluate` call are passed to the `eval` function inside Puppeteer, it doesn't have the reference to the created helper and fails in the runtime. This is caused by the fact that we uniformly transform all TS files to JS using Babel in Bazel. We will develop an approach that would allow skipping the Babel transpilation step for files executed only in the node environment.
+All client tests (of all types such as Vitest and mocha) can be invoked by `bazel test //client/...` or individual tests can be specified such as `bazel test //client/common:test` or `bazel test //client/web/src/end-to-end:e2e`. Vitest tests can be debugged using `bazel run --config=debug //client/common:test`.
 
 ## Bundling
 
-The primary `client/web` bundle targets are:
-* `//client/web:bundle`
-* `//client/web:bundle-dev`
-* `//client/web:bundle-enterprise`
-See `client/web/BUILD`.
-
-The `client/web` devserver can be run using `bazel run //client/web:devserver`
+The primary `client/web` bundle target is `//client/web:bundle`. See `client/web/BUILD.bazel`.
 
 ## Rule configuration
 
-Most rules used throughout `client/*` are macros defined in `tools/*.bzl` to provide a consistent configuration used throughout the repo.
+Most rules used throughout `client/*` are macros defined in `dev/*.bzl` to provide a consistent configuration used throughout the repo.
 
 ## FAQ
 

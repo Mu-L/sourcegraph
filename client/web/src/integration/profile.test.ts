@@ -1,17 +1,17 @@
 import assert from 'assert'
 
 import { subDays } from 'date-fns'
+import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import { accessibilityAudit } from '@sourcegraph/shared/src/testing/accessibility'
-import { createDriverForTest, Driver } from '@sourcegraph/shared/src/testing/driver'
+import { createDriverForTest, type Driver } from '@sourcegraph/shared/src/testing/driver'
 import { testUserID } from '@sourcegraph/shared/src/testing/integration/graphQlResults'
 import { afterEachSaveScreenshotIfFailed } from '@sourcegraph/shared/src/testing/screenshotReporter'
 
-import { UserSettingsAreaUserFields } from '../graphql-operations'
+import type { UserSettingsAreaUserFields } from '../graphql-operations'
 
-import { createWebIntegrationTestContext, WebIntegrationTestContext } from './context'
+import { createWebIntegrationTestContext, type WebIntegrationTestContext } from './context'
 import { commonWebGraphQlResults } from './graphQlResults'
-import { percySnapshotWithVariants } from './utils'
 
 const now = new Date()
 
@@ -66,7 +66,6 @@ describe('User profile page', () => {
         })
         await driver.page.goto(driver.sourcegraphBaseUrl + '/users/test/settings/profile')
         await driver.page.waitForSelector('[data-testid="user-profile-form-fields"]')
-        await percySnapshotWithVariants(driver.page, 'User Profile Settings Page')
         await accessibilityAudit(driver.page)
         await driver.replaceText({
             selector: '[data-testid="test-UserProfileFormFields__displayName"]',
@@ -125,7 +124,6 @@ describe('User Different Settings Page', () => {
         })
         await driver.page.goto(driver.sourcegraphBaseUrl + '/users/test/settings/emails')
         await driver.page.waitForSelector('[data-testid="user-settings-emails-page"]')
-        await percySnapshotWithVariants(driver.page, 'User Email Settings Page')
         await accessibilityAudit(driver.page)
     })
 
@@ -134,6 +132,7 @@ describe('User Different Settings Page', () => {
             ...commonWebGraphQlResults,
             UserExternalAccountsWithAccountData: () => ({
                 user: {
+                    id: 'u1',
                     __typename: 'User',
                     externalAccounts: {
                         __typename: 'ExternalAccountConnection',
@@ -186,7 +185,6 @@ describe('User Different Settings Page', () => {
         })
         await driver.page.goto(driver.sourcegraphBaseUrl + '/user/settings/security')
         await driver.page.waitForSelector('.user-settings-account-security-page')
-        await percySnapshotWithVariants(driver.page, 'User Account Security Settings Page')
         await accessibilityAudit(driver.page)
     })
 })

@@ -3,19 +3,19 @@ import { useState } from 'react'
 import { useMutation } from '@sourcegraph/http-client'
 import { ErrorAlert } from '@sourcegraph/wildcard'
 
-import { FilteredConnectionFilterValue } from '../../../components/FilteredConnection'
-import {
-    UpdatePackageRepoFilterVariables,
+import type { FilterOption } from '../../../components/FilteredConnection'
+import type {
     PackageMatchBehaviour,
     PackageRepoFilterFields,
     UpdatePackageRepoFilterResult,
+    UpdatePackageRepoFilterVariables,
 } from '../../../graphql-operations'
 import { updatePackageRepoFilterMutation } from '../backend'
 import { BehaviourSelect } from '../components/BehaviourSelect'
-import { MultiPackageForm, MultiPackageState } from '../components/MultiPackageForm'
-import { SinglePackageForm, SinglePackageState } from '../components/SinglePackageForm'
+import { MultiPackageForm, type MultiPackageState } from '../components/MultiPackageForm'
+import { SinglePackageForm, type SinglePackageState } from '../components/SinglePackageForm'
 
-import { BlockType } from './AddPackageFilterModalContent'
+import type { BlockType } from './AddPackageFilterModalContent'
 
 import styles from './AddPackageFilterModalContent.module.scss'
 
@@ -42,7 +42,7 @@ const getInitialState = (packageFilter: PackageRepoFilterFields): SinglePackageS
 
 export interface EditPackageFilterModalContentProps {
     packageFilter: PackageRepoFilterFields
-    filters: FilteredConnectionFilterValue[]
+    filters: FilterOption[]
     onDismiss: () => void
 }
 

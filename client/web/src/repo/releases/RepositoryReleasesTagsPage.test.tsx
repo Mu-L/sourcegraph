@@ -1,8 +1,11 @@
 import { render } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { of } from 'rxjs'
+import { describe, expect, test } from 'vitest'
 
-import { RepositoryFields } from '../../graphql-operations'
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
+
+import type { RepositoryFields } from '../../graphql-operations'
 
 import { RepositoryReleasesTagsPage } from './RepositoryReleasesTagsPage'
 
@@ -22,6 +25,7 @@ describe('RepositoryReleasesTagsPage', () => {
                                 pageInfo: { __typename: 'PageInfo', endCursor: '', hasNextPage: false },
                             })
                         }
+                        telemetryRecorder={noOpTelemetryRecorder}
                     />
                 </MemoryRouter>
             ).asFragment()
@@ -42,6 +46,7 @@ describe('RepositoryReleasesTagsPage', () => {
                                 pageInfo: { __typename: 'PageInfo', endCursor: '', hasNextPage: false },
                             })
                         }
+                        telemetryRecorder={noOpTelemetryRecorder}
                     />
                 </MemoryRouter>
             ).asFragment()

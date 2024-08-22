@@ -69,21 +69,11 @@ type Store interface {
 	// service if the external service is not deleted and no other job is
 	// already queued or processing.
 	//
-	// Additionally, it also skips queueing up a sync job for cloud_default
-	// external services. This is done to avoid the sync job for the
-	// cloud_default triggering a deletion of repos because:
-	//  1. cloud_default does not define any repos in its config
-	//  2. repos under the cloud_default are lazily synced the first time a user accesses them
-	//
-	// This is a limitation of our current repo syncing architecture. The
-	// cloud_default flag is only set on sourcegraph.com and manages public GitHub
-	// and GitLab repositories that have been lazily synced.
-	//
 	// It can block if a row-level lock is held on the given external service,
 	// for example if it's being deleted.
 	EnqueueSingleSyncJob(ctx context.Context, extSvcID int64) (err error)
 	// EnqueueSyncJobs enqueues sync jobs for all external services that are due.
-	EnqueueSyncJobs(ctx context.Context, isCloud bool) (err error)
+	EnqueueSyncJobs(ctx context.Context) (err error)
 	// ListSyncJobs returns all sync jobs.
 	ListSyncJobs(ctx context.Context) ([]SyncJob, error)
 }
@@ -277,10 +267,16 @@ func (s *store) DeleteExternalServiceRepo(ctx context.Context, svc *types.Extern
 	}(time.Now())
 
 	if !s.InTransaction() {
-		s, err = s.transact(ctx)
+		tx, err := s.transact(ctx)
 		if err != nil {
 			return errors.Wrap(err, "DeleteExternalServiceRepo")
 		}
+
+		// We replace the current store with the transactional store for the rest of the method.
+		// We don't assign the store return value from `s.transact` so as to avoid nil panics when
+		// executing the deferred functions that utilize the store since `s.transact` returns a nil
+		// store when there's an error.
+		s = tx
 		defer func() { err = s.Done(err) }()
 	}
 
@@ -576,7 +572,6 @@ WITH es AS (
 	FROM external_services es
 	WHERE
 		id = %s
-		AND NOT cloud_default
 		AND deleted_at IS NULL
 	FOR UPDATE
 )
@@ -594,7 +589,7 @@ WHERE NOT EXISTS (
 	return s.Exec(ctx, q)
 }
 
-func (s *store) EnqueueSyncJobs(ctx context.Context, isCloud bool) (err error) {
+func (s *store) EnqueueSyncJobs(ctx context.Context) (err error) {
 	tr, ctx := s.trace(ctx, "Store.EnqueueSyncJobs")
 
 	defer func(began time.Time) {
@@ -604,13 +599,7 @@ func (s *store) EnqueueSyncJobs(ctx context.Context, isCloud bool) (err error) {
 		tr.End()
 	}(time.Now())
 
-	filter := "TRUE"
-	// On Cloud we don't sync our default sources in the background, they are synced
-	// on demand instead.
-	if isCloud {
-		filter = "cloud_default = false"
-	}
-	q := sqlf.Sprintf(enqueueSyncJobsQueryFmtstr, sqlf.Sprintf(filter))
+	q := sqlf.Sprintf(enqueueSyncJobsQueryFmtstr)
 	return s.Exec(ctx, q)
 }
 
@@ -623,7 +612,6 @@ WITH due AS (
     WHERE (next_sync_at <= clock_timestamp() OR next_sync_at IS NULL)
     AND deleted_at IS NULL
     AND LOWER(kind) != 'phabricator'
-    AND %s
     FOR UPDATE OF external_services -- We query 'FOR UPDATE' so we don't enqueue
                                     -- sync jobs while an external service is being deleted.
 ),

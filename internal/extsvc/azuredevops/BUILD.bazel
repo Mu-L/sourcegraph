@@ -13,6 +13,7 @@ go_library(
         "users.go",
     ],
     importpath = "github.com/sourcegraph/sourcegraph/internal/extsvc/azuredevops",
+    tags = [TAG_PLATFORM_SOURCE],
     visibility = ["//:__subpackages__"],
     deps = [
         "//internal/conf",
@@ -44,16 +45,19 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     embed = [":azuredevops"],
+    tags = [TAG_PLATFORM_SOURCE],
     deps = [
         "//internal/extsvc/auth",
         "//internal/httpcli",
         "//internal/httptestutil",
         "//internal/lazyregexp",
+        "//internal/ratelimit",
         "//internal/rcache",
         "//internal/testutil",
         "@com_github_dnaeon_go_vcr//cassette",
+        "@com_github_sourcegraph_log//logtest",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
-        "@tools_gotest//assert",
+        "@org_golang_x_time//rate",
     ],
 )

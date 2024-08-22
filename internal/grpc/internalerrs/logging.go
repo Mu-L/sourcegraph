@@ -9,6 +9,8 @@ import (
 
 	"github.com/dustin/go-humanize"
 
+	"github.com/sourcegraph/sourcegraph/internal/grpc/grpcutil"
+
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/proto"
 
@@ -22,8 +24,7 @@ import (
 )
 
 var (
-	logScope       = "gRPC.internal.error.reporter"
-	logDescription = "logs gRPC errors that appear to come from the go-grpc implementation"
+	logScope = "gRPC.internal.error.reporter"
 
 	envLoggingEnabled        = env.MustGetBool("SRC_GRPC_INTERNAL_ERROR_LOGGING_ENABLED", true, "Enables logging of gRPC internal errors")
 	envLogStackTracesEnabled = env.MustGetBool("SRC_GRPC_INTERNAL_ERROR_LOGGING_LOG_STACK_TRACES", false, "Enables including stack traces in logs of gRPC internal errors")
@@ -43,13 +44,13 @@ func LoggingUnaryClientInterceptor(l log.Logger) grpc.UnaryClientInterceptor {
 		}
 	}
 
-	logger := l.Scoped(logScope, logDescription)
-	logger = logger.Scoped("unaryMethod", "errors that originated from a unary method")
+	logger := l.Scoped(logScope)
+	logger = logger.Scoped("unaryMethod")
 
 	return func(ctx context.Context, fullMethod string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 		err := invoker(ctx, fullMethod, req, reply, cc, opts...)
 		if err != nil {
-			serviceName, methodName := splitMethodName(fullMethod)
+			serviceName, methodName := grpcutil.SplitMethodName(fullMethod)
 
 			var initialRequest proto.Message
 			if m, ok := req.(proto.Message); ok {
@@ -73,11 +74,11 @@ func LoggingStreamClientInterceptor(l log.Logger) grpc.StreamClientInterceptor {
 		}
 	}
 
-	logger := l.Scoped(logScope, logDescription)
-	logger = logger.Scoped("streamingMethod", "errors that originated from a streaming method")
+	logger := l.Scoped(logScope)
+	logger = logger.Scoped("streamingMethod")
 
 	return func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, fullMethod string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
-		serviceName, methodName := splitMethodName(fullMethod)
+		serviceName, methodName := grpcutil.SplitMethodName(fullMethod)
 
 		stream, err := streamer(ctx, desc, cc, fullMethod, opts...)
 		if err != nil {
@@ -85,7 +86,7 @@ func LoggingStreamClientInterceptor(l log.Logger) grpc.StreamClientInterceptor {
 			// until after the stream is created.
 			//
 			// This is fine since the error is already available, and the non-utf8 string check is robust against nil messages.
-			logger := logger.Scoped("postInit", "errors that occurred after stream initialization, but before the first message was sent")
+			logger := logger.Scoped("postInit")
 			doLog(logger, serviceName, methodName, nil, nil, err)
 			return nil, err
 		}
@@ -105,13 +106,13 @@ func LoggingUnaryServerInterceptor(l log.Logger) grpc.UnaryServerInterceptor {
 		}
 	}
 
-	logger := l.Scoped(logScope, logDescription)
-	logger = logger.Scoped("unaryMethod", "errors that originated from a unary method")
+	logger := l.Scoped(logScope)
+	logger = logger.Scoped("unaryMethod")
 
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp any, err error) {
 		response, err := handler(ctx, req)
 		if err != nil {
-			serviceName, methodName := splitMethodName(info.FullMethod)
+			serviceName, methodName := grpcutil.SplitMethodName(info.FullMethod)
 
 			var initialRequest proto.Message
 			if m, ok := req.(proto.Message); ok {
@@ -135,11 +136,11 @@ func LoggingStreamServerInterceptor(l log.Logger) grpc.StreamServerInterceptor {
 		}
 	}
 
-	logger := l.Scoped(logScope, logDescription)
-	logger = logger.Scoped("streamingMethod", "errors that originated from a streaming method")
+	logger := l.Scoped(logScope)
+	logger = logger.Scoped("streamingMethod")
 
 	return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		serviceName, methodName := splitMethodName(info.FullMethod)
+		serviceName, methodName := grpcutil.SplitMethodName(info.FullMethod)
 
 		stream := newLoggingServerStream(ss, logger, serviceName, methodName)
 		return handler(srv, stream)
@@ -147,8 +148,8 @@ func LoggingStreamServerInterceptor(l log.Logger) grpc.StreamServerInterceptor {
 }
 
 func newLoggingServerStream(s grpc.ServerStream, logger log.Logger, serviceName, methodName string) grpc.ServerStream {
-	sendLogger := logger.Scoped("postMessageSend", "errors that occurred after sending a message")
-	receiveLogger := logger.Scoped("postMessageReceive", "errors that occurred after receiving a message")
+	sendLogger := logger.Scoped("postMessageSend")
+	receiveLogger := logger.Scoped("postMessageReceive")
 
 	requestSaver := requestSavingServerStream{ServerStream: s}
 
@@ -170,26 +171,25 @@ func newLoggingServerStream(s grpc.ServerStream, logger log.Logger, serviceName,
 }
 
 func newLoggingClientStream(s grpc.ClientStream, logger log.Logger, serviceName, methodName string) grpc.ClientStream {
-	sendLogger := logger.Scoped("postMessageSend", "errors that occurred after sending a message")
-	receiveLogger := logger.Scoped("postMessageReceive", "errors that occurred after receiving a message")
+	sendLogger := logger.Scoped("postMessageSend")
+	receiveLogger := logger.Scoped("postMessageReceive")
 
 	requestSaver := requestSavingClientStream{ClientStream: s}
 
-	return &callBackClientStream{
-		ClientStream: &requestSaver,
-
-		postMessageSend: func(m any, err error) {
-			if err != nil {
-				doLog(sendLogger, serviceName, methodName, requestSaver.InitialRequest(), m, err)
-			}
-		},
-
-		postMessageReceive: func(m any, err error) {
-			if err != nil && err != io.EOF { // EOF is expected at the end of a stream, so no need to log an error
-				doLog(receiveLogger, serviceName, methodName, requestSaver.InitialRequest(), m, err)
-			}
-		},
+	postMessageSend := func(m any, err error) {
+		if err != nil {
+			doLog(sendLogger, serviceName, methodName, requestSaver.InitialRequest(), m, err)
+		}
 	}
+
+	postMessageReceive := func(m any, err error) {
+		if err != nil && err != io.EOF { // EOF is expected at the end of a stream, so no need to log an error
+			doLog(receiveLogger, serviceName, methodName, requestSaver.InitialRequest(), m, err)
+		}
+	}
+
+	return grpcutil.NewCallBackClientStream(&requestSaver, postMessageSend, postMessageReceive)
+
 }
 
 func doLog(logger log.Logger, serviceName, methodName string, initialRequest *proto.Message, payload any, err error) {

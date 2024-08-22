@@ -1,3 +1,5 @@
+export * from './assert'
+export * from './formatting'
 export * from './promises'
-export * from './time'
 export * from './stores'
+export * from './promises'

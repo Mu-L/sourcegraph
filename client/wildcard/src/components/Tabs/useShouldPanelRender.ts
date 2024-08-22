@@ -1,10 +1,12 @@
-import { useLayoutEffect, useState, ReactNode } from 'react'
+import { useLayoutEffect, useState, type ReactNode } from 'react'
 
 import { useTabsContext as useReachTabsContext } from '@reach/tabs'
 
 import { useTablePanelIndex, useTabsState } from './context'
 
-export function useShouldPanelRender(children: ReactNode): boolean {
+type FunctionLikeChildren = ReactNode | ((context: any) => ReactNode)
+
+export function useShouldPanelRender(children: FunctionLikeChildren): boolean {
     const { selectedIndex } = useReachTabsContext()
     const index = useTablePanelIndex()
     const {
@@ -26,5 +28,6 @@ export function useShouldPanelRender(children: ReactNode): boolean {
             return wasRendered
         }
     }
+
     return true
 }

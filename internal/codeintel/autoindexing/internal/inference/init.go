@@ -19,12 +19,12 @@ var (
 )
 
 func NewService(db database.DB) *Service {
-	observationCtx := observation.NewContext(log.Scoped("inference.service", "inference service"))
+	observationCtx := observation.NewContext(log.Scoped("inference.service"))
 
 	return newService(
 		observationCtx,
 		luasandbox.NewService(),
-		NewDefaultGitService(db, nil),
+		NewDefaultGitService(),
 		ratelimit.NewInstrumentedLimiter("InferenceService", rate.NewLimiter(rate.Limit(gitserverRequestRateLimit), 1)),
 		maximumFilesWithContentCount,
 		maximumFileWithContentSizeBytes,

@@ -9,7 +9,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/inconshreveable/log15"
+	"github.com/inconshreveable/log15" //nolint:logging // TODO move all logging to sourcegraph/log
 	"github.com/sourcegraph/log"
 
 	bgql "github.com/sourcegraph/sourcegraph/internal/batches/graphql"
@@ -18,8 +18,10 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/batches/store"
 	btypes "github.com/sourcegraph/sourcegraph/internal/batches/types"
 	"github.com/sourcegraph/sourcegraph/internal/batches/webhooks"
+	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/errcode"
+	ghtypes "github.com/sourcegraph/sourcegraph/internal/github_apps/types"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver/protocol"
 	"github.com/sourcegraph/sourcegraph/internal/repos"
@@ -31,7 +33,7 @@ import (
 func executePlan(ctx context.Context, logger log.Logger, client gitserver.Client, sourcer sources.Sourcer, noSleepBeforeSync bool, tx *store.Store, plan *Plan) (afterDone func(store *store.Store), err error) {
 	e := &executor{
 		client:            client,
-		logger:            logger.Scoped("executor", "An executor for a single Batch Changes reconciler plan"),
+		logger:            logger.Scoped("executor"),
 		sourcer:           sourcer,
 		noSleepBeforeSync: noSleepBeforeSync,
 		tx:                tx,
@@ -196,7 +198,7 @@ func (e *executor) pushChangesetPatch(ctx context.Context, triggerUpdateWebhook 
 		return afterDone, errCannotPushToArchivedRepo
 	}
 
-	pushConf, err := css.GitserverPushConfig(remoteRepo)
+	pushConf, err := css.GitserverPushConfig(ctx, remoteRepo)
 	if err != nil {
 		return afterDone, err
 	}
@@ -213,6 +215,8 @@ func (e *executor) pushChangesetPatch(ctx context.Context, triggerUpdateWebhook 
 					return afterDone, errCannotPushToArchivedRepo
 				}
 			}
+			// do not wrap the error (pushCommitError), so it can be nicely displayed in the UI
+			return afterDone, err
 		}
 		return afterDone, errors.Wrap(err, "pushing commit")
 	}
@@ -327,7 +331,7 @@ func (e *executor) publishChangeset(ctx context.Context, asDraft bool) (afterDon
 
 func (e *executor) syncChangeset(ctx context.Context) error {
 	if err := e.loadChangeset(ctx); err != nil {
-		if !errors.HasType(err, sources.ChangesetNotFoundError{}) {
+		if !errors.HasType[sources.ChangesetNotFoundError](err) {
 			return err
 		}
 
@@ -590,7 +594,9 @@ func (e *executor) decorateChangesetBody(ctx context.Context) (string, error) {
 }
 
 func loadChangesetSource(ctx context.Context, s *store.Store, sourcer sources.Sourcer, ch *btypes.Changeset, repo *types.Repo) (sources.ChangesetSource, error) {
-	css, err := sourcer.ForChangeset(ctx, s, ch, sources.AuthenticationStrategyUserCredential)
+	css, err := sourcer.ForChangeset(ctx, s, ch, repo, sources.SourcerOpts{
+		AuthenticationStrategy: sources.AuthenticationStrategyUserCredential,
+	})
 	if err != nil {
 		switch err {
 		case sources.ErrMissingCredentials:
@@ -642,19 +648,33 @@ func (e *executor) pushCommit(ctx context.Context, opts protocol.CreateCommitFro
 }
 
 func (e *executor) runAfterCommit(ctx context.Context, css sources.ChangesetSource, resp *protocol.CreateCommitFromPatchResponse, remoteRepo *types.Repo, opts protocol.CreateCommitFromPatchRequest) (err error) {
+	rejectUnverifiedCommit := conf.RejectUnverifiedCommit()
+
 	// If we're pushing to a GitHub code host, we should check if a GitHub App is
 	// configured for Batch Changes to sign commits on this code host with.
 	if _, ok := css.(*sources.GitHubSource); ok {
 		// Attempt to get a ChangesetSource authenticated with a GitHub App.
-		css, err = e.sourcer.ForChangeset(ctx, e.tx, e.ch, sources.AuthenticationStrategyGitHubApp)
+		css, err = e.sourcer.ForChangeset(ctx, e.tx, e.ch, e.remote, sources.SourcerOpts{
+			AuthenticationStrategy: sources.AuthenticationStrategyGitHubApp,
+
+			// If the authentication strategy for the original Push is not GitHub App, we want to make use
+			// of a commit signing GitHub app to sign the commit.
+			AsNonCredential: css.AuthenticationStrategy() != sources.AuthenticationStrategyGitHubApp,
+			GitHubAppKind:   ghtypes.CommitSigningGitHubAppKind,
+		})
 		if err != nil {
 			switch err {
 			case sources.ErrNoGitHubAppConfigured:
+				if rejectUnverifiedCommit {
+					return errors.New("no GitHub App configured to sign commit, rejecting unverified commit")
+				}
 				// If we didn't find any GitHub Apps configured for this code host, it's a
 				// noop; commit signing is not set up for this code host.
-				break
+				e.logger.Warn("no Github App configured to sign commit, commit will not be verified")
 			default:
-				// We shouldn't block on this error, but we should still log it.
+				if rejectUnverifiedCommit {
+					return errors.Wrap(err, "failed to get GitHub App for commit verification")
+				}
 				log15.Error("Failed to get GitHub App authenticated ChangesetSource", "err", err)
 			}
 		} else {
@@ -682,6 +702,9 @@ func (e *executor) runAfterCommit(ctx context.Context, css sources.ChangesetSour
 					return errors.Wrap(err, "failed to update changeset with commit verification")
 				}
 			} else {
+				if rejectUnverifiedCommit {
+					return errors.Wrap(err, "commit created with GitHub App was not signed, rejecting unverified commit")
+				}
 				log15.Warn("Commit created with GitHub App was not signed", "changeset", e.ch.ID, "commit", newCommit.SHA)
 			}
 		}

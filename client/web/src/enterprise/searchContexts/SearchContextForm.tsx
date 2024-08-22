@@ -2,37 +2,36 @@ import React, { useCallback, useMemo, useState } from 'react'
 
 import classNames from 'classnames'
 import { useNavigate } from 'react-router-dom'
-import { Observable, of, throwError } from 'rxjs'
+import { from, of, throwError, type Observable } from 'rxjs'
 import { catchError, map, startWith, switchMap, tap } from 'rxjs/operators'
 
-import { SyntaxHighlightedSearchQuery, LazyQueryInput } from '@sourcegraph/branded'
+import { LazyQueryInputFormControl, SyntaxHighlightedSearchQuery } from '@sourcegraph/branded'
 import { asError, createAggregateError, isErrorLike } from '@sourcegraph/common'
 import {
-    Scalars,
-    SearchContextInput,
-    SearchContextRepositoryRevisionsInput,
     SearchPatternType,
-    SearchContextFields,
+    type Scalars,
+    type SearchContextFields,
+    type SearchContextInput,
+    type SearchContextRepositoryRevisionsInput,
 } from '@sourcegraph/shared/src/graphql-operations'
-import { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
-import { QueryState, SearchContextProps } from '@sourcegraph/shared/src/search'
-import { useExperimentalFeatures } from '@sourcegraph/shared/src/settings/settings'
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import type { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
+import type { QueryState, SearchContextProps } from '@sourcegraph/shared/src/search'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { useIsLightTheme } from '@sourcegraph/shared/src/theme'
 import {
-    Container,
+    Alert,
     Button,
+    Code,
+    Container,
+    Form,
+    Input,
+    Link,
     RadioButton,
     TextArea,
     useEventObservable,
-    Alert,
-    Link,
-    Code,
-    Input,
-    Form,
 } from '@sourcegraph/wildcard'
 
-import { AuthenticatedUser } from '../../auth'
+import type { AuthenticatedUser } from '../../auth'
 import { ALLOW_NAVIGATION, AwayPrompt } from '../../components/AwayPrompt'
 
 import { fetchRepositoriesByNames } from './backend'
@@ -42,8 +41,8 @@ import {
     getSelectedNamespace,
     getSelectedNamespaceFromUser,
     SearchContextOwnerDropdown,
-    SelectedNamespace,
-    SelectedNamespaceType,
+    type SelectedNamespace,
+    type SelectedNamespaceType,
 } from './SearchContextOwnerDropdown'
 import { SearchContextRepositoriesFormArea } from './SearchContextRepositoriesFormArea'
 
@@ -112,7 +111,7 @@ const LOADING = 'loading' as const
 export interface SearchContextFormProps
     extends TelemetryProps,
         Pick<SearchContextProps, 'deleteSearchContext'>,
-        PlatformContextProps<'requestGraphQL'> {
+        PlatformContextProps<'requestGraphQL' | 'telemetryRecorder'> {
     searchContext?: SearchContextFields
     query?: string
     authenticatedUser: AuthenticatedUser
@@ -143,8 +142,6 @@ export const SearchContextForm: React.FunctionComponent<React.PropsWithChildren<
         props
     const navigate = useNavigate()
     const isLightTheme = useIsLightTheme()
-    const applySuggestionsOnEnter =
-        useExperimentalFeatures(features => features.applySearchQuerySuggestionOnEnter) ?? true
 
     const [name, setName] = useState(searchContext ? searchContext.name : '')
     const [description, setDescription] = useState(searchContext ? searchContext.description : '')
@@ -221,7 +218,7 @@ export const SearchContextForm: React.FunctionComponent<React.PropsWithChildren<
                         return of({ type: 'repositories', repositories: [] } as RepositoriesParseResult)
                     }
 
-                    return fetchRepositoriesByNames(repositoryNames).pipe(
+                    return from(fetchRepositoriesByNames(repositoryNames)).pipe(
                         map(repositories => {
                             const repositoryNameToID = new Map(repositories.map(({ id, name }) => [name, id]))
                             const errors: Error[] = []
@@ -270,7 +267,7 @@ export const SearchContextForm: React.FunctionComponent<React.PropsWithChildren<
                             return parseRepositories().pipe(
                                 switchMap(repositoriesOrError => {
                                     if (repositoriesOrError.type === 'errors') {
-                                        return throwError(createAggregateError(repositoriesOrError.errors))
+                                        return throwError(() => createAggregateError(repositoriesOrError.errors))
                                     }
                                     return of(repositoriesOrError.repositories)
                                 }),
@@ -278,7 +275,7 @@ export const SearchContextForm: React.FunctionComponent<React.PropsWithChildren<
                             )
                         }
                         if (queryState.query.trim().length === 0) {
-                            return throwError(new Error('Search query has to be non-empty.'))
+                            return throwError(() => new Error('Search query has to be non-empty.'))
                         }
                         return of({ input: { ...partialInput, query: queryState.query }, repositories: [] })
                     }),
@@ -434,14 +431,13 @@ export const SearchContextForm: React.FunctionComponent<React.PropsWithChildren<
                             label={<>Search query</>}
                         />
                         <div className={styles.searchContextFormQuery} data-testid="search-context-dynamic-query">
-                            <LazyQueryInput
+                            <LazyQueryInputFormControl
                                 patternType={SearchPatternType.regexp}
                                 isSourcegraphDotCom={isSourcegraphDotCom}
                                 caseSensitive={true}
                                 queryState={queryState}
                                 onChange={setQueryState}
                                 preventNewLine={false}
-                                applySuggestionsOnEnter={applySuggestionsOnEnter}
                             />
                         </div>
                         <div className={classNames(styles.searchContextFormQueryLabel, 'text-muted')}>
@@ -476,6 +472,7 @@ export const SearchContextForm: React.FunctionComponent<React.PropsWithChildren<
                                 onChange={onRepositoriesConfigChange}
                                 validateRepositories={validateRepositories}
                                 repositories={searchContext?.repositories}
+                                telemetryRecorder={platformContext.telemetryRecorder}
                             />
                         </div>
                     </div>

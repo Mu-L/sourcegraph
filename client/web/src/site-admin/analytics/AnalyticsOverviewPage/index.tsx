@@ -2,15 +2,16 @@ import React, { useEffect, useMemo } from 'react'
 
 import { mdiAccount, mdiCommentOutline, mdiSourceRepository } from '@mdi/js'
 import classNames from 'classnames'
-import format from 'date-fns/format'
+import { format } from 'date-fns'
 
 import { useQuery } from '@sourcegraph/http-client'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import { EVENT_LOGGER } from '@sourcegraph/shared/src/telemetry/web/eventLogger'
 import { AnchorLink, Card, H2, Link, LoadingSpinner, Text } from '@sourcegraph/wildcard'
 
 import { ErrorBoundary } from '../../../components/ErrorBoundary'
-import { OverviewStatisticsResult, OverviewStatisticsVariables } from '../../../graphql-operations'
+import type { OverviewStatisticsResult, OverviewStatisticsVariables } from '../../../graphql-operations'
 import { formatRelativeExpirationDate, isProductLicenseExpired } from '../../../productSubscription/helpers'
-import { eventLogger } from '../../../tracking/eventLogger'
 import { checkRequestAccessAllowed } from '../../../util/checkRequestAccessAllowed'
 import { AnalyticsPageTitle } from '../components/AnalyticsPageTitle'
 import { HorizontalSelect } from '../components/HorizontalSelect'
@@ -23,17 +24,18 @@ import { Sidebar } from './Sidebar'
 
 import styles from './index.module.scss'
 
-interface Props {}
+interface Props extends TelemetryV2Props {}
 
-export const AnalyticsOverviewPage: React.FunctionComponent<Props> = () => {
-    const { dateRange } = useChartFilters({ name: 'Overview' })
+export const AnalyticsOverviewPage: React.FunctionComponent<Props> = ({ telemetryRecorder }) => {
+    const { dateRange } = useChartFilters({ name: 'Overview', telemetryRecorder })
     const { data, error, loading } = useQuery<OverviewStatisticsResult, OverviewStatisticsVariables>(
         OVERVIEW_STATISTICS,
         {}
     )
     useEffect(() => {
-        eventLogger.logPageView('AdminAnalyticsOverview')
-    }, [])
+        EVENT_LOGGER.logPageView('AdminAnalyticsOverview')
+        telemetryRecorder.recordEvent('admin.analytics.overview', 'view')
+    }, [telemetryRecorder])
 
     const userStatisticsItems = useMemo(() => {
         if (!data) {
@@ -117,7 +119,7 @@ export const AnalyticsOverviewPage: React.FunctionComponent<Props> = () => {
                                 </>
                             ) : (
                                 <AnchorLink
-                                    to="http://about.sourcegraph.com/contact/sales"
+                                    to="http://sourcegraph.com/contact/sales"
                                     target="_blank"
                                     rel="noopener"
                                     className="ml-1"
@@ -196,7 +198,7 @@ export const AnalyticsOverviewPage: React.FunctionComponent<Props> = () => {
 }
 
 function getChangelogUrl(version: string): string | null {
-    const versionAnchor = version.replace(/\./g, '-')
+    const versionAnchor = version.replaceAll('.', '-')
     // Only show changelog link for versions that match the X.Y.Z format.
     // Other versions don't have a changelog entry.
     return version.match(/^\d+-\d+-\d+$/)

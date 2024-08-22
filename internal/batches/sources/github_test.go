@@ -11,13 +11,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/inconshreveable/log15"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	btypes "github.com/sourcegraph/sourcegraph/internal/batches/types"
 	"github.com/sourcegraph/sourcegraph/internal/conf"
+	"github.com/sourcegraph/sourcegraph/internal/database/dbmocks"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc/auth"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc/github"
@@ -174,7 +174,7 @@ func TestGithubSource_CreateChangeset_CreationLimit(t *testing.T) {
 	assert.Error(t, err)
 	assert.Equal(
 		t,
-		"reached GitHub's internal creation limit: see https://docs.sourcegraph.com/admin/config/batch_changes#avoiding-hitting-rate-limits: error in GraphQL response: error in GraphQL response: was submitted too quickly",
+		"reached GitHub's internal creation limit: see https://sourcegraph.com/docs/admin/config/batch_changes#avoiding-hitting-rate-limits: error in GraphQL response: error in GraphQL response: was submitted too quickly",
 		err.Error(),
 	)
 }
@@ -493,7 +493,7 @@ func TestGithubSource_WithAuthenticator(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	githubSrc, err := NewGitHubSource(ctx, svc, nil)
+	githubSrc, err := NewGitHubSource(ctx, dbmocks.NewMockDB(), svc, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -890,9 +890,6 @@ func setup(t *testing.T, ctx context.Context, tName string) (src *GitHubSource, 
 
 	cf, save := newClientFactory(t, tName)
 
-	lg := log15.New()
-	lg.SetHandler(log15.DiscardHandler())
-
 	svc := &types.ExternalService{
 		Kind: extsvc.KindGitHub,
 		Config: extsvc.NewUnencryptedConfig(marshalJSON(t, &schema.GitHubConnection{
@@ -901,7 +898,7 @@ func setup(t *testing.T, ctx context.Context, tName string) (src *GitHubSource, 
 		})),
 	}
 
-	src, err := NewGitHubSource(ctx, svc, cf)
+	src, err := NewGitHubSource(ctx, dbmocks.NewMockDB(), svc, cf)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,7 +1,8 @@
-import { Meta, Story } from '@storybook/react'
+import type { Meta, StoryFn } from '@storybook/react'
 import delay from 'delay'
 import { noop } from 'lodash'
 
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { NOOP_TELEMETRY_SERVICE } from '@sourcegraph/shared/src/telemetry/telemetryService'
 
 import { WebStory } from '../../../../../../components/WebStory'
@@ -12,12 +13,7 @@ import { ComputeInsightCreationPage as ComputeInsightCreationPageComponent } fro
 const defaultStory: Meta = {
     title: 'web/insights/creation-ui/compute/ComputeInsightCreationPage',
     decorators: [story => <WebStory>{() => story()}</WebStory>],
-    parameters: {
-        chromatic: {
-            viewports: [576, 1440],
-            disableSnapshot: false,
-        },
-    },
+    parameters: {},
 }
 
 export default defaultStory
@@ -28,7 +24,7 @@ const fakeAPIRequest = async () => {
     throw new Error('Network error')
 }
 
-export const ComputeInsightCreationPage: Story = () => {
+export const ComputeInsightCreationPage: StoryFn = () => {
     useCodeInsightsLicenseState.setState({ licensed: true, insightsLimit: null })
 
     return (
@@ -38,6 +34,7 @@ export const ComputeInsightCreationPage: Story = () => {
             onInsightCreateRequest={fakeAPIRequest}
             onSuccessfulCreation={noop}
             onCancel={noop}
+            telemetryRecorder={noOpTelemetryRecorder}
         />
     )
 }

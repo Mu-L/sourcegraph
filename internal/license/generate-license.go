@@ -23,7 +23,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"log"
+	"log" //nolint:logging // TODO move all logging to sourcegraph/log
 	"os"
 	"time"
 
@@ -33,7 +33,7 @@ import (
 )
 
 var (
-	privateKeyFile = flag.String("private-key", "", "file containing private key to sign license")
+	privateKeyFile = flag.String("private-key", "", fmt.Sprintf("file containing private key to sign license (e.g. the production key at %s)", license.GenerationPrivateKeyURL))
 	tags           = flag.String("tags", "", "comma-separated string tags to include in this license (e.g., \"starter,dev\")")
 	users          = flag.Uint("users", 0, "maximum number of users allowed by this license (0 = no limit)")
 	expires        = flag.Duration("expires", 0, "time until license expires (0 = no expiration)")
@@ -47,6 +47,7 @@ func main() {
 	info := license.Info{
 		Tags:      license.ParseTagsInput(*tags),
 		UserCount: *users,
+		CreatedAt: time.Now(),
 		ExpiresAt: time.Now().UTC().Round(time.Second).Add(*expires),
 	}
 	b, err := json.MarshalIndent(info, "", "  ")

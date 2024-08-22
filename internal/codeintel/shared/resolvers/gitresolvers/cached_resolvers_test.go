@@ -8,10 +8,12 @@ import (
 	"testing"
 	"time"
 
-	mockrequire "github.com/derision-test/go-mockgen/testutil/require"
+	mockrequire "github.com/derision-test/go-mockgen/v2/testutil/require"
+
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	resolverstubs "github.com/sourcegraph/sourcegraph/internal/codeintel/resolvers"
 	"github.com/sourcegraph/sourcegraph/internal/database"
+	"github.com/sourcegraph/sourcegraph/internal/database/dbmocks"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver/gitdomain"
 	"github.com/sourcegraph/sourcegraph/internal/types"
@@ -26,7 +28,7 @@ const (
 )
 
 func TestCachedLocationResolver(t *testing.T) {
-	repos := database.NewStrictMockRepoStore()
+	repos := dbmocks.NewStrictMockRepoStore()
 	repos.GetFunc.SetDefaultHook(func(v0 context.Context, id api.RepoID) (*types.Repo, error) {
 		return &types.Repo{ID: id, CreatedAt: time.Now()}, nil
 	})
@@ -63,7 +65,7 @@ func TestCachedLocationResolver(t *testing.T) {
 
 	var wg sync.WaitGroup
 	errs := make(chan error, numRoutines)
-	for i := 0; i < numRoutines; i++ {
+	for range numRoutines {
 		wg.Add(1)
 
 		go func() {
@@ -151,7 +153,7 @@ func TestCachedLocationResolver(t *testing.T) {
 }
 
 func TestCachedLocationResolverUnknownRepository(t *testing.T) {
-	repos := database.NewStrictMockRepoStore()
+	repos := dbmocks.NewStrictMockRepoStore()
 	repos.GetFunc.SetDefaultHook(func(_ context.Context, id api.RepoID) (*types.Repo, error) {
 		return nil, &database.RepoNotFoundErr{ID: id}
 	})
@@ -181,7 +183,7 @@ func TestCachedLocationResolverUnknownRepository(t *testing.T) {
 }
 
 func TestCachedLocationResolverUnknownCommit(t *testing.T) {
-	repos := database.NewStrictMockRepoStore()
+	repos := dbmocks.NewStrictMockRepoStore()
 	repos.GetFunc.SetDefaultHook(func(_ context.Context, id api.RepoID) (*types.Repo, error) {
 		return &types.Repo{ID: id}, nil
 	})

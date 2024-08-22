@@ -2,19 +2,22 @@ import React, { useCallback, useState } from 'react'
 
 import { Route, Routes } from 'react-router-dom'
 
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 
 import { NotFoundPage } from '../../../components/HeroPage'
-import { CreateAccessTokenResult } from '../../../graphql-operations'
-import { UserSettingsAreaRouteContext } from '../UserSettingsArea'
+import type { CreateAccessTokenResult } from '../../../graphql-operations'
+import type { UserSettingsAreaRouteContext } from '../UserSettingsArea'
 
 import { UserSettingsCreateAccessTokenCallbackPage } from './UserSettingsCreateAccessTokenCallbackPage'
 import { UserSettingsCreateAccessTokenPage } from './UserSettingsCreateAccessTokenPage'
 import { UserSettingsTokensPage } from './UserSettingsTokensPage'
 
-interface Props extends Pick<UserSettingsAreaRouteContext, 'user' | 'authenticatedUser'>, TelemetryProps {
+interface Props
+    extends Pick<UserSettingsAreaRouteContext, 'user' | 'authenticatedUser'>,
+        TelemetryProps,
+        TelemetryV2Props {
     isSourcegraphDotCom: boolean
-    isSourcegraphApp: boolean
 }
 
 export const UserSettingsTokensArea: React.FunctionComponent<React.PropsWithChildren<Props>> = props => {

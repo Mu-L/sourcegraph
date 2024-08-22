@@ -1,20 +1,25 @@
 package conf
 
 import (
-	"context"
-	"log"
+	"encoding/hex"
+	stdlog "log" //nolint:logging // TODO move all logging to sourcegraph/log
+	"net/url"
+	"os"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/hashicorp/cronexpr"
+	"github.com/sourcegraph/log"
+	"go.uber.org/atomic"
 
-	"github.com/sourcegraph/sourcegraph/internal/api/internalapi"
-	"github.com/sourcegraph/sourcegraph/internal/collections"
+	"github.com/sourcegraph/sourcegraph/internal/completions/client/anthropic"
+	"github.com/sourcegraph/sourcegraph/internal/completions/client/google"
 	"github.com/sourcegraph/sourcegraph/internal/conf/confdefaults"
 	"github.com/sourcegraph/sourcegraph/internal/conf/conftypes"
 	"github.com/sourcegraph/sourcegraph/internal/conf/deploy"
-	"github.com/sourcegraph/sourcegraph/internal/dotcomuser"
-	"github.com/sourcegraph/sourcegraph/internal/extsvc"
+	"github.com/sourcegraph/sourcegraph/internal/dotcom"
+	"github.com/sourcegraph/sourcegraph/internal/hashutil"
 	"github.com/sourcegraph/sourcegraph/internal/license"
 	srccli "github.com/sourcegraph/sourcegraph/internal/src-cli"
 	"github.com/sourcegraph/sourcegraph/internal/version"
@@ -22,10 +27,12 @@ import (
 	"github.com/sourcegraph/sourcegraph/schema"
 )
 
+const CodyGatewayProdEndpoint = "https://cody-gateway.sourcegraph.com"
+
 func init() {
 	deployType := deploy.Type()
 	if !deploy.IsValidDeployType(deployType) {
-		log.Fatalf("The 'DEPLOY_TYPE' environment variable is invalid. Expected one of: %q, %q, %q, %q, %q, %q, %q. Got: %q", deploy.Kubernetes, deploy.DockerCompose, deploy.PureDocker, deploy.SingleDocker, deploy.Dev, deploy.Helm, deploy.App, deployType)
+		stdlog.Fatalf("The 'DEPLOY_TYPE' environment variable is invalid. Expected one of: %q, %q, %q, %q, %q, %q. Got: %q", deploy.Kubernetes, deploy.DockerCompose, deploy.PureDocker, deploy.SingleDocker, deploy.Dev, deploy.Helm, deployType)
 	}
 
 	confdefaults.Default = defaultConfigForDeployment()
@@ -40,50 +47,13 @@ func defaultConfigForDeployment() conftypes.RawUnified {
 		return confdefaults.DockerContainer
 	case deploy.IsDeployTypeKubernetes(deployType), deploy.IsDeployTypeDockerCompose(deployType), deploy.IsDeployTypePureDocker(deployType):
 		return confdefaults.KubernetesOrDockerComposeOrPureDocker
-	case deploy.IsDeployTypeApp(deployType):
-		return confdefaults.App
 	default:
-		panic("deploy type did not register default configuration")
+		panic("deploy type did not register default configuration: " + deployType)
 	}
 }
 
 func ExecutorsAccessToken() string {
-	if deploy.IsApp() {
-		return confdefaults.AppInMemoryExecutorPassword
-	}
 	return Get().ExecutorsAccessToken
-}
-
-func BitbucketServerConfigs(ctx context.Context) ([]*schema.BitbucketServerConnection, error) {
-	var config []*schema.BitbucketServerConnection
-	if err := internalapi.Client.ExternalServiceConfigs(ctx, extsvc.KindBitbucketServer, &config); err != nil {
-		return nil, err
-	}
-	return config, nil
-}
-
-func GitHubConfigs(ctx context.Context) ([]*schema.GitHubConnection, error) {
-	var config []*schema.GitHubConnection
-	if err := internalapi.Client.ExternalServiceConfigs(ctx, extsvc.KindGitHub, &config); err != nil {
-		return nil, err
-	}
-	return config, nil
-}
-
-func GitLabConfigs(ctx context.Context) ([]*schema.GitLabConnection, error) {
-	var config []*schema.GitLabConnection
-	if err := internalapi.Client.ExternalServiceConfigs(ctx, extsvc.KindGitLab, &config); err != nil {
-		return nil, err
-	}
-	return config, nil
-}
-
-func PhabricatorConfigs(ctx context.Context) ([]*schema.PhabricatorConnection, error) {
-	var config []*schema.PhabricatorConnection
-	if err := internalapi.Client.ExternalServiceConfigs(ctx, extsvc.KindPhabricator, &config); err != nil {
-		return nil, err
-	}
-	return config, nil
 }
 
 type AccessTokenAllow string
@@ -108,6 +78,61 @@ func AccessTokensAllow() AccessTokenAllow {
 	default:
 		return AccessTokensNone
 	}
+}
+
+func AccessTokensMaxPerUser() int {
+	defaultValue := 25
+	cfg := Get().AuthAccessTokens
+	if cfg == nil || cfg.MaxTokensPerUser == nil {
+		return defaultValue
+	}
+	return *cfg.MaxTokensPerUser
+}
+
+// AccessTokensAllowNoExpiration returns whether access tokens can be created without expiration.
+func AccessTokensAllowNoExpiration() bool {
+	cfg := Get().AuthAccessTokens
+	if cfg == nil || cfg.AllowNoExpiration == nil {
+		return true
+	}
+	return *cfg.AllowNoExpiration
+}
+
+// AccessTokensExpirationOptions returns the default access token expiration days
+// and the available expiration options (in days). It first checks if any defaults
+// or options are configured, and falls back to the hardcoded defaults if not.
+// Options will be in ascending order.
+func AccessTokensExpirationOptions() (defaultDays int, options []int) {
+	defaultOptions := []int{7, 14, 30, 60, 90}
+	defaultExpiryDays := 90
+	cfg := Get().AuthAccessTokens
+	if cfg == nil {
+		return defaultExpiryDays, defaultOptions
+	}
+
+	// If there is a default specified, use that.
+	if cfg.DefaultExpirationDays != nil {
+		defaultExpiryDays = *cfg.DefaultExpirationDays
+	}
+
+	// use the default options if there are none specified
+	expiryOptions := cfg.ExpirationOptionDays
+	if len(expiryOptions) == 0 {
+		expiryOptions = defaultOptions
+	}
+
+	// add the default option if it wasn't in the list already
+	foundDefault := false
+	for _, days := range expiryOptions {
+		foundDefault = foundDefault || days == defaultExpiryDays
+	}
+	if !foundDefault {
+		expiryOptions = append(expiryOptions, defaultExpiryDays)
+	}
+
+	slices.Sort(expiryOptions)
+
+	return defaultExpiryDays, expiryOptions
 }
 
 // EmailVerificationRequired returns whether users must verify an email address before they
@@ -146,6 +171,10 @@ func UpdateChannel() string {
 }
 
 func BatchChangesEnabled() bool {
+	if dotcom.SourcegraphDotComMode() {
+		// Batch Changes is always disabled on dotcom.
+		return false
+	}
 	if enabled := Get().BatchChangesEnabled; enabled != nil {
 		return *enabled
 	}
@@ -157,6 +186,48 @@ func BatchChangesRestrictedToAdmins() bool {
 		return *restricted
 	}
 	return false
+}
+
+func init() {
+	ContributeValidator(func(querier conftypes.SiteConfigQuerier) (problems Problems) {
+		cm := querier.SiteConfig().CodeMonitors
+		if cm == nil {
+			return nil
+		}
+		if cm.Concurrency < 0 {
+			problems = append(problems, NewSiteProblem("codeMonitors.concurrency must be greater than zero"))
+		}
+		if cm.PollInterval != "" {
+			if _, err := time.ParseDuration(cm.PollInterval); err != nil {
+				problems = append(problems, NewSiteProblem("codeMonitors.pollInterval must be parseable as a duration"))
+			}
+		}
+		return problems
+	})
+}
+
+type ComputedCodeMonitors struct {
+	Concurrency  int
+	PollInterval time.Duration
+}
+
+func CodeMonitors() ComputedCodeMonitors {
+	// Start with default values and override if set
+	res := ComputedCodeMonitors{
+		Concurrency:  4,
+		PollInterval: 5 * time.Minute,
+	}
+	if cm := Get().CodeMonitors; cm != nil {
+		if cm.Concurrency != 0 {
+			res.Concurrency = cm.Concurrency
+		}
+		if cm.PollInterval != "" {
+			// ignore err since it's validated above
+			dur, _ := time.ParseDuration(cm.PollInterval)
+			res.PollInterval = dur
+		}
+	}
+	return res
 }
 
 // CodyEnabled returns whether Cody is enabled on this instance.
@@ -204,6 +275,50 @@ func CodyRestrictUsersFeatureFlag() bool {
 		return *restrict
 	}
 	return false
+}
+
+func CodyPermissionsEnabled() bool {
+	// CodyPermissions is never used if the deprecated CodyRestrictUsersFeatureFlag is set,
+	// as that implies the site admin has not upgraded to the new RBAC model yet.
+	if CodyRestrictUsersFeatureFlag() {
+		return false
+	}
+
+	if enabled := Get().CodyPermissions; enabled != nil {
+		return *enabled
+	}
+	return true // default to enabled
+}
+
+func CodyIntentConfig() *schema.IntentDetectionAPI {
+	if Get().ExperimentalFeatures == nil || Get().ExperimentalFeatures.CodyServerSideContext == nil {
+		return nil
+	}
+	return Get().ExperimentalFeatures.CodyServerSideContext.IntentDetectionAPI
+}
+
+type CodyRerankerBackend string
+
+const (
+	CodyRerankerIdentity CodyRerankerBackend = "identity"
+	CodyRerankerCohere   CodyRerankerBackend = "cohere"
+)
+
+func CodyReranker() CodyRerankerBackend {
+	if Get().ExperimentalFeatures == nil || Get().ExperimentalFeatures.CodyServerSideContext == nil || Get().ExperimentalFeatures.CodyServerSideContext.Reranker == nil {
+		return CodyRerankerIdentity
+	}
+	if Get().ExperimentalFeatures.CodyServerSideContext.Reranker.Identity != nil {
+		return CodyRerankerIdentity
+	}
+	return CodyRerankerCohere
+}
+
+func CodyRerankerCohereConfig() *schema.CodyRerankerCohere {
+	if CodyReranker() != CodyRerankerCohere {
+		return nil
+	}
+	return Get().ExperimentalFeatures.CodyServerSideContext.Reranker.Cohere
 }
 
 func ExecutorsEnabled() bool {
@@ -323,6 +438,62 @@ func ProductResearchPageEnabled() bool {
 	return true
 }
 
+type lastParsedURLValue struct {
+	url       *url.URL
+	confValue string
+}
+
+var lastParsedURL *atomic.Pointer[lastParsedURLValue] = atomic.NewPointer(&lastParsedURLValue{
+	url: &url.URL{
+		Scheme: "http",
+		Host:   "example.com",
+	},
+	confValue: "",
+})
+
+// ExternalURLParsed returns a parsed version of conf.ExternalURL().
+// This function is thread-safe and returns a copy of the cached parsed version
+// of the URL, so it is also safe to mutate.
+func ExternalURLParsed() *url.URL {
+	// Note that we do NOT use a mutex here, and instead let callers parse the URL
+	// simultaneously during the short period where the URL was changed but the new
+	// parsed value has not yet been cached.
+	// This eliminates the need to acquire a mutex entirely, and avoids potential costly
+	// locking if many requests are served concurrently.
+	urlString := ExternalURL()
+	lastParsed := lastParsedURL.Load()
+	clonedURL := cloneURL(lastParsed.url)
+	if lastParsed.confValue != urlString {
+		parsed, err := url.Parse(urlString)
+		if err != nil {
+			log.Scoped("conf.ExternalURL").Error("failed to parse external URL", log.Error(err), log.String("externalURL", urlString))
+			return clonedURL
+		}
+		lastParsed = &lastParsedURLValue{
+			url:       parsed,
+			confValue: urlString,
+		}
+		lastParsedURL.Store(lastParsed)
+		clonedURL = cloneURL(parsed)
+	}
+	return clonedURL
+}
+
+// cloneURL returns a copy of the URL. It is safe to mutate the returned URL.
+// This is copied from net/http/clone.go
+func cloneURL(u *url.URL) *url.URL {
+	if u == nil {
+		return nil
+	}
+	u2 := new(url.URL)
+	*u2 = *u
+	if u.User != nil {
+		u2.User = new(url.Userinfo)
+		*u2.User = *u.User
+	}
+	return u2
+}
+
 func ExternalURL() string {
 	return Get().ExternalURL
 }
@@ -363,6 +534,14 @@ func AuthPrimaryLoginProvidersCount() int {
 	return c
 }
 
+func ApplianceUpdateTarget() string {
+	return os.Getenv("APPLIANCE_UPDATE_TARGET")
+}
+
+func ApplianceMenuTarget() string {
+	return os.Getenv("APPLIANCE_MENU_TARGET")
+}
+
 // SearchSymbolsParallelism returns 20, or the site config
 // "debug.search.symbolsParallelism" value if configured.
 func SearchSymbolsParallelism() int {
@@ -375,14 +554,6 @@ func SearchSymbolsParallelism() int {
 
 func EventLoggingEnabled() bool {
 	val := ExperimentalFeatures().EventLogging
-	if val == "" {
-		return true
-	}
-	return val == "enabled"
-}
-
-func StructuralSearchEnabled() bool {
-	val := ExperimentalFeatures().StructuralSearch
 	if val == "" {
 		return true
 	}
@@ -402,15 +573,23 @@ func SearchDocumentRanksWeight() float64 {
 	}
 }
 
+func RankingMaxQueueSizeBytes() int {
+	ranking := ExperimentalFeatures().Ranking
+	if ranking == nil || ranking.MaxQueueSizeBytes == nil {
+		return -1
+	}
+	return *ranking.MaxQueueSizeBytes
+}
+
 // SearchFlushWallTime controls the amount of time that Zoekt shards collect and rank results. For
 // larger codebases, it can be helpful to increase this to improve the ranking stability and quality.
-func SearchFlushWallTime(keywordScoring bool) time.Duration {
+func SearchFlushWallTime(bm25Scoring bool) time.Duration {
 	ranking := ExperimentalFeatures().Ranking
 	if ranking != nil && ranking.FlushWallTimeMS > 0 {
 		return time.Duration(ranking.FlushWallTimeMS) * time.Millisecond
 	} else {
-		if keywordScoring {
-			// Keyword scoring takes longer than standard searches, so use a higher FlushWallTime
+		if bm25Scoring {
+			// BM25 scoring takes longer than standard searches, so use a higher FlushWallTime
 			// to help ensure ranking is stable
 			return 2 * time.Second
 		} else {
@@ -484,6 +663,31 @@ func PasswordPolicyEnabled() bool {
 	return pc.Enabled
 }
 
+func RateLimits() schema.RateLimits {
+	rl := schema.RateLimits{
+		GraphQLMaxAliases:             500,
+		GraphQLMaxFieldCount:          500_000,
+		GraphQLMaxDepth:               30,
+		GraphQLMaxDuplicateFieldCount: 500,
+		GraphQLMaxUniqueFieldCount:    500,
+	}
+
+	configured := Get().RateLimits
+
+	if configured != nil {
+		if configured.GraphQLMaxAliases <= 0 {
+			rl.GraphQLMaxAliases = configured.GraphQLMaxAliases
+		}
+		if configured.GraphQLMaxFieldCount <= 0 {
+			rl.GraphQLMaxFieldCount = configured.GraphQLMaxFieldCount
+		}
+		if configured.GraphQLMaxDepth <= 0 {
+			rl.GraphQLMaxDepth = configured.GraphQLMaxDepth
+		}
+	}
+	return rl
+}
+
 // By default, password reset links are valid for 4 hours.
 const defaultPasswordLinkExpiry = 14400
 
@@ -521,42 +725,7 @@ func AuthLockout() *schema.AuthLockout {
 	return val
 }
 
-type ExternalServiceMode int
-
-const (
-	ExternalServiceModeDisabled ExternalServiceMode = 0
-	ExternalServiceModePublic   ExternalServiceMode = 1
-	ExternalServiceModeAll      ExternalServiceMode = 2
-)
-
-func (e ExternalServiceMode) String() string {
-	switch e {
-	case ExternalServiceModeDisabled:
-		return "disabled"
-	case ExternalServiceModePublic:
-		return "public"
-	case ExternalServiceModeAll:
-		return "all"
-	default:
-		return "unknown"
-	}
-}
-
-// ExternalServiceUserMode returns the site level mode describing if users are
-// allowed to add external services for public and private repositories. It does
-// NOT take into account permissions granted to the current user.
-func ExternalServiceUserMode() ExternalServiceMode {
-	switch Get().ExternalServiceUserMode {
-	case "public":
-		return ExternalServiceModePublic
-	case "all":
-		return ExternalServiceModeAll
-	default:
-		return ExternalServiceModeDisabled
-	}
-}
-
-const defaultGitLongCommandTimeout = time.Hour
+const defaultGitLongCommandTimeout = 2 * time.Hour
 
 // GitLongCommandTimeout returns the maximum amount of time in seconds that a
 // long Git command (e.g. clone or remote update) is allowed to execute. If not
@@ -591,16 +760,25 @@ func GitMaxConcurrentClones() int {
 	return v
 }
 
-func GetDeduplicatedForksIndex() collections.Set[string] {
-	index := collections.NewSet[string]()
+// HashedCurrentLicenseKeyForAnalytics provides the current site license key, hashed using sha256, for anaytics purposes.
+func HashedCurrentLicenseKeyForAnalytics() string {
+	return HashedLicenseKeyForAnalytics(Get().LicenseKey)
+}
 
-	repoConf := Get().Repositories
-	if repoConf == nil {
-		return index
-	}
+// HashedCurrentLicenseKeyForAnalytics provides a license key, hashed using sha256, for anaytics purposes.
+func HashedLicenseKeyForAnalytics(licenseKey string) string {
+	return HashedLicenseKeyWithPrefix(licenseKey, "event-logging-telemetry-prefix")
+}
 
-	index.Add(repoConf.DeduplicateForks...)
-	return index
+// HashedLicenseKeyWithPrefix provides a sha256 hashed license key with a prefix (to ensure unique hashed values by use case).
+func HashedLicenseKeyWithPrefix(licenseKey string, prefix string) string {
+	return hex.EncodeToString(hashutil.ToSHA256Bytes([]byte(prefix + licenseKey)))
+}
+
+// UseExperimentalModelConfiguration tells whether or not "modelConfiguration" has been specified
+// in the site configuration
+func UseExperimentalModelConfiguration() bool {
+	return Get().SiteConfig().ModelConfiguration != nil
 }
 
 // GetCompletionsConfig evaluates a complete completions configuration based on
@@ -611,23 +789,15 @@ func GetCompletionsConfig(siteConfig schema.SiteConfiguration) (c *conftypes.Com
 		return nil
 	}
 
-	// Additionally, completions in App are disabled if there is no dotcom auth token
-	// and the user hasn't provided their own api token.
-	if deploy.IsApp() {
-		if (siteConfig.App == nil || len(siteConfig.App.DotcomAuthToken) == 0) && (siteConfig.Completions == nil || siteConfig.Completions.AccessToken == "") {
-			return nil
-		}
-	}
-
 	completionsConfig := siteConfig.Completions
 	// If no completions configuration is set at all, but cody is enabled, assume
 	// a default configuration.
 	if completionsConfig == nil {
 		completionsConfig = &schema.Completions{
 			Provider:        string(conftypes.CompletionsProviderNameSourcegraph),
-			ChatModel:       "anthropic/claude-2",
-			FastChatModel:   "anthropic/claude-instant-1",
-			CompletionModel: "anthropic/claude-instant-1",
+			ChatModel:       "anthropic/" + anthropic.Claude3Sonnet,
+			FastChatModel:   "anthropic/" + anthropic.Claude3Haiku,
+			CompletionModel: "fireworks/starcoder",
 		}
 	}
 
@@ -649,10 +819,15 @@ func GetCompletionsConfig(siteConfig schema.SiteConfiguration) (c *conftypes.Com
 		completionsConfig.ChatModel = completionsConfig.Model
 	}
 
+	// This records if the modelIDs have been canonicalized by the provider
+	// specific configuration. By default a ToLower will be applied the modelIDs
+	// if no other canonicalization has already been applied. In particular this
+	// is because BedrockModelRefs need different canonicalization
+	canonicalized := false
 	if completionsConfig.Provider == string(conftypes.CompletionsProviderNameSourcegraph) {
 		// If no endpoint is configured, use a default value.
 		if completionsConfig.Endpoint == "" {
-			completionsConfig.Endpoint = "https://cody-gateway.sourcegraph.com"
+			completionsConfig.Endpoint = CodyGatewayProdEndpoint
 		}
 
 		// Set the access token, either use the configured one, or generate one for the platform.
@@ -665,22 +840,22 @@ func GetCompletionsConfig(siteConfig schema.SiteConfiguration) (c *conftypes.Com
 
 		// Set a default chat model.
 		if completionsConfig.ChatModel == "" {
-			completionsConfig.ChatModel = "anthropic/claude-2"
+			completionsConfig.ChatModel = "anthropic/" + anthropic.Claude3Sonnet
 		}
 
 		// Set a default fast chat model.
 		if completionsConfig.FastChatModel == "" {
-			completionsConfig.FastChatModel = "anthropic/claude-instant-1"
+			completionsConfig.FastChatModel = "anthropic/" + anthropic.Claude3Haiku
 		}
 
 		// Set a default completions model.
 		if completionsConfig.CompletionModel == "" {
-			completionsConfig.CompletionModel = "anthropic/claude-instant-1"
+			completionsConfig.CompletionModel = "fireworks/starcoder"
 		}
 	} else if completionsConfig.Provider == string(conftypes.CompletionsProviderNameOpenAI) {
 		// If no endpoint is configured, use a default value.
 		if completionsConfig.Endpoint == "" {
-			completionsConfig.Endpoint = "https://api.openai.com/v1/chat/completions"
+			completionsConfig.Endpoint = "https://api.openai.com"
 		}
 
 		// If not access token is set, we cannot talk to OpenAI. Bail.
@@ -700,12 +875,12 @@ func GetCompletionsConfig(siteConfig schema.SiteConfiguration) (c *conftypes.Com
 
 		// Set a default completions model.
 		if completionsConfig.CompletionModel == "" {
-			completionsConfig.CompletionModel = "gpt-3.5-turbo"
+			completionsConfig.CompletionModel = "gpt-3.5-turbo-instruct"
 		}
 	} else if completionsConfig.Provider == string(conftypes.CompletionsProviderNameAnthropic) {
 		// If no endpoint is configured, use a default value.
 		if completionsConfig.Endpoint == "" {
-			completionsConfig.Endpoint = "https://api.anthropic.com/v1/complete"
+			completionsConfig.Endpoint = "https://api.anthropic.com/v1/messages"
 		}
 
 		// If not access token is set, we cannot talk to Anthropic. Bail.
@@ -715,24 +890,131 @@ func GetCompletionsConfig(siteConfig schema.SiteConfiguration) (c *conftypes.Com
 
 		// Set a default chat model.
 		if completionsConfig.ChatModel == "" {
-			completionsConfig.ChatModel = "claude-2"
+			completionsConfig.ChatModel = anthropic.Claude3Sonnet
 		}
 
 		// Set a default fast chat model.
 		if completionsConfig.FastChatModel == "" {
-			completionsConfig.FastChatModel = "claude-instant-1"
+			completionsConfig.FastChatModel = anthropic.Claude3Haiku
 		}
 
 		// Set a default completions model.
 		if completionsConfig.CompletionModel == "" {
-			completionsConfig.CompletionModel = "claude-instant-1"
+			completionsConfig.CompletionModel = anthropic.Claude3Haiku
+		}
+	} else if completionsConfig.Provider == string(conftypes.CompletionsProviderNameAzureOpenAI) {
+		// If no endpoint is configured, this provider is misconfigured.
+		if completionsConfig.Endpoint == "" {
+			return nil
+		}
+
+		// If not chat model is set, we cannot talk to Azure OpenAI. Bail.
+		if completionsConfig.ChatModel == "" {
+			return nil
+		}
+
+		// If not fast chat model is set, we fall back to the Chat Model.
+		if completionsConfig.FastChatModel == "" {
+			completionsConfig.FastChatModel = completionsConfig.ChatModel
+		}
+
+		// If not completions model is set, we cannot talk to Azure OpenAI. Bail.
+		if completionsConfig.CompletionModel == "" {
+			return nil
+		}
+	} else if completionsConfig.Provider == string(conftypes.CompletionsProviderNameFireworks) {
+		// If no endpoint is configured, use a default value.
+		if completionsConfig.Endpoint == "" {
+			completionsConfig.Endpoint = "https://api.fireworks.ai/inference/v1/completions"
+		}
+
+		// If not access token is set, we cannot talk to Fireworks. Bail.
+		if completionsConfig.AccessToken == "" {
+			return nil
+		}
+
+		// Set a default chat model.
+		if completionsConfig.ChatModel == "" {
+			completionsConfig.ChatModel = "accounts/fireworks/models/llama-v2-7b"
+		}
+
+		// Set a default fast chat model.
+		if completionsConfig.FastChatModel == "" {
+			completionsConfig.FastChatModel = "accounts/fireworks/models/llama-v2-7b"
+		}
+
+		// Set a default completions model.
+		if completionsConfig.CompletionModel == "" {
+			// Use the virtual fireworks/starcoder model name as the default
+			completionsConfig.CompletionModel = "starcoder"
+		}
+	} else if completionsConfig.Provider == string(conftypes.CompletionsProviderNameAWSBedrock) {
+		// If no endpoint is configured, no default available.
+		if completionsConfig.Endpoint == "" {
+			return nil
+		}
+
+		// Set a default chat model.
+		if completionsConfig.ChatModel == "" {
+			completionsConfig.ChatModel = "anthropic.claude-v2" // this modelID in Bedrock refers to claude-2.0
+		}
+
+		// Set a default fast chat model.
+		if completionsConfig.FastChatModel == "" {
+			completionsConfig.FastChatModel = "anthropic.claude-instant-v1" // this modelID in Bedrock refers to claude-instant-1.x it is not possible to specify the minor version
+		}
+
+		// Set a default completions model.
+		if completionsConfig.CompletionModel == "" {
+			completionsConfig.CompletionModel = "anthropic.claude-instant-v1"
+		}
+
+		// We apply BedrockModelRef specific canonicalization
+		// Make sure models are always treated case-insensitive.
+		chatModelRef := conftypes.NewBedrockModelRefFromModelID(completionsConfig.ChatModel)
+		completionsConfig.ChatModel = chatModelRef.CanonicalizedModelID()
+
+		fastChatModelRef := conftypes.NewBedrockModelRefFromModelID(completionsConfig.FastChatModel)
+		completionsConfig.FastChatModel = fastChatModelRef.CanonicalizedModelID()
+
+		completionsModelRef := conftypes.NewBedrockModelRefFromModelID(completionsConfig.CompletionModel)
+		completionsConfig.CompletionModel = completionsModelRef.CanonicalizedModelID()
+		canonicalized = true
+	} else if completionsConfig.Provider == string(conftypes.CompletionsProviderNameGoogle) {
+		// If no endpoint is configured, use a default value.
+		if completionsConfig.Endpoint == "" {
+			completionsConfig.Endpoint = "https://generativelanguage.googleapis.com/v1beta/models"
+		}
+
+		// If not access token is set, we cannot talk to Google. Bail.
+		if completionsConfig.AccessToken == "" {
+			return nil
+		}
+
+		// Set a default chat model.
+		if completionsConfig.ChatModel == "" {
+			completionsConfig.ChatModel = google.Gemini15Pro
+		}
+
+		// Set a default fast chat model.
+		if completionsConfig.FastChatModel == "" {
+			completionsConfig.FastChatModel = google.Gemini15Flash
+		}
+
+		// Set a default completions model.
+		if completionsConfig.CompletionModel == "" {
+			// Code completion is not supported by Google
+			completionsConfig.CompletionModel = google.Gemini15Flash
 		}
 	}
 
-	// Make sure models are always treated case-insensitive.
-	completionsConfig.ChatModel = strings.ToLower(completionsConfig.ChatModel)
-	completionsConfig.FastChatModel = strings.ToLower(completionsConfig.FastChatModel)
-	completionsConfig.CompletionModel = strings.ToLower(completionsConfig.CompletionModel)
+	// only apply canonicalization if not already applied. Not all model IDs can simply be lowercased
+	if !canonicalized {
+		// Make sure models are always treated case-insensitive.
+		completionsConfig.ChatModel = strings.ToLower(completionsConfig.ChatModel)
+		completionsConfig.FastChatModel = strings.ToLower(completionsConfig.FastChatModel)
+		completionsConfig.CompletionModel = strings.ToLower(completionsConfig.CompletionModel)
+	}
 
 	// If after trying to set default we still have not all models configured, completions are
 	// not available.
@@ -752,21 +1034,88 @@ func GetCompletionsConfig(siteConfig schema.SiteConfiguration) (c *conftypes.Com
 		completionsConfig.CompletionModelMaxTokens = defaultMaxPromptTokens(conftypes.CompletionsProviderName(completionsConfig.Provider), completionsConfig.CompletionModel)
 	}
 
+	if completionsConfig.SmartContextWindow == "" {
+		completionsConfig.SmartContextWindow = "enabled"
+	}
+
+	disableClientConfigAPI := completionsConfig.DisableClientConfigAPI != nil && *completionsConfig.DisableClientConfigAPI
+
 	computedConfig := &conftypes.CompletionsConfig{
-		Provider:                         conftypes.CompletionsProviderName(completionsConfig.Provider),
-		AccessToken:                      completionsConfig.AccessToken,
-		ChatModel:                        completionsConfig.ChatModel,
-		ChatModelMaxTokens:               completionsConfig.ChatModelMaxTokens,
-		FastChatModel:                    completionsConfig.FastChatModel,
-		FastChatModelMaxTokens:           completionsConfig.FastChatModelMaxTokens,
+		Provider:               conftypes.CompletionsProviderName(completionsConfig.Provider),
+		AccessToken:            completionsConfig.AccessToken,
+		ChatModel:              completionsConfig.ChatModel,
+		ChatModelMaxTokens:     completionsConfig.ChatModelMaxTokens,
+		SmartContextWindow:     completionsConfig.SmartContextWindow,
+		DisableClientConfigAPI: disableClientConfigAPI,
+		FastChatModel:          completionsConfig.FastChatModel,
+		FastChatModelMaxTokens: completionsConfig.FastChatModelMaxTokens,
+		AzureUseDeprecatedCompletionsAPIForOldModels: completionsConfig.AzureUseDeprecatedCompletionsAPIForOldModels,
 		CompletionModel:                  completionsConfig.CompletionModel,
 		CompletionModelMaxTokens:         completionsConfig.CompletionModelMaxTokens,
 		Endpoint:                         completionsConfig.Endpoint,
+		User:                             completionsConfig.User,
 		PerUserDailyLimit:                completionsConfig.PerUserDailyLimit,
 		PerUserCodeCompletionsDailyLimit: completionsConfig.PerUserCodeCompletionsDailyLimit,
+		PerCommunityUserChatMonthlyLLMRequestLimit:             completionsConfig.PerCommunityUserChatMonthlyLLMRequestLimit,
+		PerCommunityUserCodeCompletionsMonthlyLLMRequestLimit:  completionsConfig.PerCommunityUserCodeCompletionsMonthlyLLMRequestLimit,
+		PerProUserChatDailyLLMRequestLimit:                     completionsConfig.PerProUserChatDailyLLMRequestLimit,
+		PerProUserCodeCompletionsDailyLLMRequestLimit:          completionsConfig.PerProUserCodeCompletionsDailyLLMRequestLimit,
+		PerCommunityUserChatMonthlyInteractionLimit:            completionsConfig.PerCommunityUserChatMonthlyInteractionLimit,
+		PerCommunityUserCodeCompletionsMonthlyInteractionLimit: completionsConfig.PerCommunityUserCodeCompletionsMonthlyInteractionLimit,
+		PerProUserChatDailyInteractionLimit:                    completionsConfig.PerProUserChatDailyInteractionLimit,
+		PerProUserCodeCompletionsDailyInteractionLimit:         completionsConfig.PerProUserCodeCompletionsDailyInteractionLimit,
+		AzureCompletionModel:                                   completionsConfig.AzureCompletionModel,
+		AzureChatModel:                                         completionsConfig.AzureChatModel,
 	}
 
 	return computedConfig
+}
+
+func GetConfigFeatures(siteConfig schema.SiteConfiguration) (c *conftypes.ConfigFeatures) {
+	// If cody is disabled, don't use any of the other features.
+	if !codyEnabled(siteConfig) {
+		return nil
+	}
+	configFeatures := siteConfig.ConfigFeatures
+	var attributionEnabled bool
+	if enabled := siteConfig.AttributionEnabled; enabled != nil {
+		attributionEnabled = *enabled
+	}
+	// If no features configuration is set at all, but cody is enabled, assume a default configuration
+	// where all the features are enabled this is to handle edge cases where no config is set etc
+	if configFeatures == nil {
+		return &conftypes.ConfigFeatures{
+			Chat:         true,
+			AutoComplete: true,
+			Commands:     true,
+			Attribution:  attributionEnabled,
+		}
+	}
+
+	computedConfig := &conftypes.ConfigFeatures{
+		Chat:         configFeatures.Chat,
+		AutoComplete: configFeatures.AutoComplete,
+		Commands:     configFeatures.Commands,
+		Attribution:  attributionEnabled,
+	}
+	return computedConfig
+}
+
+func GetAttributionGateway(siteConfig schema.SiteConfiguration) (string, string) {
+	if !codyEnabled(siteConfig) {
+		return "", ""
+	}
+	// Explicit attribution gateway config overrides autocomplete config (if used).
+	if g := siteConfig.AttributionGateway; g != nil {
+		return g.Endpoint, getSourcegraphProviderAccessToken(g.AccessToken, siteConfig)
+	}
+	// Fall back to autocomplete config if no explicit gateway config.
+	cc := GetCompletionsConfig(siteConfig)
+	ccUsingGateway := cc != nil && cc.Provider == conftypes.CompletionsProviderNameSourcegraph
+	if ccUsingGateway {
+		return cc.Endpoint, getSourcegraphProviderAccessToken(cc.AccessToken, siteConfig)
+	}
+	return "", ""
 }
 
 const embeddingsMaxFileSizeBytes = 1000000
@@ -779,12 +1128,9 @@ func GetEmbeddingsConfig(siteConfig schema.SiteConfiguration) *conftypes.Embeddi
 		return nil
 	}
 
-	// Additionally Embeddings in App are disabled if there is no dotcom auth token
-	// and the user hasn't provided their own api token.
-	if deploy.IsApp() {
-		if (siteConfig.App == nil || len(siteConfig.App.DotcomAuthToken) == 0) && (siteConfig.Embeddings == nil || siteConfig.Embeddings.AccessToken == "") {
-			return nil
-		}
+	// Only allow embeddings as part of evaluating context quality.
+	if !ForceAllowEmbeddings() {
+		return nil
 	}
 
 	// If embeddings are explicitly disabled (legacy flag, TODO: remove after 5.1),
@@ -891,6 +1237,19 @@ func GetEmbeddingsConfig(siteConfig schema.SiteConfiguration) *conftypes.Embeddi
 		if embeddingsConfig.Dimensions <= 0 && embeddingsConfig.Model == "text-embedding-ada-002" {
 			embeddingsConfig.Dimensions = 1536
 		}
+	} else if embeddingsConfig.Provider == string(conftypes.EmbeddingsProviderNameAzureOpenAI) {
+		// If no endpoint is configured, we cannot talk to Azure OpenAI.
+		if embeddingsConfig.Endpoint == "" {
+			return nil
+		}
+
+		// If no model is set, we cannot do anything here.
+		if embeddingsConfig.Model == "" {
+			return nil
+		}
+		// Make sure models are always treated case-insensitive.
+		// TODO: Are model names on azure case insensitive?
+		embeddingsConfig.Model = strings.ToLower(embeddingsConfig.Model)
 	} else {
 		// Unknown provider value.
 		return nil
@@ -903,7 +1262,7 @@ func GetEmbeddingsConfig(siteConfig schema.SiteConfiguration) *conftypes.Embeddi
 	if embeddingsConfig.FileFilters != nil {
 		includedFilePathPatterns = embeddingsConfig.FileFilters.IncludedFilePathPatterns
 		excludedFilePathPatterns = append(excludedFilePathPatterns, embeddingsConfig.FileFilters.ExcludedFilePathPatterns...)
-		if embeddingsConfig.FileFilters.MaxFileSizeBytes >= 0 && embeddingsConfig.FileFilters.MaxFileSizeBytes <= embeddingsMaxFileSizeBytes {
+		if embeddingsConfig.FileFilters.MaxFileSizeBytes > 0 && embeddingsConfig.FileFilters.MaxFileSizeBytes <= embeddingsMaxFileSizeBytes {
 			maxFileSizeLimit = embeddingsConfig.FileFilters.MaxFileSizeBytes
 		}
 	}
@@ -920,11 +1279,14 @@ func GetEmbeddingsConfig(siteConfig schema.SiteConfiguration) *conftypes.Embeddi
 		Endpoint:    embeddingsConfig.Endpoint,
 		Dimensions:  embeddingsConfig.Dimensions,
 		// This is definitely set at this point.
-		Incremental:                *embeddingsConfig.Incremental,
-		FileFilters:                fileFilters,
-		MaxCodeEmbeddingsPerRepo:   embeddingsConfig.MaxCodeEmbeddingsPerRepo,
-		MaxTextEmbeddingsPerRepo:   embeddingsConfig.MaxTextEmbeddingsPerRepo,
-		PolicyRepositoryMatchLimit: embeddingsConfig.PolicyRepositoryMatchLimit,
+		Incremental:                            *embeddingsConfig.Incremental,
+		FileFilters:                            fileFilters,
+		MaxCodeEmbeddingsPerRepo:               embeddingsConfig.MaxCodeEmbeddingsPerRepo,
+		MaxTextEmbeddingsPerRepo:               embeddingsConfig.MaxTextEmbeddingsPerRepo,
+		PolicyRepositoryMatchLimit:             embeddingsConfig.PolicyRepositoryMatchLimit,
+		ExcludeChunkOnError:                    pointers.Deref(embeddingsConfig.ExcludeChunkOnError, true),
+		PerCommunityUserEmbeddingsMonthlyLimit: embeddingsConfig.PerCommunityUserEmbeddingsMonthlyLimit,
+		PerProUserEmbeddingsMonthlyLimit:       embeddingsConfig.PerProUserEmbeddingsMonthlyLimit,
 	}
 	d, err := time.ParseDuration(embeddingsConfig.MinimumInterval)
 	if err != nil {
@@ -936,22 +1298,25 @@ func GetEmbeddingsConfig(siteConfig schema.SiteConfiguration) *conftypes.Embeddi
 	return computedConfig
 }
 
+func toUint64(input *int) *uint64 {
+	if input == nil {
+		return nil
+	}
+	u := uint64(*input)
+	return &u
+}
+
 func getSourcegraphProviderAccessToken(accessToken string, config schema.SiteConfiguration) string {
 	// If an access token is configured, use it.
 	if accessToken != "" {
 		return accessToken
 	}
-	// App generates a token from the api token the user used to connect app to dotcom.
-	if deploy.IsApp() && config.App != nil {
-		if config.App.DotcomAuthToken == "" {
-			return ""
-		}
-		return dotcomuser.GenerateDotcomUserGatewayAccessToken(config.App.DotcomAuthToken)
-	}
+
 	// Otherwise, use the current license key to compute an access token.
 	if config.LicenseKey == "" {
 		return ""
 	}
+
 	return license.GenerateLicenseKeyBasedAccessToken(config.LicenseKey)
 }
 
@@ -984,6 +1349,19 @@ func defaultMaxPromptTokens(provider conftypes.CompletionsProviderName, model st
 		return anthropicDefaultMaxPromptTokens(model)
 	case conftypes.CompletionsProviderNameOpenAI:
 		return openaiDefaultMaxPromptTokens(model)
+	case conftypes.CompletionsProviderNameFireworks:
+		return fireworksDefaultMaxPromptTokens(model)
+	case conftypes.CompletionsProviderNameAzureOpenAI:
+		// We cannot know based on the model name what model is actually used,
+		// this is a sane default for GPT in general.
+		return 7_000
+	case conftypes.CompletionsProviderNameAWSBedrock:
+		parsed := conftypes.NewBedrockModelRefFromModelID(model)
+		if strings.HasPrefix(parsed.Model, "anthropic.") {
+			return anthropicDefaultMaxPromptTokens(strings.TrimPrefix(parsed.Model, "anthropic."))
+		}
+		// Fallback for weird values.
+		return 9_000
 	}
 
 	// Should be unreachable.
@@ -991,13 +1369,15 @@ func defaultMaxPromptTokens(provider conftypes.CompletionsProviderName, model st
 }
 
 func anthropicDefaultMaxPromptTokens(model string) int {
+	// TODO: this doesn't nearly cover all the ways that token size can be specified.
+	// See: https://docs.aws.amazon.com/bedrock/latest/userguide/model-ids.html
 	if strings.HasSuffix(model, "-100k") {
 		return 100_000
 
 	}
-	if model == "claude-2" {
-		// TODO: Technically, v2 also uses a 100k window, but we should validate
-		// that returning 100k here is the right thing to do.
+	if model == "claude-2" || model == "claude-2.0" || model == "claude-2.1" || model == "claude-v2" || model == anthropic.Claude3Haiku || model == anthropic.Claude3Opus || model == anthropic.Claude3Sonnet || model == anthropic.Claude35Sonnet {
+		// TODO: Technically, v2 and v3 also uses a 100k/200k window respectively, but we should
+		// validate that returning 100k here is the right thing to do.
 		return 12_000
 	}
 	// For now, all other claude models have a 9k token window.
@@ -1007,14 +1387,95 @@ func anthropicDefaultMaxPromptTokens(model string) int {
 func openaiDefaultMaxPromptTokens(model string) int {
 	switch model {
 	case "gpt-4":
-		return 8_000
+		return 7_000
 	case "gpt-4-32k":
 		return 32_000
-	case "gpt-3.5-turbo":
+	case "gpt-3.5-turbo-instruct":
 		return 4_000
-	case "gpt-3.5-turbo-16k":
+	case "gpt-3.5-turbo-16k",
+		"gpt-3.5-turbo":
+		return 16_000
+	case "gpt-4-turbo-preview",
+		"gpt-4o",
+		"gpt-4-turbo":
+		// TODO: Technically, GPT 4 Turbo uses a 128k window, but we should validate
+		// that returning 128k here is the right thing to do.
 		return 16_000
 	default:
 		return 4_000
 	}
+}
+
+func fireworksDefaultMaxPromptTokens(model string) int {
+	if strings.HasPrefix(model, "accounts/fireworks/models/llama-v2") {
+		// Llama 2 has a context window of 4000 tokens
+		return 3_000
+	}
+
+	if strings.HasPrefix(model, "accounts/fireworks/models/starcoder-") || strings.HasPrefix(model, "starcoder") {
+		// StarCoder has a context window of 8192 tokens
+		return 6_000
+	}
+
+	return 4_000
+}
+
+// RepoListUpdateInterval returns the repository list update interval.
+//
+// If the RepoListUpdateInterval site configuration setting is 0, it defaults to 1 minute.
+func RepoListUpdateInterval() time.Duration {
+	v := Get().RepoListUpdateInterval
+	if v == 0 { //  default to 1 minute
+		v = 1
+	}
+	return time.Duration(v) * time.Minute
+}
+
+// RepoConcurrentExternalServiceSyncers returns the number of concurrent external service syncers.
+//
+// If the RepoConcurrentExternalServiceSyncers site configuration setting is 0, it defaults to 3.
+func RepoConcurrentExternalServiceSyncers() int {
+	v := Get().RepoConcurrentExternalServiceSyncers
+	if v <= 0 {
+		return 3
+	}
+	return v
+}
+
+// PermissionsUserMapping returns the last valid value of permissions user mapping in the site configuration.
+// Callers must not mutate the returned pointer.
+func PermissionsUserMapping() *schema.PermissionsUserMapping {
+	c := Get().PermissionsUserMapping
+	if c == nil {
+		return &schema.PermissionsUserMapping{Enabled: false, BindID: "email"}
+	}
+	// Invalid config.
+	if c.BindID != "email" && c.BindID != "username" {
+		return &schema.PermissionsUserMapping{Enabled: false, BindID: "email"}
+	}
+	return c
+}
+
+func Branding() *schema.Branding {
+	br := Get().Branding
+	if br == nil {
+		br = &schema.Branding{
+			BrandName: "Sourcegraph",
+		}
+	} else if br.BrandName == "" {
+		bcopy := *br
+		bcopy.BrandName = "Sourcegraph"
+		br = &bcopy
+	}
+	return br
+}
+
+func SCIPBasedAPIsEnabled() bool {
+	siteConfig := SiteConfig()
+	expt := siteConfig.ExperimentalFeatures
+	if expt == nil || expt.ScipBasedAPIs == nil {
+		// NOTE(id: scip-based-apis-feature-flag): Keep this in sync with site.schema.json
+		return true
+	}
+	return *expt.ScipBasedAPIs
 }

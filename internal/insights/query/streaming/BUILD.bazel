@@ -8,6 +8,7 @@ go_library(
         "search_client.go",
     ],
     importpath = "github.com/sourcegraph/sourcegraph/internal/insights/query/streaming",
+    tags = [TAG_SEARCHSUITE],
     visibility = ["//:__subpackages__"],
     deps = [
         "//internal/api",
@@ -15,6 +16,7 @@ go_library(
         "//internal/compute",
         "//internal/compute/client",
         "//internal/database",
+        "//internal/gitserver",
         "//internal/httpcli",
         "//internal/search",
         "//internal/search/client",
@@ -23,6 +25,7 @@ go_library(
         "//internal/search/streaming/http",
         "//internal/trace",
         "//internal/types",
+        "//lib/pointers",
         "@com_github_sourcegraph_log//:log",
         "@io_opentelemetry_go_otel//attribute",
     ],

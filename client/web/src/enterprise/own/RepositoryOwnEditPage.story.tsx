@@ -1,26 +1,27 @@
-import { MockedResponse } from '@apollo/client/testing'
-import { Meta, Story } from '@storybook/react'
+import type { MockedResponse } from '@apollo/client/testing'
+import type { Meta, StoryFn } from '@storybook/react'
 import { subDays } from 'date-fns'
 
 import { getDocumentNode } from '@sourcegraph/http-client'
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 
+import type { AuthenticatedUser } from '../../auth'
 import { WebStory } from '../../components/WebStory'
 import {
     ExternalServiceKind,
-    GetIngestedCodeownersResult,
-    GetIngestedCodeownersVariables,
-    RepositoryFields,
+    type GetIngestedCodeownersResult,
+    type GetIngestedCodeownersVariables,
+    type RepositoryFields,
     RepositoryType,
 } from '../../graphql-operations'
+import { OwnershipAssignPermission } from '../../rbac/constants'
 
 import { GET_INGESTED_CODEOWNERS_QUERY } from './graphqlQueries'
 import { RepositoryOwnEditPage } from './RepositoryOwnEditPage'
 
 const config: Meta = {
     title: 'web/enterprise/own/RepositoryOwnPage',
-    parameters: {
-        chromatic: { disableSnapshot: false },
-    },
+    parameters: {},
 }
 
 export default config
@@ -48,6 +49,14 @@ const repo: RepositoryFields = {
     },
     metadata: [],
     sourceType: RepositoryType.GIT_REPOSITORY,
+    topics: [],
+}
+
+const emptyPermissions: AuthenticatedUser['permissions'] = { nodes: [] }
+
+// If you wish to test assigning a new repo owner
+const ownershipAssignPermissions: AuthenticatedUser['permissions'] = {
+    nodes: [{ id: OwnershipAssignPermission, displayName: OwnershipAssignPermission }],
 }
 
 const emptyResponse: MockedResponse<GetIngestedCodeownersResult, GetIngestedCodeownersVariables> = {
@@ -62,19 +71,29 @@ const emptyResponse: MockedResponse<GetIngestedCodeownersResult, GetIngestedCode
     },
 }
 
-export const EmptyNonAdmin: Story = () => (
+export const EmptyNonAdmin: StoryFn = () => (
     <WebStory mocks={[emptyResponse]}>
         {({ useBreadcrumb }) => (
-            <RepositoryOwnEditPage repo={repo} authenticatedUser={{ siteAdmin: false }} useBreadcrumb={useBreadcrumb} />
+            <RepositoryOwnEditPage
+                repo={repo}
+                authenticatedUser={{ siteAdmin: false, permissions: emptyPermissions }}
+                useBreadcrumb={useBreadcrumb}
+                telemetryRecorder={noOpTelemetryRecorder}
+            />
         )}
     </WebStory>
 )
 EmptyNonAdmin.storyName = 'Empty (non-admin)'
 
-export const EmptyAdmin: Story = () => (
+export const EmptyAdmin: StoryFn = () => (
     <WebStory mocks={[emptyResponse]}>
         {({ useBreadcrumb }) => (
-            <RepositoryOwnEditPage repo={repo} authenticatedUser={{ siteAdmin: true }} useBreadcrumb={useBreadcrumb} />
+            <RepositoryOwnEditPage
+                repo={repo}
+                authenticatedUser={{ siteAdmin: true, permissions: emptyPermissions }}
+                useBreadcrumb={useBreadcrumb}
+                telemetryRecorder={noOpTelemetryRecorder}
+            />
         )}
     </WebStory>
 )
@@ -102,19 +121,29 @@ const populatedResponse: MockedResponse<GetIngestedCodeownersResult, GetIngested
     },
 }
 
-export const PopulatedNonAdmin: Story = () => (
+export const PopulatedNonAdmin: StoryFn = () => (
     <WebStory mocks={[populatedResponse]}>
         {({ useBreadcrumb }) => (
-            <RepositoryOwnEditPage repo={repo} authenticatedUser={{ siteAdmin: false }} useBreadcrumb={useBreadcrumb} />
+            <RepositoryOwnEditPage
+                repo={repo}
+                authenticatedUser={{ siteAdmin: false, permissions: emptyPermissions }}
+                useBreadcrumb={useBreadcrumb}
+                telemetryRecorder={noOpTelemetryRecorder}
+            />
         )}
     </WebStory>
 )
 PopulatedNonAdmin.storyName = 'Populated (non-admin)'
 
-export const PopulatedAdmin: Story = () => (
+export const PopulatedAdmin: StoryFn = () => (
     <WebStory mocks={[populatedResponse]}>
         {({ useBreadcrumb }) => (
-            <RepositoryOwnEditPage repo={repo} authenticatedUser={{ siteAdmin: true }} useBreadcrumb={useBreadcrumb} />
+            <RepositoryOwnEditPage
+                repo={repo}
+                authenticatedUser={{ siteAdmin: true, permissions: ownershipAssignPermissions }}
+                useBreadcrumb={useBreadcrumb}
+                telemetryRecorder={noOpTelemetryRecorder}
+            />
         )}
     </WebStory>
 )

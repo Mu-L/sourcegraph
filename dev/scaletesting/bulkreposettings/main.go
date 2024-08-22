@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/go-github/github"
+	"github.com/google/go-github/v55/github"
 	"github.com/urfave/cli/v2"
 	"golang.org/x/oauth2"
 
@@ -60,7 +60,7 @@ var app = &cli.App{
 					Name:        "private",
 					Description: "Set repo visibility to private",
 					Action: func(cmd *cli.Context) error {
-						logger := log.Scoped("runner", "")
+						logger := log.Scoped("runner")
 						ctx := context.Background()
 						tc := oauth2.NewClient(ctx, oauth2.StaticTokenSource(
 							&oauth2.Token{AccessToken: cmd.String("github.token")},
@@ -70,7 +70,7 @@ var app = &cli.App{
 							return err
 						}
 						baseURL.Path = "/api/v3"
-						gh, err := github.NewEnterpriseClient(baseURL.String(), baseURL.String(), tc)
+						gh, err := github.NewClient(tc).WithEnterpriseURLs(baseURL.String(), baseURL.String())
 						if err != nil {
 							logger.Fatal("failed to sign-in to GitHub", log.Error(err))
 						}
@@ -137,7 +137,7 @@ var app = &cli.App{
 									}
 									var err error
 									settings := &github.Repository{Private: github.Bool(true)}
-									for i := 0; i < cmd.Int("retry"); i++ {
+									for range cmd.Int("retry") {
 										_, _, err = gh.Repositories.Edit(cmd.Context, org, r.Name, settings)
 										if err != nil {
 											r.Failed = err.Error()
@@ -186,7 +186,7 @@ var app = &cli.App{
 						if len(errs) > 0 {
 							pending.Complete(output.Line(output.EmojiFailure, output.StyleBold, fmt.Sprintf("%d errors occured while updating repos", len(errs))))
 							out.Writef("Printing first 5 errros")
-							for i := 0; i < len(errs) && i < 5; i++ {
+							for i := range min(len(errs), 5) {
 								logger.Error("Error updating repo", log.Error(errs[i]))
 							}
 							return errs[0]
@@ -248,7 +248,6 @@ func (m *MockRepoFetcher) Next(_ context.Context) []*store.Repo {
 	// advance the start index
 	m.start += m.iterSize
 	return results
-
 }
 
 type GithubRepoFetcher struct {
@@ -349,10 +348,9 @@ func main() {
 		Name: "codehostcopy",
 	})
 	defer cb.Sync()
-	logger := log.Scoped("main", "")
+	logger := log.Scoped("main")
 
 	if err := app.RunContext(context.Background(), os.Args); err != nil {
 		logger.Fatal("failed to run", log.Error(err))
 	}
-
 }

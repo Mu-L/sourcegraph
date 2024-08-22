@@ -33,10 +33,6 @@ func (f BasicFeature) Check(info *Info) error {
 
 	// Check if the feature is explicitly allowed via license tag.
 	hasFeature := func(want Feature) bool {
-		// If license is expired, do not look at tags anymore.
-		if info.IsExpired() {
-			return false
-		}
 		for _, t := range info.Tags {
 			// We have been issuing licenses with trailing spaces in the tags for a while.
 			// Eventually we should be able to remove these `TrimSpace` calls again,
@@ -48,7 +44,7 @@ func (f BasicFeature) Check(info *Info) error {
 		}
 		return false
 	}
-	if !(info.Plan().HasFeature(featureTrimmed, info.IsExpired()) || hasFeature(featureTrimmed)) {
+	if !(info.Plan().HasFeature(featureTrimmed) || hasFeature(featureTrimmed)) {
 		return newFeatureRequiresUpgradeError(f.FeatureName())
 	}
 	return nil
@@ -72,12 +68,6 @@ func (f *FeatureBatchChanges) Check(info *Info) error {
 		return newFeatureRequiresSubscriptionError(f.FeatureName())
 	}
 
-	// If the deprecated campaigns are enabled, use unrestricted batch changes.
-	if FeatureCampaigns.Check(info) == nil {
-		f.Unrestricted = true
-		return nil
-	}
-
 	// If the batch changes tag exists on the license, use unrestricted batch
 	// changes.
 	if info.HasTag(f.FeatureName()) {
@@ -86,7 +76,7 @@ func (f *FeatureBatchChanges) Check(info *Info) error {
 	}
 
 	// Otherwise, check the default batch changes feature.
-	if info.Plan().HasFeature(f, info.IsExpired()) {
+	if info.Plan().HasFeature(f) {
 		return nil
 	}
 
@@ -119,7 +109,7 @@ func (f *FeaturePrivateRepositories) Check(info *Info) error {
 	}
 
 	// Otherwise, check the default private repositories feature.
-	if info.Plan().HasFeature(f, info.IsExpired()) {
+	if info.Plan().HasFeature(f) {
 		return nil
 	}
 
@@ -201,7 +191,7 @@ type featureNotActivatedError struct{ errcode.PresentationError }
 // a feature (e.g., Enterprise Starter not including an Enterprise-only feature).
 func IsFeatureNotActivated(err error) bool {
 	// Also check for the pointer type to guard against stupid mistakes.
-	return errors.HasType(err, featureNotActivatedError{}) || errors.HasType(err, &featureNotActivatedError{})
+	return errors.HasType[featureNotActivatedError](err) || errors.HasType[*featureNotActivatedError](err)
 }
 
 // IsFeatureEnabledLenient reports whether the current license enables the given

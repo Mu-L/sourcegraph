@@ -2,6 +2,7 @@ package graphqlbackend
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -11,16 +12,16 @@ import (
 
 	"github.com/sourcegraph/log"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/auth"
 	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/errcode"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
+	"github.com/sourcegraph/sourcegraph/internal/gitserver"
 	"github.com/sourcegraph/sourcegraph/internal/gqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/httpcli"
+	"github.com/sourcegraph/sourcegraph/internal/ratelimit"
 	"github.com/sourcegraph/sourcegraph/internal/repos"
-	"github.com/sourcegraph/sourcegraph/internal/repoupdater/protocol"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 	"github.com/sourcegraph/sourcegraph/schema"
@@ -64,6 +65,7 @@ var availabilityCheck = map[string]bool{
 	extsvc.KindBitbucketServer: true,
 	extsvc.KindBitbucketCloud:  true,
 	extsvc.KindAzureDevOps:     true,
+	extsvc.KindPerforce:        true,
 }
 
 func externalServiceByID(ctx context.Context, db database.DB, gqlID graphql.ID) (*externalServiceResolver, error) {
@@ -82,7 +84,7 @@ func externalServiceByID(ctx context.Context, db database.DB, gqlID graphql.ID) 
 		return nil, err
 	}
 
-	return &externalServiceResolver{logger: log.Scoped("externalServiceResolver", ""), db: db, externalService: es}, nil
+	return &externalServiceResolver{logger: log.Scoped("externalServiceResolver"), db: db, externalService: es}, nil
 }
 
 func MarshalExternalServiceID(id int64) graphql.ID {
@@ -123,8 +125,36 @@ func (r *externalServiceResolver) Kind() string {
 	return r.externalService.Kind
 }
 
+func (r *externalServiceResolver) URL(ctx context.Context) (string, error) {
+	// 🚨 SECURITY: check whether user is site-admin
+	if err := auth.CheckCurrentUserIsSiteAdmin(ctx, r.db); err != nil {
+		return "", err
+	}
+
+	config, err := r.externalService.Config.Decrypt(ctx)
+	if err != nil {
+		return "", errors.Wrap(err, "decrypting external service config")
+	}
+
+	return extsvc.UniqueCodeHostIdentifier(r.externalService.Kind, config)
+}
+
 func (r *externalServiceResolver) DisplayName() string {
 	return r.externalService.DisplayName
+}
+
+func (r *externalServiceResolver) RateLimiterState(ctx context.Context) (*rateLimiterStateResolver, error) {
+	info, err := ratelimit.GetGlobalLimiterState(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "getting rate limiter state")
+	}
+
+	state, ok := info[r.externalService.URN()]
+	if !ok {
+		return nil, nil
+	}
+
+	return &rateLimiterStateResolver{state: state}, nil
 }
 
 func (r *externalServiceResolver) Config(ctx context.Context) (JSONCString, error) {
@@ -141,6 +171,38 @@ func (r *externalServiceResolver) CreatedAt() gqlutil.DateTime {
 
 func (r *externalServiceResolver) UpdatedAt() gqlutil.DateTime {
 	return gqlutil.DateTime{Time: r.externalService.UpdatedAt}
+}
+
+func (r *externalServiceResolver) Creator(ctx context.Context) (*UserResolver, error) {
+	if r.externalService.CreatorID == nil {
+		return nil, nil
+	}
+
+	user, err := r.db.Users().GetByID(ctx, *r.externalService.CreatorID)
+	if err != nil {
+		if database.IsUserNotFoundErr(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	return NewUserResolver(ctx, r.db, user), nil
+}
+
+func (r *externalServiceResolver) LastUpdater(ctx context.Context) (*UserResolver, error) {
+	if r.externalService.LastUpdaterID == nil {
+		return nil, nil
+	}
+
+	user, err := r.db.Users().GetByID(ctx, *r.externalService.LastUpdaterID)
+	if err != nil {
+		if database.IsUserNotFoundErr(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	return NewUserResolver(ctx, r.db, user), nil
 }
 
 func (r *externalServiceResolver) WebhookURL(ctx context.Context) (*string, error) {
@@ -246,20 +308,30 @@ func (r *externalServiceResolver) CheckConnection(ctx context.Context) (*externa
 		return &externalServiceAvailabilityStateResolver{unknown: &externalServiceUnknown{}}, nil
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
 	source, err := repos.NewSource(
 		ctx,
-		log.Scoped("externalServiceResolver.CheckConnection", ""),
+		log.Scoped("externalServiceResolver.CheckConnection"),
 		r.db,
 		r.externalService,
 		httpcli.ExternalClientFactory,
+		gitserver.NewClient("graphql.check-connection"),
 	)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create source")
 	}
 
 	if err := source.CheckConnection(ctx); err != nil {
+		reason := err.Error()
+
+		if checkErrCodeHostMaybeInaccessible(err) {
+			reason = fmt.Sprintf("%s\n\n%s", reason, codeHostInaccessibleWarning)
+		}
+
 		return &externalServiceAvailabilityStateResolver{
-			unavailable: &externalServiceUnavailable{suspectedReason: err.Error()},
+			unavailable: &externalServiceUnavailable{suspectedReason: reason},
 		}, nil
 	}
 
@@ -302,6 +374,10 @@ func (r *externalServiceResolver) SupportsRepoExclusion() bool {
 	return r.externalService.SupportsRepoExclusion()
 }
 
+func (r *externalServiceResolver) Unrestricted() bool {
+	return r.externalService.Unrestricted
+}
+
 type externalServiceSyncJobConnectionResolver struct {
 	args              *externalServiceSyncJobsArgs
 	externalServiceID int64
@@ -342,12 +418,12 @@ func (r *externalServiceSyncJobConnectionResolver) TotalCount(ctx context.Contex
 	return int32(totalCount), err
 }
 
-func (r *externalServiceSyncJobConnectionResolver) PageInfo(ctx context.Context) (*graphqlutil.PageInfo, error) {
+func (r *externalServiceSyncJobConnectionResolver) PageInfo(ctx context.Context) (*gqlutil.PageInfo, error) {
 	jobs, totalCount, err := r.compute(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return graphqlutil.HasNextPage(len(jobs) != int(totalCount)), nil
+	return gqlutil.HasNextPage(len(jobs) != int(totalCount)), nil
 }
 
 func (r *externalServiceSyncJobConnectionResolver) compute(ctx context.Context) ([]*types.ExternalServiceSyncJob, int64, error) {
@@ -470,19 +546,8 @@ func (r *externalServiceNamespaceConnectionResolver) compute(ctx context.Context
 			return
 		}
 
-		namespacesArgs := protocol.ExternalServiceNamespacesArgs{
-			ExternalServiceID: externalServiceID,
-			Kind:              r.args.Kind,
-			Config:            config,
-		}
-
-		res, err := r.repoupdaterClient.ExternalServiceNamespaces(ctx, namespacesArgs)
-		if err != nil {
-			r.err = err
-			return
-		}
-
-		r.nodes = append(r.nodes, res.Namespaces...)
+		e := newExternalServices(log.Scoped("graphql.externalservicenamespaces"), r.db)
+		r.nodes, r.err = e.ListNamespaces(ctx, externalServiceID, r.args.Kind, config)
 		r.totalCount = int32(len(r.nodes))
 	})
 
@@ -545,22 +610,8 @@ func (r *externalServiceRepositoryConnectionResolver) compute(ctx context.Contex
 			return
 		}
 
-		reposArgs := protocol.ExternalServiceRepositoriesArgs{
-			ExternalServiceID: externalServiceID,
-			Kind:              r.args.Kind,
-			Query:             r.args.Query,
-			Config:            config,
-			First:             first,
-			ExcludeRepos:      r.args.ExcludeRepos,
-		}
-
-		res, err := r.repoupdaterClient.ExternalServiceRepositories(ctx, reposArgs)
-		if err != nil {
-			r.err = err
-			return
-		}
-
-		r.nodes = res.Repos
+		e := newExternalServices(log.Scoped("graphql.externalservicerepositories"), r.db)
+		r.nodes, r.err = e.DiscoverRepos(ctx, externalServiceID, r.args.Kind, config, first, r.args.Query, r.args.ExcludeRepos)
 	})
 
 	return r.nodes, r.err

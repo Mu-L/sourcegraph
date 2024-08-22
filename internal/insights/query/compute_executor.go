@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/sourcegraph/log"
+
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
@@ -25,7 +26,7 @@ type ComputeExecutor struct {
 
 func NewComputeExecutor(postgres database.DB, clock func() time.Time) *ComputeExecutor {
 	executor := ComputeExecutor{
-		logger: log.Scoped("ComputeExecutor", "a logger scoped to query.ComputeExecutor"),
+		logger: log.Scoped("ComputeExecutor"),
 		previewExecutor: previewExecutor{
 			repoStore: postgres.Repos(),
 			filter:    &compression.NoopFilter{},
@@ -62,7 +63,7 @@ func (c *ComputeExecutor) Execute(ctx context.Context, query, groupBy string, re
 		repoIds[repository] = repo.ID
 	}
 
-	gitserverClient := gitserver.NewClient(database.NewDBWith(c.logger, c.repoStore))
+	gitserverClient := gitserver.NewClient("insights.computeexecutor")
 
 	groupedValues := make(map[string]int)
 	for _, repository := range repositories {
@@ -113,13 +114,6 @@ func sortAndLimitComputedGroups(timeSeries []GeneratedTimeSeries) []GeneratedTim
 		return timeSeries[i].Points[0].Count > timeSeries[j].Points[0].Count
 	}
 	sort.SliceStable(timeSeries, descValueSort)
-	limit := minInt(20, len(timeSeries))
+	limit := min(20, len(timeSeries))
 	return timeSeries[:limit]
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

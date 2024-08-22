@@ -3,7 +3,6 @@ package providers
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/sourcegraph/log"
 
@@ -15,11 +14,11 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/authz/providers/github"
 	"github.com/sourcegraph/sourcegraph/internal/authz/providers/gitlab"
 	"github.com/sourcegraph/sourcegraph/internal/authz/providers/perforce"
-	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/conf/conftypes"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
-	"github.com/sourcegraph/sourcegraph/internal/licensing"
+	"github.com/sourcegraph/sourcegraph/internal/httpcli"
+	"github.com/sourcegraph/sourcegraph/internal/trace"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 	"github.com/sourcegraph/sourcegraph/schema"
@@ -38,34 +37,33 @@ import (
 func ProvidersFromConfig(
 	ctx context.Context,
 	cfg conftypes.SiteConfigQuerier,
-	store database.ExternalServiceStore,
 	db database.DB,
 ) (
-	allowAccessByDefault bool,
 	providers []authz.Provider,
 	seriousProblems []string,
 	warnings []string,
 	invalidConnections []string,
 ) {
-	logger := log.Scoped("authz", " parse provider from config")
+	tr, ctx := trace.New(ctx, "ProvidersFromConfig")
+	defer tr.End()
 
-	allowAccessByDefault = true
+	logger := log.Scoped("authz")
+
 	defer func() {
 		if len(seriousProblems) > 0 {
 			logger.Error("Repository authz config was invalid (errors are visible in the UI as an admin user, you should fix ASAP). Restricting access to repositories by default for now to be safe.", log.Strings("seriousProblems", seriousProblems))
-			allowAccessByDefault = false
 		}
 	}()
 
 	opt := database.ExternalServicesListOptions{
 		Kinds: []string{
-			extsvc.KindAzureDevOps,
-			extsvc.KindBitbucketCloud,
-			extsvc.KindBitbucketServer,
-			extsvc.KindGerrit,
-			extsvc.KindGitHub,
-			extsvc.KindGitLab,
-			extsvc.KindPerforce,
+			extsvc.VariantAzureDevOps.AsKind(),
+			extsvc.VariantBitbucketCloud.AsKind(),
+			extsvc.VariantBitbucketServer.AsKind(),
+			extsvc.VariantGerrit.AsKind(),
+			extsvc.VariantGitHub.AsKind(),
+			extsvc.VariantGitLab.AsKind(),
+			extsvc.VariantPerforce.AsKind(),
 		},
 		LimitOffset: &database.LimitOffset{
 			Limit: 500, // The number is randomly chosen
@@ -82,7 +80,7 @@ func ProvidersFromConfig(
 		azuredevopsConns     []*types.AzureDevOpsConnection
 	)
 	for {
-		svcs, err := store.List(ctx, opt)
+		svcs, err := db.ExternalServices().List(ctx, opt)
 		if err != nil {
 			seriousProblems = append(seriousProblems, fmt.Sprintf("Could not list external services: %v", err))
 			break
@@ -93,10 +91,6 @@ func ProvidersFromConfig(
 		opt.AfterID = svcs[len(svcs)-1].ID // Advance the cursor
 
 		for _, svc := range svcs {
-			if svc.CloudDefault { // Only public repos in CloudDefault services
-				continue
-			}
-
 			cfg, err := extsvc.ParseEncryptableConfig(ctx, svc.Kind, svc.Config)
 			if err != nil {
 				seriousProblems = append(seriousProblems, fmt.Sprintf("Could not parse config of external service %d: %v", svc.ID, err))
@@ -162,40 +156,20 @@ func ProvidersFromConfig(
 	}
 
 	initResult := github.NewAuthzProviders(ctx, db, gitHubConns, cfg.SiteConfig().AuthProviders, enableGithubInternalRepoVisibility)
-	initResult.Append(gitlab.NewAuthzProviders(db, cfg.SiteConfig(), gitLabConns))
-	initResult.Append(bitbucketserver.NewAuthzProviders(bitbucketServerConns))
+	initResult.Append(gitlab.NewAuthzProviders(db, gitLabConns, cfg.SiteConfig().AuthProviders))
+	initResult.Append(bitbucketserver.NewAuthzProviders(db, bitbucketServerConns, cfg.SiteConfig().AuthProviders))
 	initResult.Append(perforce.NewAuthzProviders(db, perforceConns))
-	initResult.Append(bitbucketcloud.NewAuthzProviders(db, bitbucketCloudConns, cfg.SiteConfig().AuthProviders))
-	initResult.Append(gerrit.NewAuthzProviders(gerritConns, cfg.SiteConfig().AuthProviders))
-	initResult.Append(azuredevops.NewAuthzProviders(db, azuredevopsConns))
+	initResult.Append(bitbucketcloud.NewAuthzProviders(db, bitbucketCloudConns))
+	initResult.Append(gerrit.NewAuthzProviders(gerritConns))
+	initResult.Append(azuredevops.NewAuthzProviders(db, azuredevopsConns, httpcli.ExternalClient))
 
-	return allowAccessByDefault, initResult.Providers, initResult.Problems, initResult.Warnings, initResult.InvalidConnections
-}
-
-func RefreshInterval() time.Duration {
-	interval := conf.Get().AuthzRefreshInterval
-	if interval <= 0 {
-		return 5 * time.Second
-	}
-	return time.Duration(interval) * time.Second
-}
-
-// PermissionSyncingDisabled returns true if the background permissions syncing is not enabled.
-// It is not enabled if:
-//   - There are no code host connections with authorization or enforcePermissions enabled
-//   - Not purchased with the current license
-//   - `disableAutoCodeHostSyncs` site setting is set to true
-func PermissionSyncingDisabled() bool {
-	_, p := authz.GetProviders()
-	return len(p) == 0 ||
-		licensing.Check(licensing.FeatureACLs) != nil ||
-		conf.Get().DisableAutoCodeHostSyncs
+	return initResult.Providers, initResult.Problems, initResult.Warnings, initResult.InvalidConnections
 }
 
 var ValidateExternalServiceConfig = database.MakeValidateExternalServiceConfigFunc(
-	[]func(*types.GitHubConnection) error{github.ValidateAuthz},
-	[]func(*schema.GitLabConnection, []schema.AuthProviders) error{gitlab.ValidateAuthz},
-	[]func(*schema.BitbucketServerConnection) error{bitbucketserver.ValidateAuthz},
-	[]func(*schema.PerforceConnection) error{perforce.ValidateAuthz},
-	[]func(*schema.AzureDevOpsConnection) error{func(_ *schema.AzureDevOpsConnection) error { return nil }},
+	[]database.GitHubValidatorFunc{github.ValidateAuthz},
+	[]database.GitLabValidatorFunc{gitlab.ValidateAuthz},
+	[]database.BitbucketServerValidatorFunc{bitbucketserver.ValidateAuthz},
+	[]database.PerforceValidatorFunc{perforce.ValidateAuthz},
+	[]database.AzureDevOpsValidatorFunc{func(_ *schema.AzureDevOpsConnection) error { return nil }},
 ) // TODO: @varsanojidan switch this with actual authz once its implemented.

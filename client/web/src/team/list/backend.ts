@@ -1,12 +1,12 @@
-import { MutationTuple } from '@apollo/client'
+import type { MutationTuple } from '@apollo/client'
 
 import { dataOrThrowErrors, gql, useMutation } from '@sourcegraph/http-client'
 
 import {
     useShowMorePagination,
-    UseShowMorePaginationResult,
+    type UseShowMorePaginationResult,
 } from '../../components/FilteredConnection/hooks/useShowMorePagination'
-import {
+import type {
     DeleteTeamResult,
     DeleteTeamVariables,
     ListTeamFields,
@@ -80,8 +80,6 @@ export function useTeams(search: string | null): UseShowMorePaginationResult<Lis
     return useShowMorePagination<ListTeamsResult, ListTeamsVariables, ListTeamFields>({
         query: LIST_TEAMS,
         variables: {
-            after: null,
-            first: 15,
             search,
         },
         options: {
@@ -99,8 +97,6 @@ export function useChildTeams(
         query: LIST_TEAMS_OF_PARENT,
         variables: {
             teamName: parentTeam,
-            after: null,
-            first: 15,
             search,
         },
         options: {

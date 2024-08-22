@@ -27,6 +27,7 @@ type DB interface {
 	Authz() AuthzStore
 	BitbucketProjectPermissions() BitbucketProjectPermissionsStore
 	CodeMonitors() CodeMonitorStore
+	CodeHosts() CodeHostStore
 	Codeowners() CodeownersStore
 	Conf() ConfStore
 	EventLogs() EventLogStore
@@ -35,7 +36,6 @@ type DB interface {
 	FeatureFlags() FeatureFlagStore
 	GitHubApps() gha.GitHubAppsStore
 	GitserverRepos() GitserverRepoStore
-	GitserverLocalClone() GitserverLocalCloneStore
 	GlobalState() GlobalStateStore
 	NamespacePermissions() NamespacePermissionStore
 	Namespaces() NamespaceStore
@@ -63,6 +63,7 @@ type DB interface {
 	Settings() SettingsStore
 	SubRepoPerms() SubRepoPermsStore
 	TemporarySettings() TemporarySettingsStore
+	TelemetryEventsExportQueue() TelemetryEventsExportQueueStore
 	UserCredentials(encryption.Key) UserCredentialsStore
 	UserEmails() UserEmailsStore
 	UserExternalAccounts() UserExternalAccountsStore
@@ -81,6 +82,7 @@ type DB interface {
 	AssignedOwners() AssignedOwnersStore
 	AssignedTeams() AssignedTeamsStore
 	OwnSignalConfigurations() SignalConfigurationStore
+	Prompts() PromptStore
 
 	WithTransact(context.Context, func(tx DB) error) error
 }
@@ -133,11 +135,11 @@ func (d *db) Done(err error) error {
 }
 
 func (d *db) AccessTokens() AccessTokenStore {
-	return AccessTokensWith(d.Store, d.logger.Scoped("AccessTokenStore", ""))
+	return AccessTokensWith(d.Store, d.logger.Scoped("AccessTokenStore"))
 }
 
 func (d *db) AccessRequests() AccessRequestStore {
-	return AccessRequestsWith(d.Store, d.logger.Scoped("AccessRequestStore", ""))
+	return AccessRequestsWith(d.Store, d.logger.Scoped("AccessRequestStore"))
 }
 
 func (d *db) BitbucketProjectPermissions() BitbucketProjectPermissionsStore {
@@ -152,15 +154,16 @@ func (d *db) CodeMonitors() CodeMonitorStore {
 	return CodeMonitorsWith(d.Store)
 }
 
+func (d *db) CodeHosts() CodeHostStore {
+	return CodeHostsWith(d.Store)
+}
+
 func (d *db) Codeowners() CodeownersStore {
 	return CodeownersWith(basestore.NewWithHandle(d.Handle()))
 }
 
 func (d *db) Conf() ConfStore {
-	return &confStore{
-		Store:  basestore.NewWithHandle(d.Handle()),
-		logger: log.Scoped("confStore", "database confStore"),
-	}
+	return ConfStoreWith(d.Store)
 }
 
 func (d *db) EventLogs() EventLogStore {
@@ -185,10 +188,6 @@ func (d *db) GitHubApps() gha.GitHubAppsStore {
 
 func (d *db) GitserverRepos() GitserverRepoStore {
 	return GitserverReposWith(d.Store)
-}
-
-func (d *db) GitserverLocalClone() GitserverLocalCloneStore {
-	return GitserverLocalCloneStoreWith(d.Store)
 }
 
 func (d *db) GlobalState() GlobalStateStore {
@@ -299,6 +298,13 @@ func (d *db) TemporarySettings() TemporarySettingsStore {
 	return TemporarySettingsWith(d.Store)
 }
 
+func (d *db) TelemetryEventsExportQueue() TelemetryEventsExportQueueStore {
+	return TelemetryEventsExportQueueWith(
+		d.logger.Scoped("telemetry_events"),
+		d.Store,
+	)
+}
+
 func (d *db) UserCredentials(key encryption.Key) UserCredentialsStore {
 	return UserCredentialsWith(d.logger, d.Store, key)
 }
@@ -369,4 +375,8 @@ func (d *db) AssignedTeams() AssignedTeamsStore {
 
 func (d *db) OwnSignalConfigurations() SignalConfigurationStore {
 	return SignalConfigurationStoreWith(d.Store)
+}
+
+func (d *db) Prompts() PromptStore {
+	return PromptsWith(d.Store)
 }

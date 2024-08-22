@@ -5,7 +5,6 @@ import (
 
 	"github.com/graph-gophers/graphql-go"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/gqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/types"
@@ -13,7 +12,7 @@ import (
 
 // This file just contains stub GraphQL resolvers and data types for GitHub apps which merely
 // return an error if not running in enterprise mode. The actual resolvers can be found in
-// enterprise/cmd/frontend/internal/auth/githubappauth/
+// cmd/frontend/internal/auth/githubappauth/
 
 type GitHubAppsResolver interface {
 	NodeResolvers() map[string]NodeByIDFunc
@@ -25,6 +24,7 @@ type GitHubAppsResolver interface {
 
 	// Mutations
 	DeleteGitHubApp(ctx context.Context, args *DeleteGitHubAppArgs) (*EmptyResponse, error)
+	RefreshGitHubApp(ctx context.Context, args *RefreshGitHubAppArgs) (*EmptyResponse, error)
 }
 
 type GitHubAppConnectionResolver interface {
@@ -50,6 +50,10 @@ type GitHubAppResolver interface {
 }
 
 type DeleteGitHubAppArgs struct {
+	GitHubApp graphql.ID
+}
+
+type RefreshGitHubAppArgs struct {
 	GitHubApp graphql.ID
 }
 
@@ -114,6 +118,6 @@ func (ghai GitHubAppInstallation) Account() GitHubAppInstallationAccount {
 	return ghai.InstallAccount
 }
 
-func (ghai GitHubAppInstallation) ExternalServices(args *struct{ graphqlutil.ConnectionArgs }) *ComputedExternalServiceConnectionResolver {
+func (ghai GitHubAppInstallation) ExternalServices(args *struct{ gqlutil.ConnectionArgs }) *ComputedExternalServiceConnectionResolver {
 	return NewComputedExternalServiceConnectionResolver(ghai.DB, ghai.InstallExternalServices, args.ConnectionArgs)
 }

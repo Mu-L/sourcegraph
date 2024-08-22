@@ -1,4 +1,6 @@
-import { Meta, Story } from '@storybook/react'
+import type { Meta, StoryFn } from '@storybook/react'
+
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 
 import { WebStory } from '../../components/WebStory'
 
@@ -6,12 +8,10 @@ import { NewTeamPage } from './NewTeamPage'
 
 const config: Meta = {
     title: 'web/teams/NewTeamPage',
-    parameters: {
-        chromatic: { disableSnapshot: false },
-    },
+    parameters: {},
 }
 export default config
 
-export const Default: Story = function Default() {
-    return <WebStory>{() => <NewTeamPage />}</WebStory>
+export const Default: StoryFn = function Default() {
+    return <WebStory>{() => <NewTeamPage telemetryRecorder={noOpTelemetryRecorder} />}</WebStory>
 }

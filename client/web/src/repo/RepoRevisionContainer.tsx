@@ -1,38 +1,47 @@
-import { FC, useCallback, useMemo, useState } from 'react'
+import { type FC, useCallback, useMemo, useState, useEffect } from 'react'
 
 import { Route, Routes } from 'react-router-dom'
 
-import { StreamingSearchResultsListProps } from '@sourcegraph/branded'
+import type { StreamingSearchResultsListProps } from '@sourcegraph/branded'
 import { isErrorLike } from '@sourcegraph/common'
-import { ExtensionsControllerProps } from '@sourcegraph/shared/src/extensions/controller'
-import { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
-import { SearchContextProps } from '@sourcegraph/shared/src/search'
-import { SettingsCascadeProps } from '@sourcegraph/shared/src/settings/settings'
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
-import { RevisionSpec } from '@sourcegraph/shared/src/util/url'
-import { Button, LoadingSpinner, Popover, PopoverContent, PopoverTrigger, Position } from '@sourcegraph/wildcard'
+import type { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
+import type { SearchContextProps } from '@sourcegraph/shared/src/search'
+import type { SettingsCascadeProps } from '@sourcegraph/shared/src/settings/settings'
+import { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import type { RevisionSpec } from '@sourcegraph/shared/src/util/url'
+import {
+    Button,
+    Flipping,
+    LoadingSpinner,
+    Popover,
+    PopoverContent,
+    PopoverTrigger,
+    Position,
+    Tooltip,
+} from '@sourcegraph/wildcard'
 
-import { AuthenticatedUser } from '../auth'
-import { BatchChangesProps } from '../batches'
-import { CodeIntelligenceProps } from '../codeintel'
-import { BreadcrumbSetters } from '../components/Breadcrumbs'
-import { RepositoryFields } from '../graphql-operations'
-import { CodeInsightsProps } from '../insights/types'
-import { NotebookProps } from '../notebooks'
-import { OwnConfigProps } from '../own/OwnConfigProps'
-import { SearchStreamingProps } from '../search'
-import { RouteV6Descriptor } from '../util/contributions'
+import type { AuthenticatedUser } from '../auth'
+import type { BatchChangesProps } from '../batches'
+import type { CodeIntelligenceProps } from '../codeintel'
+import type { BreadcrumbSetters } from '../components/Breadcrumbs'
+import type { RepositoryFields } from '../graphql-operations'
+import type { CodeInsightsProps } from '../insights/types'
+import type { NotebookProps } from '../notebooks'
+import type { OwnConfigProps } from '../own/OwnConfigProps'
+import type { SearchStreamingProps } from '../search'
+import type { RouteV6Descriptor } from '../util/contributions'
 
-import { GoToPermalinkAction } from './actions/GoToPermalinkAction'
-import { ResolvedRevision } from './backend'
+import { CopyPermalinkAction } from './actions/CopyPermalinkAction'
+import type { ResolvedRevision } from './backend'
 import { RepoRevisionChevronDownIcon, RepoRevisionWrapper } from './components/RepoRevision'
 import { isPackageServiceType } from './packages/isPackageServiceType'
-import { HoverThresholdProps, RepoContainerContext } from './RepoContainer'
-import { RepoHeaderContributionsLifecycleProps } from './RepoHeader'
+import type { HoverThresholdProps, RepoContainerContext } from './RepoContainer'
+import type { RepoHeaderContributionsLifecycleProps } from './RepoHeader'
 import { RepoHeaderContributionPortal } from './RepoHeaderContributionPortal'
 import { RevisionsPopover } from './RevisionsPopover'
-import { RepoSettingsAreaRoute } from './settings/RepoSettingsArea'
-import { RepoSettingsSideBarGroup } from './settings/RepoSettingsSidebar'
+import type { RepoSettingsAreaRoute } from './settings/RepoSettingsArea'
+import type { RepoSettingsSideBarGroup } from './settings/RepoSettingsSidebar'
 
 import styles from './RepoRevisionContainer.module.scss'
 
@@ -40,7 +49,6 @@ import styles from './RepoRevisionContainer.module.scss'
 export interface RepoRevisionContainerContext
     extends RepoHeaderContributionsLifecycleProps,
         SettingsCascadeProps,
-        ExtensionsControllerProps,
         PlatformContextProps,
         TelemetryProps,
         HoverThresholdProps,
@@ -74,7 +82,6 @@ interface RepoRevisionContainerProps
         PlatformContextProps,
         TelemetryProps,
         HoverThresholdProps,
-        ExtensionsControllerProps,
         Pick<SearchContextProps, 'selectedSearchContextSpec' | 'searchContextsEnabled'>,
         RevisionSpec,
         BreadcrumbSetters,
@@ -104,21 +111,37 @@ interface RepoRevisionContainerProps
     isSourcegraphDotCom: boolean
 }
 
-interface RepoRevisionBreadcrumbProps extends Pick<RepoRevisionContainerProps, 'repo' | 'revision' | 'repoName'> {
+interface RepoRevisionBreadcrumbProps
+    extends Pick<RepoRevisionContainerProps, 'repo' | 'revision' | 'repoName'>,
+        TelemetryV2Props {
     resolvedRevision: ResolvedRevision | undefined
 }
 
 export const RepoRevisionContainerBreadcrumb: FC<RepoRevisionBreadcrumbProps> = props => {
-    const { revision, resolvedRevision, repoName, repo } = props
+    const { revision, resolvedRevision, repoName, repo, telemetryRecorder } = props
 
+    const [revisionLabelElement, setRevisionLabelElement] = useState<HTMLElement | null>(null)
+    const [showRevisionTooltip, setShowRevisionTooltip] = useState(false)
     const [popoverOpen, setPopoverOpen] = useState(false)
     const togglePopover = useCallback(() => setPopoverOpen(previous => !previous), [])
 
-    const revisionLabel = (revision && revision === resolvedRevision?.commitID
-        ? resolvedRevision?.commitID.slice(0, 7)
-        : revision.slice(0, 7)) ||
-        resolvedRevision?.defaultBranch || <LoadingSpinner />
+    const revisionLabel = useMemo(
+        () =>
+            revision
+                ? revision === resolvedRevision?.commitID
+                    ? resolvedRevision?.commitID.slice(0, 7)
+                    : revision
+                : resolvedRevision?.defaultBranch || <LoadingSpinner />,
+        [revision, resolvedRevision]
+    )
 
+    // The revision label has a max-width, an ellipsis is shown when the revision is too long.
+    // In this case, we show the full revision in a tooltip.
+    useEffect(() => {
+        if (revisionLabel && revisionLabelElement) {
+            setShowRevisionTooltip(revisionLabelElement.scrollWidth > revisionLabelElement.offsetWidth)
+        }
+    }, [revisionLabelElement, revisionLabel])
     const isPopoverContentReady = repo && resolvedRevision
 
     return (
@@ -134,11 +157,16 @@ export const RepoRevisionContainerBreadcrumb: FC<RepoRevisionBreadcrumbProps> = 
                 size="sm"
                 disabled={!isPopoverContentReady}
             >
-                {revisionLabel}
+                <Tooltip content={showRevisionTooltip ? revision : ''}>
+                    <span ref={setRevisionLabelElement} className={styles.revisionLabel}>
+                        {revisionLabel}
+                    </span>
+                </Tooltip>
                 <RepoRevisionChevronDownIcon aria-hidden={true} />
             </PopoverTrigger>
             <PopoverContent
                 position={Position.bottomStart}
+                flipping={Flipping.opposite}
                 className="pt-0 pb-0"
                 aria-labelledby="repo-revision-popover"
             >
@@ -152,6 +180,7 @@ export const RepoRevisionContainerBreadcrumb: FC<RepoRevisionBreadcrumbProps> = 
                         currentCommitID={resolvedRevision?.commitID}
                         togglePopover={togglePopover}
                         onSelect={togglePopover}
+                        telemetryRecorder={telemetryRecorder}
                     />
                 )}
             </PopoverContent>
@@ -181,10 +210,11 @@ export const RepoRevisionContainer: FC<RepoRevisionContainerProps> = props => {
                         revision={revision}
                         repoName={repoName}
                         repo={repo}
+                        telemetryRecorder={props.platformContext.telemetryRecorder}
                     />
                 ),
             }
-        }, [resolvedRevision, revision, repo, repoName])
+        }, [resolvedRevision, revision, repo, repoName, props.platformContext.telemetryRecorder])
     )
 
     const isPackage = useMemo(
@@ -208,19 +238,20 @@ export const RepoRevisionContainer: FC<RepoRevisionContainerProps> = props => {
                         )
                 )}
             </Routes>
-            {resolvedRevision && !isPackage && (
+            {!isPackage && (
                 <RepoHeaderContributionPortal
                     position="right"
-                    priority={3}
-                    id="go-to-permalink"
+                    priority={2}
+                    id="copy-permalink"
                     repoHeaderContributionsLifecycleProps={props.repoHeaderContributionsLifecycleProps}
                 >
                     {context => (
-                        <GoToPermalinkAction
-                            key="go-to-permalink"
+                        <CopyPermalinkAction
+                            key="copy-permalink"
                             telemetryService={props.telemetryService}
+                            telemetryRecorder={props.platformContext.telemetryRecorder}
                             revision={props.revision}
-                            commitID={resolvedRevision.commitID}
+                            commitID={resolvedRevision?.commitID}
                             {...context}
                         />
                     )}

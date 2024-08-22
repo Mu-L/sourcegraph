@@ -1,14 +1,16 @@
-import { DecoratorFn, Meta, Story } from '@storybook/react'
+import type { Decorator, Meta, StoryFn } from '@storybook/react'
 import { noop } from 'lodash'
 
+import { PermissionNamespace } from '@sourcegraph/shared/src/graphql-operations'
 import { MockedTestProvider } from '@sourcegraph/shared/src/testing/apollo'
 
 import { WebStory } from '../../../components/WebStory'
+import { PermissionsMap } from '../backend'
 import { mockPermissionsMap, mockRoles } from '../mock'
 
 import { PermissionsList } from './Permissions'
 
-const decorator: DecoratorFn = story => <div className="p-3 container">{story()}</div>
+const decorator: Decorator = story => <div className="p-3 container">{story()}</div>
 
 const config: Meta = {
     title: 'web/src/site-admin/rbac/Permissions',
@@ -29,7 +31,7 @@ const isChecked = (role: typeof roleWithAllPermissions): ((value: string) => boo
 
 const roleName = 'TEST-ROLE'
 
-export const NoPermissions: Story = () => (
+export const NoPermissions: StoryFn = () => (
     <WebStory>
         {() => (
             <MockedTestProvider>
@@ -47,7 +49,7 @@ export const NoPermissions: Story = () => (
 
 NoPermissions.storyName = 'No permissions assigned'
 
-export const OnePermissionAssigned: Story = () => (
+export const OnePermissionAssigned: StoryFn = () => (
     <WebStory>
         {() => (
             <MockedTestProvider>
@@ -65,7 +67,7 @@ export const OnePermissionAssigned: Story = () => (
 
 OnePermissionAssigned.storyName = 'One permission assigned'
 
-export const AllPermissionsAssigned: Story = () => (
+export const AllPermissionsAssigned: StoryFn = () => (
     <WebStory>
         {() => (
             <MockedTestProvider>
@@ -82,3 +84,33 @@ export const AllPermissionsAssigned: Story = () => (
 )
 
 AllPermissionsAssigned.storyName = 'All permissions assigned'
+
+export const DotComPermissionIncluded: StoryFn = () => (
+    <WebStory>
+        {() => {
+            const allPermissions: PermissionsMap = {
+                ...mockPermissionsMap,
+                [PermissionNamespace.PRODUCT_SUBSCRIPTIONS]: [
+                    {
+                        __typename: 'Permission',
+                        id: 'test-03-01',
+                        namespace: PermissionNamespace.PRODUCT_SUBSCRIPTIONS,
+                        action: 'TEST',
+                        displayName: 'PRODUCT_SUBSCRIPTIONS#TEST',
+                    },
+                ],
+            }
+            return (
+                <MockedTestProvider>
+                    <PermissionsList
+                        allPermissions={allPermissions}
+                        onChange={noop}
+                        onBlur={noop}
+                        isChecked={isChecked(roleWithAllPermissions)}
+                        roleName={roleName}
+                    />
+                </MockedTestProvider>
+            )
+        }}
+    </WebStory>
+)

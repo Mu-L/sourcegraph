@@ -35,6 +35,11 @@ var licenseSchema string
 //go:embed code_monitors.graphql
 var codeMonitorsSchema string
 
+// savedSearchesSchema is the saved searches raw GraphQL schema.
+//
+//go:embed saved_searches.graphql
+var savedSearchesSchema string
+
 // insightsSchema is the Code Insights raw graqhql schema.
 //
 //go:embed insights.graphql
@@ -90,11 +95,6 @@ var rbacSchema string
 //go:embed own.graphql
 var ownSchema string
 
-// appSchema is the Sourcegraph App local raw graqhql schema.
-//
-//go:embed app.graphql
-var appSchema string
-
 // completionSchema is the Sourcegraph Completions raw graqhql schema.
 //
 //go:embed completions.graphql
@@ -109,3 +109,24 @@ var gitHubAppsSchema string
 //
 //go:embed guardrails.graphql
 var guardrailsSchema string
+
+// contentLibrary is the Sourcegraph Content Library raw graphql schema.
+//
+//go:embed content_library.graphql
+var contentLibrary string
+
+// searchJobSchema is the Sourcegraph Search Job raw graphql schema.
+//
+//go:embed search_jobs.graphql
+var searchJobSchema string
+
+// telemetrySchema is the Sourcegraph Telemetry V2 raw graphql schema.
+//
+//go:embed telemetry.graphql
+var telemetrySchema string
+
+//go:embed viewer.graphql
+var viewerSchema string
+
+//go:embed prompts.graphql
+var promptsSchema string

@@ -2,9 +2,9 @@ import React from 'react'
 
 import { mdiImport } from '@mdi/js'
 
-import { Icon, H3, H4, LinkOrSpan } from '@sourcegraph/wildcard'
+import { H3, H4, Icon, LinkOrSpan } from '@sourcegraph/wildcard'
 
-import { UseShowMorePaginationResult } from '../../../../../components/FilteredConnection/hooks/useShowMorePagination'
+import type { UseShowMorePaginationResult } from '../../../../../components/FilteredConnection/hooks/useShowMorePagination'
 import {
     ConnectionContainer,
     ConnectionList,
@@ -13,9 +13,9 @@ import {
     ShowMoreButton,
     SummaryContainer,
 } from '../../../../../components/FilteredConnection/ui'
-import { BatchSpecImportingChangesetsResult } from '../../../../../graphql-operations'
+import type { BatchSpecImportingChangesetsResult } from '../../../../../graphql-operations'
 
-import { ImportingChangesetFields } from './useImportingChangesets'
+import type { ImportingChangesetFields } from './useImportingChangesets'
 
 import styles from './ImportingChangesetsPreviewList.module.scss'
 
@@ -30,8 +30,6 @@ interface ImportingChangesetsPreviewListProps {
      */
     isStale: boolean
 }
-
-const CHANGESETS_PER_PAGE_COUNT = 100
 
 export const ImportingChangesetsPreviewList: React.FunctionComponent<
     React.PropsWithChildren<ImportingChangesetsPreviewListProps>
@@ -67,7 +65,6 @@ export const ImportingChangesetsPreviewList: React.FunctionComponent<
                 <ConnectionSummary
                     centered={true}
                     noSummaryIfAllNodesVisible={true}
-                    first={CHANGESETS_PER_PAGE_COUNT}
                     connection={connection}
                     noun="imported changeset"
                     pluralNoun="imported changesets"

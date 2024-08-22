@@ -5,10 +5,12 @@ go_library(
     name = "permssync",
     srcs = ["permssync.go"],
     importpath = "github.com/sourcegraph/sourcegraph/internal/authz/permssync",
+    tags = [TAG_PLATFORM_SOURCE],
     visibility = ["//:__subpackages__"],
     deps = [
+        "//internal/api",
+        "//internal/authz",
         "//internal/database",
-        "//internal/repoupdater/protocol",
         "@com_github_sourcegraph_log//:log",
     ],
 )
@@ -18,10 +20,11 @@ go_test(
     timeout = "short",
     srcs = ["permssync_test.go"],
     embed = [":permssync"],
+    tags = [TAG_PLATFORM_SOURCE],
     deps = [
         "//internal/api",
         "//internal/database",
-        "//internal/repoupdater/protocol",
+        "//internal/database/dbmocks",
         "@com_github_sourcegraph_log//logtest",
         "@com_github_stretchr_testify//assert",
     ],

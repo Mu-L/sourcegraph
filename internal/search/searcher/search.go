@@ -10,19 +10,17 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/sourcegraph/sourcegraph/cmd/searcher/protocol"
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/endpoint"
 	"github.com/sourcegraph/sourcegraph/internal/errcode"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
-	internalgrpc "github.com/sourcegraph/sourcegraph/internal/grpc"
 	"github.com/sourcegraph/sourcegraph/internal/grpc/defaults"
 	"github.com/sourcegraph/sourcegraph/internal/limiter"
 	"github.com/sourcegraph/sourcegraph/internal/search"
 	"github.com/sourcegraph/sourcegraph/internal/search/job"
 	"github.com/sourcegraph/sourcegraph/internal/search/result"
 	"github.com/sourcegraph/sourcegraph/internal/search/streaming"
-	proto "github.com/sourcegraph/sourcegraph/internal/searcher/v1"
+	"github.com/sourcegraph/sourcegraph/internal/searcher/protocol"
 	"github.com/sourcegraph/sourcegraph/internal/trace"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 )
@@ -40,6 +38,8 @@ type TextSearchJob struct {
 	// to communicate whether searcher should call Zoekt search on these
 	// repos).
 	Indexed bool
+
+	NumContextLines int
 
 	// UseFullDeadline indicates that the search should try do as much work as
 	// it can within context.Deadline. If false the search should try and be
@@ -110,7 +110,7 @@ func (s *TextSearchJob) Run(ctx context.Context, clients job.RuntimeClients, str
 					ctx, done := limitCtx, limitDone
 					defer done()
 
-					repoLimitHit, err := s.searchFilesInRepo(ctx, clients.Gitserver, clients.SearcherURLs, clients.SearcherGRPCConnectionCache, repo, repo.Name, rev, s.Indexed, s.PatternInfo, fetchTimeout, stream)
+					repoLimitHit, err := s.searchFilesInRepo(ctx, clients.Gitserver, clients.SearcherURLs, clients.SearcherGRPCConnectionCache, repo, repo.Name, rev, s.Indexed, s.PatternInfo, s.NumContextLines, fetchTimeout, stream)
 					if err != nil {
 						tr.SetAttributes(
 							repo.Name.Attr(),
@@ -120,11 +120,11 @@ func (s *TextSearchJob) Run(ctx context.Context, clients job.RuntimeClients, str
 						clients.Logger.Warn("searchFilesInRepo failed", log.Error(err), log.String("repo", string(repo.Name)))
 					}
 					// non-diff search reports timeout through err, so pass false for timedOut
-					status, limitHit, err := search.HandleRepoSearchResult(repo.ID, []string{rev}, repoLimitHit, false, err)
+					status, err := search.HandleRepoSearchResult(repo.ID, []string{rev}, repoLimitHit, false, err)
 					stream.Send(streaming.SearchEvent{
 						Stats: streaming.Stats{
 							Status:     status,
-							IsLimitHit: limitHit,
+							IsLimitHit: repoLimitHit,
 						},
 					})
 					return err
@@ -183,6 +183,7 @@ func (s *TextSearchJob) searchFilesInRepo(
 	rev string,
 	index bool,
 	info *search.TextPatternInfo,
+	contextLines int,
 	fetchTimeout time.Duration,
 	stream streaming.Sender,
 ) (bool, error) {
@@ -194,101 +195,18 @@ func (s *TextSearchJob) searchFilesInRepo(
 	// backend.{GitRepo,Repos.ResolveRev}) because that would slow this operation
 	// down by a lot (if we're looping over many repos). This means that it'll fail if a
 	// repo is not on gitserver.
-	commit, err := client.ResolveRevision(ctx, gitserverRepo, rev, gitserver.ResolveRevisionOptions{NoEnsureRevision: true})
+	commit, err := client.ResolveRevision(ctx, gitserverRepo, rev, gitserver.ResolveRevisionOptions{EnsureRevision: false})
 	if err != nil {
 		return false, err
 	}
 
-	if internalgrpc.IsGRPCEnabled(ctx) {
-		onMatches := func(searcherMatch *proto.FileMatch) {
-			stream.Send(streaming.SearchEvent{
-				Results: []result.Match{convertProtoMatch(repo, commit, &rev, searcherMatch, s.PathRegexps)},
-			})
-		}
-
-		return SearchGRPC(ctx, searcherURLs, searcherGRPCConnectionCache, gitserverRepo, repo.ID, rev, commit, index, info, fetchTimeout, s.Features, onMatches)
-	}
-
-	onMatches := func(searcherMatches []*protocol.FileMatch) {
+	onMatch := func(searcherMatch *protocol.FileMatch) {
 		stream.Send(streaming.SearchEvent{
-			Results: convertMatches(repo, commit, &rev, searcherMatches, s.PathRegexps),
+			Results: convertMatches(repo, commit, &rev, []*protocol.FileMatch{searcherMatch}, s.PathRegexps),
 		})
 	}
 
-	onMatchGRPC := func(searcherMatch *proto.FileMatch) {
-		stream.Send(streaming.SearchEvent{
-			Results: []result.Match{convertProtoMatch(repo, commit, &rev, searcherMatch, s.PathRegexps)},
-		})
-	}
-
-	if internalgrpc.IsGRPCEnabled(ctx) {
-		return SearchGRPC(ctx, searcherURLs, searcherGRPCConnectionCache, gitserverRepo, repo.ID, rev, commit, index, info, fetchTimeout, s.Features, onMatchGRPC)
-	} else {
-		return Search(ctx, searcherURLs, gitserverRepo, repo.ID, rev, commit, index, info, fetchTimeout, s.Features, onMatches)
-	}
-}
-
-func convertProtoMatch(repo types.MinimalRepo, commit api.CommitID, rev *string, fm *proto.FileMatch, pathRegexps []*regexp.Regexp) result.Match {
-	chunkMatches := make(result.ChunkMatches, 0, len(fm.ChunkMatches))
-	for _, cm := range fm.ChunkMatches {
-		ranges := make(result.Ranges, 0, len(cm.Ranges))
-		for _, rr := range cm.Ranges {
-			ranges = append(ranges, result.Range{
-				Start: result.Location{
-					Offset: int(rr.Start.Offset),
-					Line:   int(rr.Start.Line),
-					Column: int(rr.Start.Column),
-				},
-				End: result.Location{
-					Offset: int(rr.End.Offset),
-					Line:   int(rr.End.Line),
-					Column: int(rr.End.Column),
-				},
-			})
-		}
-
-		chunkMatches = append(chunkMatches, result.ChunkMatch{
-			Content: cm.Content,
-			ContentStart: result.Location{
-				Offset: int(cm.ContentStart.Offset),
-				Line:   int(cm.ContentStart.Line),
-				Column: 0,
-			},
-			Ranges: ranges,
-		})
-
-	}
-
-	var pathMatches []result.Range
-	for _, pathRe := range pathRegexps {
-		pathSubmatches := pathRe.FindAllStringSubmatchIndex(fm.Path, -1)
-		for _, sm := range pathSubmatches {
-			pathMatches = append(pathMatches, result.Range{
-				Start: result.Location{
-					Offset: sm[0],
-					Line:   0,
-					Column: utf8.RuneCountInString(fm.Path[:sm[0]]),
-				},
-				End: result.Location{
-					Offset: sm[1],
-					Line:   0,
-					Column: utf8.RuneCountInString(fm.Path[:sm[1]]),
-				},
-			})
-		}
-	}
-
-	return &result.FileMatch{
-		File: result.File{
-			Path:     fm.Path,
-			Repo:     repo,
-			CommitID: commit,
-			InputRev: rev,
-		},
-		ChunkMatches: chunkMatches,
-		PathMatches:  pathMatches,
-		LimitHit:     fm.LimitHit,
-	}
+	return Search(ctx, searcherURLs, searcherGRPCConnectionCache, gitserverRepo, repo.ID, rev, commit, index, info, fetchTimeout, s.Features, contextLines, onMatch)
 }
 
 // convert converts a set of searcher matches into []result.Match
@@ -350,6 +268,8 @@ func convertMatches(repo types.MinimalRepo, commit api.CommitID, rev *string, se
 				Repo:     repo,
 				CommitID: commit,
 				InputRev: rev,
+				// Pass on the detected language. It's not always available and may be empty.
+				PreciseLanguage: fm.Language,
 			},
 			ChunkMatches: chunkMatches,
 			PathMatches:  pathMatches,

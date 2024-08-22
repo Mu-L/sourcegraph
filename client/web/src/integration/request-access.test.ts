@@ -1,10 +1,11 @@
+import { afterEach, beforeEach, describe, it } from 'mocha'
+
 import { accessibilityAudit } from '@sourcegraph/shared/src/testing/accessibility'
-import { createDriverForTest, Driver } from '@sourcegraph/shared/src/testing/driver'
+import { createDriverForTest, type Driver } from '@sourcegraph/shared/src/testing/driver'
 import { afterEachSaveScreenshotIfFailed } from '@sourcegraph/shared/src/testing/screenshotReporter'
 
-import { createWebIntegrationTestContext, WebIntegrationTestContext } from './context'
+import { createWebIntegrationTestContext, type WebIntegrationTestContext } from './context'
 import { commonWebGraphQlResults } from './graphQlResults'
-import { percySnapshotWithVariants } from './utils'
 
 describe('RequestAccess', () => {
     let driver: Driver
@@ -41,8 +42,6 @@ describe('RequestAccess', () => {
         await driver.page.waitForSelector('#name')
         await driver.page.waitForSelector('#email')
         await driver.page.waitForSelector('#additionalInfo')
-
-        await percySnapshotWithVariants(driver.page, 'Request access page')
         await accessibilityAudit(driver.page)
     })
 
@@ -64,8 +63,6 @@ describe('RequestAccess', () => {
             window.history.replaceState({}, '', '/request-access/done')
         })
         await driver.page.waitForSelector('[data-testid="request-access-post-submit"]')
-
-        await percySnapshotWithVariants(driver.page, 'Request access page post-submit')
         await accessibilityAudit(driver.page)
     })
 })

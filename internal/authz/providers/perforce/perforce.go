@@ -1,10 +1,7 @@
 package perforce
 
 import (
-	"bufio"
 	"context"
-	"io"
-	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -15,8 +12,11 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/sourcegraph/sourcegraph/internal/authz"
+	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc/perforce"
+	"github.com/sourcegraph/sourcegraph/internal/gitserver"
+	"github.com/sourcegraph/sourcegraph/internal/gitserver/protocol"
 	"github.com/sourcegraph/sourcegraph/internal/trace"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
@@ -29,6 +29,7 @@ const cacheTTL = time.Hour
 // Provider implements authz.Provider for Perforce depot permissions.
 type Provider struct {
 	logger log.Logger
+	db     database.DB
 
 	urn      string
 	codeHost *extsvc.CodeHost
@@ -38,7 +39,7 @@ type Provider struct {
 	user     string
 	password string
 
-	p4Execer p4Execer
+	gitserverClient gitserver.Client
 
 	emailsCacheMutex      sync.RWMutex
 	cachedAllUserEmails   map[string]string // username -> email
@@ -47,39 +48,38 @@ type Provider struct {
 	groupsCacheMutex      sync.RWMutex
 	cachedGroupMembers    map[string][]string // group -> members
 	groupsCacheLastUpdate time.Time
+	ignoreRulesWithHost   bool
 }
 
 func cacheIsUpToDate(lastUpdate time.Time) bool {
 	return time.Since(lastUpdate) < cacheTTL
 }
 
-type p4Execer interface {
-	P4Exec(ctx context.Context, host, user, password string, args ...string) (io.ReadCloser, http.Header, error)
-}
-
 // NewProvider returns a new Perforce authorization provider that uses the given
 // host, user and password to talk to a Perforce Server that is the source of
 // truth for permissions. It assumes emails of Sourcegraph accounts match 1-1
 // with emails of Perforce Server users.
-func NewProvider(logger log.Logger, p4Execer p4Execer, urn, host, user, password string, depots []extsvc.RepoID) *Provider {
+func NewProvider(logger log.Logger, db database.DB, gitserverClient gitserver.Client, urn, host, user, password string, depots []extsvc.RepoID, ignoreRulesWithHost bool) *Provider {
 	baseURL, _ := url.Parse(host)
 	return &Provider{
-		logger:             logger,
-		urn:                urn,
-		codeHost:           extsvc.NewCodeHost(baseURL, extsvc.TypePerforce),
-		depots:             depots,
-		host:               host,
-		user:               user,
-		password:           password,
-		p4Execer:           p4Execer,
-		cachedGroupMembers: make(map[string][]string),
+		db:                  db,
+		logger:              logger,
+		urn:                 urn,
+		codeHost:            extsvc.NewCodeHost(baseURL, extsvc.TypePerforce),
+		depots:              depots,
+		host:                host,
+		user:                user,
+		password:            password,
+		gitserverClient:     gitserverClient,
+		cachedGroupMembers:  make(map[string][]string),
+		ignoreRulesWithHost: ignoreRulesWithHost,
 	}
 }
 
 // FetchAccount uses given user's verified emails to match users on the Perforce
 // Server. It returns when any of the verified email has matched and the match
 // result is not deterministic.
-func (p *Provider) FetchAccount(ctx context.Context, user *types.User, _ []*extsvc.Account, verifiedEmails []string) (_ *extsvc.Account, err error) {
+func (p *Provider) FetchAccount(ctx context.Context, user *types.User) (_ *extsvc.Account, err error) {
 	if user == nil {
 		return nil, nil
 	}
@@ -97,29 +97,40 @@ func (p *Provider) FetchAccount(ctx context.Context, user *types.User, _ []*exts
 		tr.End()
 	}()
 
-	emailSet := make(map[string]struct{}, len(verifiedEmails))
-	for _, email := range verifiedEmails {
-		emailSet[email] = struct{}{}
+	userEmails, err := p.db.UserEmails().ListByUser(ctx,
+		database.UserEmailsListOptions{
+			UserID:       user.ID,
+			OnlyVerified: true,
+		})
+	if err != nil {
+		return nil, errors.Wrap(err, "could not fetch user emails")
 	}
 
-	rc, _, err := p.p4Execer.P4Exec(ctx, p.host, p.user, p.password, "users")
+	emailSet := make(map[string]struct{}, len(userEmails))
+	for _, email := range userEmails {
+		emailSet[strings.ToLower(email.Email)] = struct{}{}
+	}
+
+	users, err := p.gitserverClient.PerforceUsers(ctx, protocol.PerforceConnectionDetails{
+		P4Port:   p.host,
+		P4User:   p.user,
+		P4Passwd: p.password,
+	})
 	if err != nil {
 		return nil, errors.Wrap(err, "list users")
 	}
-	defer func() { _ = rc.Close() }()
 
-	scanner := bufio.NewScanner(rc)
-	for scanner.Scan() {
-		username, email, ok := scanEmail(scanner)
-		if !ok {
+	for _, p4User := range users {
+		if p4User.Email == "" || p4User.Username == "" {
 			continue
 		}
+		p4Email := strings.ToLower(p4User.Email)
 
-		if _, ok := emailSet[email]; ok {
+		if _, ok := emailSet[p4Email]; ok {
 			accountData, err := jsoniter.Marshal(
 				perforce.AccountData{
-					Username: username,
-					Email:    email,
+					Username: p4User.Username,
+					Email:    p4Email,
 				},
 			)
 			if err != nil {
@@ -131,7 +142,7 @@ func (p *Provider) FetchAccount(ctx context.Context, user *types.User, _ []*exts
 				AccountSpec: extsvc.AccountSpec{
 					ServiceType: p.codeHost.ServiceType,
 					ServiceID:   p.codeHost.ServiceID,
-					AccountID:   email,
+					AccountID:   p4Email,
 				},
 				AccountData: extsvc.AccountData{
 					Data: extsvc.NewUnencryptedData(accountData),
@@ -139,12 +150,7 @@ func (p *Provider) FetchAccount(ctx context.Context, user *types.User, _ []*exts
 			}, nil
 		}
 	}
-	if err = scanner.Err(); err != nil {
-		return nil, errors.Wrap(err, "scanner.Err")
-	}
 
-	// Drain remaining body
-	_, _ = io.Copy(io.Discard, rc)
 	return nil, nil
 }
 
@@ -165,22 +171,23 @@ func (p *Provider) FetchUserPerms(ctx context.Context, account *extsvc.Account, 
 		return nil, errors.New("no user found in the external account data")
 	}
 
-	// -u User : Displays protection lines that apply to the named user. This option
-	// requires super access.
-	rc, _, err := p.p4Execer.P4Exec(ctx, p.host, p.user, p.password, "protects", "-u", user.Username)
+	protects, err := p.gitserverClient.PerforceProtectsForUser(ctx, protocol.PerforceConnectionDetails{
+		P4Port:   p.host,
+		P4User:   p.user,
+		P4Passwd: p.password,
+	}, user.Username)
 	if err != nil {
 		return nil, errors.Wrap(err, "list ACLs by user")
 	}
-	defer func() { _ = rc.Close() }()
 
 	// Pull permissions from protects file.
 	perms := &authz.ExternalUserPermissions{}
 	if len(p.depots) == 0 {
-		err = errors.Wrap(scanProtects(p.logger, rc, repoIncludesExcludesScanner(perms)), "repoIncludesExcludesScanner")
+		err = errors.Wrap(scanProtects(p.logger, protects, repoIncludesExcludesScanner(perms), p.ignoreRulesWithHost), "repoIncludesExcludesScanner")
 	} else {
 		// SubRepoPermissions-enabled code path
-		perms.SubRepoPermissions = make(map[extsvc.RepoID]*authz.SubRepoPermissions, len(p.depots))
-		err = errors.Wrap(scanProtects(p.logger, rc, fullRepoPermsScanner(p.logger, perms, p.depots)), "fullRepoPermsScanner")
+		perms.SubRepoPermissions = make(map[extsvc.RepoID]*authz.SubRepoPermissionsWithIPs, len(p.depots))
+		err = errors.Wrap(scanProtects(p.logger, protects, fullRepoPermsScanner(p.logger, perms, p.depots), p.ignoreRulesWithHost), "fullRepoPermsScanner")
 	}
 
 	// As per interface definition for this method, implementation should return
@@ -195,22 +202,20 @@ func (p *Provider) getAllUserEmails(ctx context.Context) (map[string]string, err
 	}
 
 	userEmails := make(map[string]string)
-	rc, _, err := p.p4Execer.P4Exec(ctx, p.host, p.user, p.password, "users")
+	users, err := p.gitserverClient.PerforceUsers(ctx, protocol.PerforceConnectionDetails{
+		P4Port:   p.host,
+		P4User:   p.user,
+		P4Passwd: p.password,
+	})
 	if err != nil {
 		return nil, errors.Wrap(err, "list users")
 	}
-	defer func() { _ = rc.Close() }()
 
-	scanner := bufio.NewScanner(rc)
-	for scanner.Scan() {
-		username, email, ok := scanEmail(scanner)
-		if !ok {
+	for _, p4User := range users {
+		if p4User.Username == "" || p4User.Email == "" {
 			continue
 		}
-		userEmails[username] = email
-	}
-	if err = scanner.Err(); err != nil {
-		return nil, errors.Wrap(err, "scanner.Err")
+		userEmails[p4User.Username] = p4User.Email
 	}
 
 	p.emailsCacheMutex.Lock()
@@ -246,39 +251,19 @@ func (p *Provider) getGroupMembers(ctx context.Context, group string) ([]string,
 
 	p.groupsCacheMutex.Lock()
 	defer p.groupsCacheMutex.Unlock()
-	rc, _, err := p.p4Execer.P4Exec(ctx, p.host, p.user, p.password, "group", "-o", group)
+
+	members, err := p.gitserverClient.PerforceGroupMembers(
+		ctx,
+		protocol.PerforceConnectionDetails{
+			P4Port:   p.host,
+			P4User:   p.user,
+			P4Passwd: p.password,
+		},
+		group,
+	)
 	if err != nil {
 		return nil, errors.Wrap(err, "list group members")
 	}
-	defer func() { _ = rc.Close() }()
-
-	var members []string
-	startScan := false
-	scanner := bufio.NewScanner(rc)
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		// Only start scan when we encounter the "Users:" line
-		if !startScan {
-			if strings.HasPrefix(line, "Users:") {
-				startScan = true
-			}
-			continue
-		}
-
-		// Lines for users always start with a tab "\t"
-		if !strings.HasPrefix(line, "\t") {
-			break
-		}
-
-		members = append(members, strings.TrimSpace(line))
-	}
-	if err = scanner.Err(); err != nil {
-		return nil, errors.Wrap(err, "scanner.Err")
-	}
-
-	// Drain remaining body
-	_, _ = io.Copy(io.Discard, rc)
 
 	p.cachedGroupMembers[group] = members
 	p.groupsCacheLastUpdate = time.Now()
@@ -332,16 +317,21 @@ func (p *Provider) FetchRepoPerms(ctx context.Context, repo *extsvc.Repository, 
 		return nil, &authz.ErrUnimplemented{Feature: "perforce.FetchRepoPerms for sub-repo permissions"}
 	}
 
-	// -a : Displays protection lines for all users. This option requires super
-	// access.
-	rc, _, err := p.p4Execer.P4Exec(ctx, p.host, p.user, p.password, "protects", "-a", repo.ID)
+	protects, err := p.gitserverClient.PerforceProtectsForDepot(
+		ctx,
+		protocol.PerforceConnectionDetails{
+			P4Port:   p.host,
+			P4User:   p.user,
+			P4Passwd: p.password,
+		},
+		repo.ID,
+	)
 	if err != nil {
 		return nil, errors.Wrap(err, "list ACLs by depot")
 	}
-	defer func() { _ = rc.Close() }()
 
 	users := make(map[string]struct{})
-	if err := scanProtects(p.logger, rc, allUsersScanner(ctx, p, users)); err != nil {
+	if err := scanProtects(p.logger, protects, allUsersScanner(ctx, p, users), p.ignoreRulesWithHost); err != nil {
 		return nil, errors.Wrap(err, "scanning protects")
 	}
 
@@ -377,25 +367,9 @@ func (p *Provider) URN() string {
 }
 
 func (p *Provider) ValidateConnection(ctx context.Context) error {
-	// Validate the user has "super" access with "-u" option, see https://www.perforce.com/perforce/r12.1/manuals/cmdref/protects.html
-	rc, _, err := p.p4Execer.P4Exec(ctx, p.host, p.user, p.password, "protects", "-u", p.user)
-	if err == nil {
-		_ = rc.Close()
-		return nil
-	}
-
-	if strings.Contains(err.Error(), "You don't have permission for this operation.") {
-		return errors.New("the user does not have super access")
-	}
-	return errors.Wrap(err, "invalid user access level")
-}
-
-func scanEmail(s *bufio.Scanner) (string, string, bool) {
-	fields := strings.Fields(s.Text())
-	if len(fields) < 2 {
-		return "", "", false
-	}
-	username := fields[0]                  // e.g. alice
-	email := strings.Trim(fields[1], "<>") // e.g. alice@example.com
-	return username, email, true
+	return p.gitserverClient.IsPerforceSuperUser(ctx, protocol.PerforceConnectionDetails{
+		P4Port:   p.host,
+		P4User:   p.user,
+		P4Passwd: p.password,
+	})
 }

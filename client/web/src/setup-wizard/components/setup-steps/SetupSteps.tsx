@@ -1,33 +1,34 @@
 import {
     createContext,
-    ComponentType,
-    FC,
-    HTMLAttributes,
+    type ComponentType,
+    type FC,
+    type HTMLAttributes,
     useMemo,
     useContext,
     useCallback,
     useEffect,
     useState,
-    ReactNode,
-    PropsWithChildren,
+    type ReactNode,
+    type PropsWithChildren,
 } from 'react'
 
-import { ApolloClient, useApolloClient } from '@apollo/client'
+import { type ApolloClient, useApolloClient } from '@apollo/client'
 import { mdiChevronLeft, mdiChevronRight } from '@mdi/js'
 import classNames from 'classnames'
 import { noop } from 'lodash'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, Routes, Route, Navigate, matchPath } from 'react-router-dom'
 
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { Button, Icon, Tooltip } from '@sourcegraph/wildcard'
 
 import styles from './SetupSteps.module.scss'
 
-export interface StepComponentProps extends TelemetryProps {
+export interface StepComponentProps extends TelemetryProps, TelemetryV2Props {
     baseURL: string
     className?: string
-    isSourcegraphApp: boolean
+    setStepId?: (stepId: string) => void
 }
 
 export interface StepConfiguration {
@@ -163,13 +164,13 @@ export const SetupStepsRoot: FC<SetupStepsProps> = props => {
     return <SetupStepsContext.Provider value={cachedContext}>{children}</SetupStepsContext.Provider>
 }
 
-interface SetupStepsContentProps extends TelemetryProps, HTMLAttributes<HTMLElement> {
+interface SetupStepsContentProps extends TelemetryProps, TelemetryV2Props, HTMLAttributes<HTMLElement> {
     contentContainerClass?: string
-    isSourcegraphApp: boolean
+    setStepId?: (stepId: string) => void
 }
 
 export const SetupStepsContent: FC<SetupStepsContentProps> = props => {
-    const { contentContainerClass, className, telemetryService, isSourcegraphApp, ...attributes } = props
+    const { contentContainerClass, className, telemetryService, telemetryRecorder, setStepId, ...attributes } = props
     const { steps, activeStepIndex } = useContext(SetupStepsContext)
 
     return (
@@ -182,9 +183,10 @@ export const SetupStepsContent: FC<SetupStepsContentProps> = props => {
                         element={
                             <Component
                                 baseURL={path}
+                                setStepId={setStepId}
                                 className={classNames(contentContainerClass, styles.content)}
                                 telemetryService={telemetryService}
-                                isSourcegraphApp={isSourcegraphApp}
+                                telemetryRecorder={telemetryRecorder}
                             />
                         }
                     />

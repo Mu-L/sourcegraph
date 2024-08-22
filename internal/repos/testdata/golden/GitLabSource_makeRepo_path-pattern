@@ -32,7 +32,12 @@
     "archived": false,
     "star_count": 0,
     "forks_count": 0,
-    "empty_repo": false
+    "empty_repo": false,
+    "default_branch": "main",
+    "topics": [
+     "topic1",
+     "topic2"
+    ]
    }
   },
   {
@@ -68,7 +73,12 @@
     "archived": false,
     "star_count": 0,
     "forks_count": 0,
-    "empty_repo": false
+    "empty_repo": false,
+    "default_branch": "main",
+    "topics": [
+     "topic1",
+     "topic2"
+    ]
    }
   },
   {
@@ -104,7 +114,12 @@
     "archived": false,
     "star_count": 0,
     "forks_count": 0,
-    "empty_repo": false
+    "empty_repo": false,
+    "default_branch": "main",
+    "topics": [
+     "topic1",
+     "topic2"
+    ]
    }
   }
  ]

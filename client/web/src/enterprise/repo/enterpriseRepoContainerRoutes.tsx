@@ -1,15 +1,13 @@
 import { lazyComponent } from '@sourcegraph/shared/src/util/lazyComponent'
 
 import { RedirectRoute } from '../../components/RedirectRoute'
-import { RepoContainerRoute } from '../../repo/RepoContainer'
+import type { RepoContainerRoute } from '../../repo/RepoContainer'
 import { repoContainerRoutes } from '../../repo/repoContainerRoutes'
 
 const RepositoryCodeIntelArea = lazyComponent(
     () => import('../codeintel/repo/RepositoryCodeIntelArea'),
     'RepositoryCodeIntelArea'
 )
-
-const CodyRepoArea = lazyComponent(() => import('../cody/repo/CodyRepoArea'), 'CodyRepoArea')
 
 const RepositoryBatchChangesArea = lazyComponent(
     () => import('../batches/repo/RepositoryBatchChangesArea'),
@@ -32,25 +30,29 @@ export const enterpriseRepoContainerRoutes: readonly RepoContainerRoute[] = [
     },
     {
         path: '/-/code-graph/*',
-        render: context => <RepositoryCodeIntelArea {...context} />,
-    },
-    {
-        path: '/-/embeddings/*',
-        render: context => <CodyRepoArea {...context} />,
+        render: context => (
+            <RepositoryCodeIntelArea {...context} telemetryRecorder={context.platformContext.telemetryRecorder} />
+        ),
     },
     {
         path: '/-/batch-changes',
         condition: ({ batchChangesEnabled }) => batchChangesEnabled,
-        render: context => <RepositoryBatchChangesArea {...context} />,
+        render: context => (
+            <RepositoryBatchChangesArea {...context} telemetryRecorder={context.platformContext.telemetryRecorder} />
+        ),
     },
     {
         path: '/-/own/*',
         condition: ({ isSourcegraphDotCom }) => !isSourcegraphDotCom,
-        render: context => <RepositoryOwnPage {...context} />,
+        render: context => (
+            <RepositoryOwnPage {...context} telemetryRecorder={context.platformContext.telemetryRecorder} />
+        ),
     },
     {
         path: '/-/own/edit',
         condition: ({ isSourcegraphDotCom }) => !isSourcegraphDotCom,
-        render: context => <RepositoryOwnEditPage {...context} />,
+        render: context => (
+            <RepositoryOwnEditPage {...context} telemetryRecorder={context.platformContext.telemetryRecorder} />
+        ),
     },
 ]

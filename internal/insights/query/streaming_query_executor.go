@@ -27,15 +27,15 @@ type StreamingQueryExecutor struct {
 	logger log.Logger
 }
 
-func NewStreamingExecutor(postgres database.DB, clock func() time.Time) *StreamingQueryExecutor {
+func NewStreamingExecutor(db database.DB, clock func() time.Time) *StreamingQueryExecutor {
 	return &StreamingQueryExecutor{
-		gitserverClient: internalGitserver.NewClient(postgres),
+		gitserverClient: internalGitserver.NewClient("insights.queryexecutor"),
 		previewExecutor: previewExecutor{
-			repoStore: postgres.Repos(),
+			repoStore: db.Repos(),
 			filter:    &compression.NoopFilter{},
 			clock:     clock,
 		},
-		logger: log.Scoped("StreamingQueryExecutor", ""),
+		logger: log.Scoped("StreamingQueryExecutor"),
 	}
 }
 
@@ -153,11 +153,11 @@ func (c *StreamingRepoQueryExecutor) ExecuteRepoList(ctx context.Context, query 
 	if len(repoResult.SkippedReasons) > 0 {
 		c.logger.Error("repo search encountered skipped events", log.String("reasons", fmt.Sprintf("%v", repoResult.SkippedReasons)), log.String("query", query))
 	}
+	if len(repoResult.Alerts) > 0 {
+		c.logger.Error("repo search encountered alert events", log.String("alerts", fmt.Sprintf("%v", repoResult.Alerts)), log.String("query", query))
+	}
 	if len(repoResult.Errors) > 0 {
 		return nil, errors.Errorf("streaming repo search: errors: %v", repoResult.Errors)
-	}
-	if len(repoResult.Alerts) > 0 {
-		return nil, errors.Errorf("streaming repo search: alerts: %v", repoResult.Alerts)
 	}
 	return repoResult.Repos, nil
 }

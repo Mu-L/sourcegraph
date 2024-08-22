@@ -1,20 +1,20 @@
 import React, { useCallback, useMemo, useState } from 'react'
 
 import classNames from 'classnames'
-import { Observable } from 'rxjs'
+import type { Observable } from 'rxjs'
 import { useDeepCompareEffectNoCheck } from 'use-deep-compare-effect'
 
 import { SearchBox } from '@sourcegraph/branded'
 import { wrapRemoteObservable } from '@sourcegraph/shared/src/api/client/api/common'
-import { getUserSearchContextNamespaces, QueryState, SearchMode } from '@sourcegraph/shared/src/search'
+import { getUserSearchContextNamespaces, type QueryState, SearchMode } from '@sourcegraph/shared/src/search'
 import { collectMetrics } from '@sourcegraph/shared/src/search/query/metrics'
 import { appendContextFilter, sanitizeQueryForTelemetry } from '@sourcegraph/shared/src/search/query/transformer'
-import { LATEST_VERSION, SearchMatch } from '@sourcegraph/shared/src/search/stream'
+import { LATEST_VERSION, type SearchMatch } from '@sourcegraph/shared/src/search/stream'
 import { useIsLightTheme } from '@sourcegraph/shared/src/theme'
 
 import { SearchPatternType } from '../../graphql-operations'
-import { SearchHomeState } from '../../state'
-import { WebviewPageProps } from '../platform/context'
+import type { SearchHomeState } from '../../state'
+import type { WebviewPageProps } from '../platform/context'
 
 import { fetchSearchContexts } from './alias/fetchSearchContext'
 import { BrandHeader } from './components/BrandHeader'
@@ -167,6 +167,7 @@ export const SearchHomeView: React.FunctionComponent<React.PropsWithChildren<Sea
                         caseSensitive={caseSensitive}
                         setCaseSensitivity={setCaseSensitivity}
                         patternType={patternType}
+                        defaultPatternType={SearchPatternType.standard}
                         setPatternType={setPatternType}
                         searchMode={searchMode}
                         setSearchMode={setSearchMode}
@@ -184,8 +185,8 @@ export const SearchHomeView: React.FunctionComponent<React.PropsWithChildren<Sea
                         fetchSearchContexts={fetchSearchContexts}
                         getUserSearchContextNamespaces={getUserSearchContextNamespaces}
                         fetchStreamSuggestions={fetchStreamSuggestions}
-                        settingsCascade={settingsCascade}
                         telemetryService={platformContext.telemetryService}
+                        telemetryRecorder={platformContext.telemetryRecorder}
                         platformContext={platformContext}
                         className={classNames('flex-grow-1 flex-shrink-past-contents', styles.searchBox)}
                         containerClassName={styles.searchBoxContainer}

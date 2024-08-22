@@ -1,16 +1,21 @@
-import { FunctionComponent, useCallback, useMemo, useState } from 'react'
+import { type FunctionComponent, useCallback, useMemo, useState } from 'react'
 
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { useIsLightTheme } from '@sourcegraph/shared/src/theme'
 import { screenReaderAnnounce, ErrorAlert } from '@sourcegraph/wildcard'
 
-import { AuthenticatedUser } from '../../../../../auth'
-import { SaveToolbar, SaveToolbarProps, SaveToolbarPropsGenerator } from '../../../../../components/SaveToolbar'
+import type { AuthenticatedUser } from '../../../../../auth'
+import {
+    SaveToolbar,
+    type SaveToolbarProps,
+    type SaveToolbarPropsGenerator,
+} from '../../../../../components/SaveToolbar'
 import { DynamicallyImportedMonacoSettingsEditor } from '../../../../../settings/DynamicallyImportedMonacoSettingsEditor'
 import { INFERENCE_SCRIPT } from '../../hooks/useInferenceScript'
 import { useUpdateInferenceScript } from '../../hooks/useUpdateInferenceScript'
 
-export interface InferenceScriptEditorProps extends TelemetryProps {
+export interface InferenceScriptEditorProps extends TelemetryProps, TelemetryV2Props {
     script: string
     authenticatedUser: AuthenticatedUser | null
     setPreviewScript: (script: string) => void
@@ -21,6 +26,7 @@ export const InferenceScriptEditor: FunctionComponent<InferenceScriptEditorProps
     setPreviewScript,
     authenticatedUser,
     telemetryService,
+    telemetryRecorder,
 }) => {
     const { updateInferenceScript, isUpdating, updatingError } = useUpdateInferenceScript()
 
@@ -73,6 +79,7 @@ export const InferenceScriptEditor: FunctionComponent<InferenceScriptEditorProps
                 height={600}
                 isLightTheme={isLightTheme}
                 telemetryService={telemetryService}
+                telemetryRecorder={telemetryRecorder}
                 customSaveToolbar={authenticatedUser?.siteAdmin ? customToolbar : undefined}
                 onDirtyChange={setDirty}
             />

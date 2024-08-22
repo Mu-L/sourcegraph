@@ -1,10 +1,11 @@
-import React, { FC, useEffect, useState, useCallback } from 'react'
+import React, { type FC, useEffect, useState, useCallback } from 'react'
 
 import { mdiChevronDown, mdiInformationOutline } from '@mdi/js'
 
 import { Timestamp } from '@sourcegraph/branded/src/components/Timestamp'
 import { UserAvatar } from '@sourcegraph/shared/src/components/UserAvatar'
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import {
     Container,
     PageHeader,
@@ -15,7 +16,6 @@ import {
     Link,
     Input,
     Badge,
-    BadgeProps,
     useDebounce,
     PageSwitcher,
     Icon,
@@ -23,13 +23,13 @@ import {
     PopoverContent,
     Popover,
     Position,
-    PopoverOpenEvent,
+    type PopoverOpenEvent,
     Tooltip,
 } from '@sourcegraph/wildcard'
 
 import { usePageSwitcherPagination } from '../../../components/FilteredConnection/hooks/usePageSwitcherPagination'
 import { PageTitle } from '../../../components/PageTitle'
-import {
+import type {
     SettingsAreaRepositoryFields,
     RepoPermissionsInfoResult,
     RepoPermissionsInfoVariables,
@@ -40,8 +40,8 @@ import { useURLSyncedState } from '../../../hooks'
 import { ActionContainer } from '../../../repo/settings/components/ActionContainer'
 import { scheduleRepositoryPermissionsSync } from '../../../site-admin/backend'
 import { PermissionsSyncJobsTable } from '../../../site-admin/permissions-center/PermissionsSyncJobsTable'
-import { Table, IColumn } from '../../../site-admin/UserManagement/components/Table'
-import { eventLogger } from '../../../tracking/eventLogger'
+import { Table, type IColumn } from '../../../site-admin/UserManagement/components/Table'
+import { PermissionReasonBadgeProps } from '../../settings/permissons'
 
 import { RepoPermissionsInfoQuery } from './backend'
 
@@ -49,15 +49,21 @@ import styles from './RepoSettingsPermissionsPage.module.scss'
 
 type IUser = INode['user']
 
-export interface RepoSettingsPermissionsPageProps extends TelemetryProps {
+export interface RepoSettingsPermissionsPageProps extends TelemetryProps, TelemetryV2Props {
     repo: SettingsAreaRepositoryFields
 }
 
 /**
  * The repository settings permissions page.
  */
-export const RepoSettingsPermissionsPage: FC<RepoSettingsPermissionsPageProps> = ({ repo, telemetryService }) => {
-    useEffect(() => eventLogger.logViewEvent('RepoSettingsPermissions'))
+export const RepoSettingsPermissionsPage: FC<RepoSettingsPermissionsPageProps> = ({
+    repo,
+    telemetryService,
+    telemetryRecorder,
+}) => {
+    useEffect(() => {
+        telemetryRecorder.recordEvent('repo.settings.permissions', 'view')
+    }, [telemetryRecorder])
 
     const [{ query }, setSearchQuery] = useURLSyncedState({ query: '' })
     const debouncedQuery = useDebounce(query, 300)
@@ -91,9 +97,9 @@ export const RepoSettingsPermissionsPage: FC<RepoSettingsPermissionsPageProps> =
 
     return (
         <>
-            <PageTitle title="Permissions" />
+            <PageTitle title="Repo Permissions" />
             <PageHeader
-                path={[{ text: 'Permissions' }]}
+                path={[{ text: 'Repo Permissions' }]}
                 headingElement="h2"
                 className="mb-3"
                 description={
@@ -170,7 +176,12 @@ export const RepoSettingsPermissionsPage: FC<RepoSettingsPermissionsPageProps> =
                 className="my-3 pt-3"
             />
             <Container className="mb-3">
-                <PermissionsSyncJobsTable telemetryService={telemetryService} minimal={true} repoID={repo.id} />
+                <PermissionsSyncJobsTable
+                    telemetryService={telemetryService}
+                    telemetryRecorder={telemetryRecorder}
+                    minimal={true}
+                    repoID={repo.id}
+                />
             </Container>
             <PageHeader
                 headingElement="h2"
@@ -253,15 +264,6 @@ export const RenderUsernameAndEmail: FC<{ user: IUser }> = ({ user }) => {
     )
 }
 
-const PermissionReasonBadgeProps: { [reason: string]: BadgeProps } = {
-    'Permissions Sync': {
-        variant: 'success',
-        tooltip: 'The repository is accessible to the user due to permissions syncing from code host.',
-    },
-    Unrestricted: { variant: 'primary', tooltip: 'The repository is accessible to all the users. ' },
-    'Site Admin': { variant: 'secondary', tooltip: 'The user is site admin and has access to all the repositories.' },
-}
-
 interface ScheduleRepositoryPermissionsSyncActionContainerProps {
     repo: SettingsAreaRepositoryFields
 }
@@ -282,6 +284,6 @@ class ScheduleRepositoryPermissionsSyncActionContainer extends React.PureCompone
     }
 
     private scheduleRepositoryPermissions = async (): Promise<void> => {
-        await scheduleRepositoryPermissionsSync({ repository: this.props.repo.id }).toPromise()
+        await scheduleRepositoryPermissionsSync({ repository: this.props.repo.id })
     }
 }

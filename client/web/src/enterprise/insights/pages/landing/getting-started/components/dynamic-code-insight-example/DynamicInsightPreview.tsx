@@ -1,7 +1,8 @@
-import { FC } from 'react'
+import type { FC } from 'react'
 
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
-import { Series, useDeepMemo, ErrorAlert } from '@sourcegraph/wildcard'
+import { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import { type Series, useDeepMemo, ErrorAlert } from '@sourcegraph/wildcard'
 
 import {
     SeriesBasedChartTypes,
@@ -17,7 +18,7 @@ import {
 } from '../../../../../components'
 import { DATA_SERIES_COLORS } from '../../../../../constants'
 import {
-    SeriesWithStroke,
+    type SeriesWithStroke,
     useLivePreviewSeriesInsight,
     LivePreviewStatus,
 } from '../../../../../core/hooks/live-preview-insight'
@@ -32,7 +33,7 @@ const createExampleDataSeries = (query: string): SeriesWithStroke[] => [
     },
 ]
 
-interface DynamicInsightPreviewProps extends TelemetryProps {
+interface DynamicInsightPreviewProps extends TelemetryProps, TelemetryV2Props {
     disabled: boolean
     repositories: string[]
     query: string
@@ -40,7 +41,7 @@ interface DynamicInsightPreviewProps extends TelemetryProps {
 }
 
 export const DynamicInsightPreview: FC<DynamicInsightPreviewProps> = props => {
-    const { disabled, repositories, query, className, telemetryService } = props
+    const { disabled, repositories, query, className, telemetryService, telemetryRecorder } = props
 
     // Compare live insight settings with deep check to avoid unnecessary
     // search insight content fetching
@@ -59,6 +60,7 @@ export const DynamicInsightPreview: FC<DynamicInsightPreviewProps> = props => {
     const { trackMouseEnter, trackMouseLeave, trackDatumClicks } = useCodeInsightViewPings({
         telemetryService,
         insightType: CodeInsightTrackType.InProductLandingPageInsight,
+        telemetryRecorder,
     })
 
     return (

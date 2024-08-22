@@ -7,11 +7,11 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/autoindexing/internal/background/summary"
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/autoindexing/internal/inference"
 	autoindexingstore "github.com/sourcegraph/sourcegraph/internal/codeintel/autoindexing/internal/store"
+	"github.com/sourcegraph/sourcegraph/internal/codeintel/reposcheduler"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
 	"github.com/sourcegraph/sourcegraph/internal/goroutine"
 	"github.com/sourcegraph/sourcegraph/internal/observation"
-	"github.com/sourcegraph/sourcegraph/internal/repoupdater"
 )
 
 var (
@@ -28,14 +28,12 @@ func NewService(
 	gitserverClient gitserver.Client,
 ) *Service {
 	store := autoindexingstore.New(scopedContext("store", observationCtx), db)
-	repoUpdater := repoupdater.DefaultClient
 	inferenceSvc := inference.NewService(db)
 
 	return newService(
 		scopedContext("service", observationCtx),
 		store,
 		inferenceSvc,
-		repoUpdater,
 		db.Repos(),
 		gitserverClient,
 	)
@@ -49,17 +47,17 @@ var (
 
 func NewIndexSchedulers(
 	observationCtx *observation.Context,
-	uploadSvc UploadService,
 	policiesSvc PoliciesService,
 	policyMatcher PolicyMatcher,
-	autoindexingSvc *Service,
+	repoSchedulingSvc reposcheduler.RepositorySchedulingService,
+	autoindexingSvc Service,
 	repoStore database.RepoStore,
 ) []goroutine.BackgroundRoutine {
 	return background.NewIndexSchedulers(
 		scopedContext("scheduler", observationCtx),
 		policiesSvc,
 		policyMatcher,
-		autoindexingSvc,
+		repoSchedulingSvc,
 		autoindexingSvc.indexEnqueuer,
 		repoStore,
 		autoindexingSvc.store,
@@ -73,7 +71,6 @@ func NewDependencyIndexSchedulers(
 	uploadSvc UploadService,
 	depsSvc DependenciesService,
 	autoindexingSvc *Service,
-	repoUpdater RepoUpdaterClient,
 ) []goroutine.BackgroundRoutine {
 	return background.NewDependencyIndexSchedulers(
 		scopedContext("dependencies", observationCtx),
@@ -82,7 +79,6 @@ func NewDependencyIndexSchedulers(
 		depsSvc,
 		autoindexingSvc.store,
 		autoindexingSvc.indexEnqueuer,
-		repoUpdater,
 		DependenciesConfigInst,
 	)
 }

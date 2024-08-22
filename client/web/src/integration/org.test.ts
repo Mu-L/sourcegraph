@@ -1,18 +1,20 @@
 import assert from 'assert'
 
+import { afterEach, beforeEach, describe, it } from 'mocha'
+
 import { subtypeOf } from '@sourcegraph/common'
-import { SharedGraphQlOperations } from '@sourcegraph/shared/src/graphql-operations'
+import type { SharedGraphQlOperations } from '@sourcegraph/shared/src/graphql-operations'
 import { accessibilityAudit } from '@sourcegraph/shared/src/testing/accessibility'
-import { Driver, createDriverForTest } from '@sourcegraph/shared/src/testing/driver'
+import { createDriverForTest, type Driver } from '@sourcegraph/shared/src/testing/driver'
 import { emptyResponse } from '@sourcegraph/shared/src/testing/integration/graphQlResults'
 import { afterEachSaveScreenshotIfFailed } from '@sourcegraph/shared/src/testing/screenshotReporter'
 import { retry } from '@sourcegraph/shared/src/testing/utils'
 
-import { WebGraphQlOperations, OrganizationResult } from '../graphql-operations'
+import type { OrganizationResult, WebGraphQlOperations } from '../graphql-operations'
 
-import { WebIntegrationTestContext, createWebIntegrationTestContext } from './context'
+import { createWebIntegrationTestContext, type WebIntegrationTestContext } from './context'
 import { commonWebGraphQlResults } from './graphQlResults'
-import { createEditorAPI, percySnapshotWithVariants } from './utils'
+import { createEditorAPI } from './utils'
 
 describe('Organizations', () => {
     const testOrg = subtypeOf<OrganizationResult['organization']>()({
@@ -93,8 +95,6 @@ describe('Organizations', () => {
             await driver.page.goto(driver.sourcegraphBaseUrl + '/site-admin/organizations')
 
             await driver.page.waitForSelector('.test-create-org-button')
-
-            await percySnapshotWithVariants(driver.page, 'Site admin org page')
             await accessibilityAudit(driver.page)
 
             await driver.page.click('.test-create-org-button')
@@ -167,7 +167,6 @@ describe('Organizations', () => {
                 const editor = await createEditorAPI(driver, '.test-settings-file .test-editor')
 
                 // Take snapshot before updating text in the editor to avoid flakiness.
-                await percySnapshotWithVariants(driver.page, 'Organization settings page')
                 await editor.replace(updatedSettings, 'paste')
 
                 const variables = await testContext.waitForGraphQLRequest(async () => {
@@ -239,8 +238,6 @@ describe('Organizations', () => {
                     2,
                     'Expected members list to show 2 members.'
                 )
-
-                await percySnapshotWithVariants(driver.page, 'Organization members list')
                 await accessibilityAudit(driver.page)
 
                 // Override for the fetch post-removal

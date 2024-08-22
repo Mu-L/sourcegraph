@@ -1,7 +1,8 @@
 package licensing
 
 import (
-	"log"
+	"bytes"
+	"log" //nolint:logging // TODO move all logging to sourcegraph/log
 	"sync"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/env"
 	"github.com/sourcegraph/sourcegraph/internal/license"
+	"github.com/sourcegraph/sourcegraph/internal/redispool"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
 
@@ -17,6 +19,9 @@ import (
 type Info struct {
 	license.Info
 }
+
+// publicKeyData is the public key used to verify Sourcegraph license keys
+const publicKeyData = `ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDUUd9r83fGmYVLzcqQp5InyAoJB5lLxlM7s41SUUtxfnG6JpmvjNd+WuEptJGk0C/Zpyp/cCjCV4DljDs8Z7xjRbvJYW+vklFFxXrMTBs/+HjpIBKlYTmG8SqTyXyu1s4485Kh1fEC5SK6z2IbFaHuSHUXgDi/IepSOg1QudW4n8J91gPtT2E30/bPCBRq8oz/RVwJSDMvYYjYVb//LhV0Mx3O6hg4xzUNuwiCtNjCJ9t4YU2sV87+eJwWtQNbSQ8TelQa8WjG++XSnXUHw12bPDe7wGL/7/EJb7knggKSAMnpYpCyV35dyi4DsVc46c+b6P0gbVSosh3Uc3BJHSWF`
 
 // publicKey is the public key used to verify product license keys.
 var publicKey = func() ssh.PublicKey {
@@ -31,7 +36,6 @@ var publicKey = func() ssh.PublicKey {
 	//
 	// To convert PKCS#8 format (which `openssl rsa -in key.pem -pubout` produces) to the format
 	// that ssh.ParseAuthorizedKey reads here, use `ssh-keygen -i -mPKCS8 -f key.pub`.
-	const publicKeyData = `ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDUUd9r83fGmYVLzcqQp5InyAoJB5lLxlM7s41SUUtxfnG6JpmvjNd+WuEptJGk0C/Zpyp/cCjCV4DljDs8Z7xjRbvJYW+vklFFxXrMTBs/+HjpIBKlYTmG8SqTyXyu1s4485Kh1fEC5SK6z2IbFaHuSHUXgDi/IepSOg1QudW4n8J91gPtT2E30/bPCBRq8oz/RVwJSDMvYYjYVb//LhV0Mx3O6hg4xzUNuwiCtNjCJ9t4YU2sV87+eJwWtQNbSQ8TelQa8WjG++XSnXUHw12bPDe7wGL/7/EJb7knggKSAMnpYpCyV35dyi4DsVc46c+b6P0gbVSosh3Uc3BJHSWF`
 	var err error
 	publicKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(publicKeyData))
 	if err != nil {
@@ -39,6 +43,11 @@ var publicKey = func() ssh.PublicKey {
 	}
 	return publicKey
 }()
+
+// IsLicensePublicKeyOverridden checks if the hardcoded license public key has been overridden with a *different* key
+func IsLicensePublicKeyOverridden() bool {
+	return publicKeyData != string(bytes.TrimSpace(ssh.MarshalAuthorizedKey(publicKey)))
+}
 
 // toInfo converts from the return type of license.ParseSignedKey to the return type of this
 // package's methods (which use the Info wrapper type).
@@ -56,7 +65,12 @@ func ParseProductLicenseKey(licenseKey string) (info *Info, signature string, er
 }
 
 func GetFreeLicenseInfo() (info *Info) {
-	return &Info{license.Info{Tags: []string{"plan:free-1"}, UserCount: 10, ExpiresAt: time.Now().Add(time.Hour * 8760)}}
+	return &Info{license.Info{
+		Tags:      []string{"plan:free-1"},
+		UserCount: 10,
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(time.Hour * 8760),
+	}}
 }
 
 var MockParseProductLicenseKeyWithBuiltinOrGenerationKey func(licenseKey string) (*Info, string, error)
@@ -99,7 +113,7 @@ func GetConfiguredProductLicenseInfo() (*Info, error) {
 }
 
 func IsLicenseValid() bool {
-	val := store.Get(licenseValidityStoreKey)
+	val := store.Get(LicenseValidityStoreKey)
 	if val.IsNil() {
 		return true
 	}
@@ -112,6 +126,8 @@ func IsLicenseValid() bool {
 	return v
 }
 
+var store = redispool.Store
+
 func GetLicenseInvalidReason() string {
 	if IsLicenseValid() {
 		return ""
@@ -119,7 +135,7 @@ func GetLicenseInvalidReason() string {
 
 	defaultReason := "unknown"
 
-	val := store.Get(licenseInvalidReason)
+	val := store.Get(LicenseInvalidReason)
 	if val.IsNil() {
 		return defaultReason
 	}
@@ -157,7 +173,7 @@ func GetConfiguredProductLicenseInfoWithSignature() (*Info, string, error) {
 				return nil, "", err
 			}
 
-			if err = info.hasUnknownPlan(); err != nil {
+			if err = info.HasUnknownPlan(); err != nil {
 				return nil, "", err
 			}
 
@@ -166,23 +182,16 @@ func GetConfiguredProductLicenseInfoWithSignature() (*Info, string, error) {
 			lastSignature = signature
 		}
 		return info, signature, nil
-	} else {
-		// If no license key, default to free tier
-		return GetFreeLicenseInfo(), "", nil
 	}
-}
 
-// licenseGenerationPrivateKeyURL is the URL where Sourcegraph staff can find the private key for
-// generating licenses.
-//
-// NOTE: If you change this, use text search to replace other instances of it (in source code
-// comments).
-const licenseGenerationPrivateKeyURL = "https://team-sourcegraph.1password.com/vaults/dnrhbauihkhjs5ag6vszsme45a/allitems/zkdx6gpw4uqejs3flzj7ef5j4i"
+	// If no license key, default to free tier
+	return GetFreeLicenseInfo(), "", nil
+}
 
 // envLicenseGenerationPrivateKey (the env var SOURCEGRAPH_LICENSE_GENERATION_KEY) is the
 // PEM-encoded form of the private key used to sign product license keys. It is stored at
 // https://team-sourcegraph.1password.com/vaults/dnrhbauihkhjs5ag6vszsme45a/allitems/zkdx6gpw4uqejs3flzj7ef5j4i.
-var envLicenseGenerationPrivateKey = env.Get("SOURCEGRAPH_LICENSE_GENERATION_KEY", "", "the PEM-encoded form of the private key used to sign product license keys ("+licenseGenerationPrivateKeyURL+")")
+var envLicenseGenerationPrivateKey = env.Get("SOURCEGRAPH_LICENSE_GENERATION_KEY", "", "the PEM-encoded form of the private key used to sign product license keys ("+license.GenerationPrivateKeyURL+")")
 
 // licenseGenerationPrivateKey is the private key used to generate license keys.
 var licenseGenerationPrivateKey = func() ssh.Signer {
@@ -205,7 +214,7 @@ func GenerateProductLicenseKey(info license.Info) (licenseKey string, version in
 		const msg = "no product license generation private key was configured"
 		if env.InsecureDev {
 			// Show more helpful error message in local dev.
-			return "", 0, errors.Errorf("%s (for testing by Sourcegraph staff: set the SOURCEGRAPH_LICENSE_GENERATION_KEY env var to the key obtained at %s)", msg, licenseGenerationPrivateKeyURL)
+			return "", 0, errors.Errorf("%s (for testing by Sourcegraph staff: set the SOURCEGRAPH_LICENSE_GENERATION_KEY env var to the key obtained at %s)", msg, license.GenerationPrivateKeyURL)
 		}
 		return "", 0, errors.New(msg)
 	}

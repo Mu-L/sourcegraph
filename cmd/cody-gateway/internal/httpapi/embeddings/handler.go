@@ -11,15 +11,17 @@ import (
 	"github.com/sourcegraph/log"
 	"go.opentelemetry.io/otel/attribute"
 	oteltrace "go.opentelemetry.io/otel/trace"
-	"golang.org/x/exp/slices"
 
 	"github.com/sourcegraph/sourcegraph/cmd/cody-gateway/internal/actor"
 	"github.com/sourcegraph/sourcegraph/cmd/cody-gateway/internal/events"
 	"github.com/sourcegraph/sourcegraph/cmd/cody-gateway/internal/httpapi/featurelimiter"
+	"github.com/sourcegraph/sourcegraph/cmd/cody-gateway/internal/httpapi/overhead"
 	"github.com/sourcegraph/sourcegraph/cmd/cody-gateway/internal/limiter"
 	"github.com/sourcegraph/sourcegraph/cmd/cody-gateway/internal/notify"
 	"github.com/sourcegraph/sourcegraph/cmd/cody-gateway/internal/response"
 	"github.com/sourcegraph/sourcegraph/internal/codygateway"
+	"github.com/sourcegraph/sourcegraph/internal/codygateway/codygatewayevents"
+	"github.com/sourcegraph/sourcegraph/internal/completions/types"
 	sgtrace "github.com/sourcegraph/sourcegraph/internal/trace"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
@@ -32,9 +34,10 @@ func NewHandler(
 	rs limiter.RedisStore,
 	rateLimitNotifier notify.RateLimitNotifier,
 	mf ModelFactory,
-	allowedModels []string,
+	prefixedAllowedModels []string,
+	completionsClient types.CompletionsClient,
 ) http.Handler {
-	baseLogger = baseLogger.Scoped("embeddingshandler", "The HTTP API handler for the embeddings endpoint.")
+	baseLogger = baseLogger.Scoped("embeddingshandler")
 
 	return featurelimiter.HandleFeature(
 		baseLogger,
@@ -43,9 +46,9 @@ func NewHandler(
 		rateLimitNotifier,
 		codygateway.FeatureEmbeddings,
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
 			act := actor.FromContext(r.Context())
 			logger := act.Logger(sgtrace.Logger(r.Context(), baseLogger))
-
 			// This will never be nil as the rate limiter middleware checks this before.
 			// TODO: Should we read the rate limit from context, and store it in the rate
 			// limiter to make this less dependent on these two logics to remain the same?
@@ -62,7 +65,7 @@ func NewHandler(
 				return
 			}
 
-			if !isAllowedModel(intersection(allowedModels, rateLimit.AllowedModels), body.Model) {
+			if !isAllowedModel(rateLimit.EvaluateAllowedModels(prefixedAllowedModels), body.Model) {
 				response.JSONError(logger, w, http.StatusBadRequest, errors.Newf("model %q is not allowed", body.Model))
 				return
 			}
@@ -87,6 +90,12 @@ func NewHandler(
 				usedTokens         int = -1
 			)
 			defer func() {
+				o := overhead.FromContext(r.Context())
+				o.Feature = codygateway.FeatureEmbeddings
+				o.UpstreamLatency = upstreamFinished
+				o.Provider = c.ProviderName()
+				o.Stream = false
+
 				if span := oteltrace.SpanFromContext(r.Context()); span.IsRecording() {
 					span.SetAttributes(
 						attribute.Int("upstreamStatusCode", upstreamStatusCode),
@@ -95,15 +104,23 @@ func NewHandler(
 				err := eventLogger.LogEvent(
 					r.Context(),
 					events.Event{
-						Name:       codygateway.EventNameEmbeddingsFinished,
+						Name:       codygatewayevents.EventNameEmbeddingsFinished,
 						Source:     act.Source.Name(),
 						Identifier: act.ID,
 						Metadata: map[string]any{
 							"model": body.Model,
-							codygateway.CompletionsEventFeatureMetadataField: codygateway.CompletionsEventFeatureEmbeddings,
-							"upstream_request_duration_ms":                   upstreamFinished.Milliseconds(),
-							"resolved_status_code":                           resolvedStatusCode,
-							codygateway.EmbeddingsTokenUsageMetadataField:    usedTokens,
+							codygatewayevents.CompletionsEventFeatureMetadataField: codygatewayevents.CompletionsEventFeatureEmbeddings,
+							"upstream_request_duration_ms":                         upstreamFinished.Milliseconds(),
+							"resolved_status_code":                                 resolvedStatusCode,
+							codygatewayevents.EmbeddingsTokenUsageMetadataField:    usedTokens,
+							"batch_size": len(body.Input),
+							"input_character_count": func() (characters int) {
+								for _, input := range body.Input {
+									characters += len(input)
+								}
+								return characters
+							}(),
+							"is_query": body.IsQuery,
 						},
 					},
 				)
@@ -112,10 +129,35 @@ func NewHandler(
 				}
 			}()
 
+			// Hacky experiment: Replace embedding model input with generated metadata text when indexing.
+			if body.Model == string(ModelNameSourcegraphMetadataGen) {
+				newInput := body.Input
+				// Generate metadata if we are indexing, not querying.
+				if !body.IsQuery {
+					var err error
+					newInput, err = generateMetadata(r.Context(), body, logger, completionsClient)
+					if err != nil {
+						logger.Error("failed to generate metadata", log.Error(err))
+						return
+					}
+				}
+				body = codygateway.EmbeddingsRequest{
+					Model:   string(ModelNameSourcegraphSTMultiQA),
+					Input:   newInput,
+					IsQuery: body.IsQuery,
+				}
+			}
+
 			resp, ut, err := c.GenerateEmbeddings(r.Context(), body)
 			usedTokens = ut
 			upstreamFinished = time.Since(upstreamStarted)
 			if err != nil {
+				// This is an error path, so always set a default retry-after
+				// on errors that discourages Sourcegraph clients from retrying
+				// at all - embeddings will likely be run by embeddings workers
+				// that will eventually retry on a more reasonable schedule.
+				w.Header().Set("retry-after", "60")
+
 				// If a status error is returned, pass through the code and error
 				var statusCodeErr response.HTTPStatusCodeError
 				if errors.As(err, &statusCodeErr) {
@@ -152,8 +194,23 @@ func NewHandler(
 			}
 
 			w.Header().Add("Content-Type", "application/json; charset=utf-8")
+			// Write implicitly returns a 200 status code if one isn't set yet
+			if resolvedStatusCode <= 0 {
+				resolvedStatusCode = 200
+			}
 			_, _ = w.Write(data)
-		}))
+		}),
+		func(responseHeaders http.Header) (int, error) {
+			uh := responseHeaders.Get(usageHeaderName)
+			if uh == "" {
+				return 0, errors.New("no usage header set on response")
+			}
+			usage, err := strconv.Atoi(uh)
+			if err != nil {
+				return 0, errors.Wrap(err, "failed to parse usage header as number")
+			}
+			return usage, nil
+		})
 }
 
 func isAllowedModel(allowedModels []string, model string) bool {
@@ -163,13 +220,4 @@ func isAllowedModel(allowedModels []string, model string) bool {
 		}
 	}
 	return false
-}
-
-func intersection(a, b []string) (c []string) {
-	for _, val := range a {
-		if slices.Contains(b, val) {
-			c = append(c, val)
-		}
-	}
-	return c
 }

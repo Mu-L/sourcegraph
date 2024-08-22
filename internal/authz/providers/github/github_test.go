@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -14,11 +15,13 @@ import (
 
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/authz"
-	"github.com/sourcegraph/sourcegraph/internal/database"
+	"github.com/sourcegraph/sourcegraph/internal/conf"
+	"github.com/sourcegraph/sourcegraph/internal/database/dbmocks"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc/auth"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc/github"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
+	"github.com/sourcegraph/sourcegraph/schema"
 )
 
 func mustURL(t *testing.T, u string) *url.URL {
@@ -39,6 +42,10 @@ func mockClientFunc(mockClient client) func() (client, error) {
 	}
 }
 
+func stableSortRepoID(v []extsvc.RepoID) {
+	slices.Sort(v)
+}
+
 // newMockClientWithTokenMock is used to keep the behaviour of WithToken function mocking
 // which is lost during moving the client interface to mockgen usage
 func newMockClientWithTokenMock() *MockClient {
@@ -48,7 +55,22 @@ func newMockClientWithTokenMock() *MockClient {
 }
 
 func TestProvider_FetchUserPerms(t *testing.T) {
-	db := database.NewMockDB()
+	conf.Mock(&conf.Unified{
+		SiteConfiguration: schema.SiteConfiguration{
+			AuthProviders: []schema.AuthProviders{
+				{
+					Github: &schema.GitHubAuthProvider{
+						Url: "https://github.com",
+					},
+				},
+			},
+		},
+	})
+	t.Cleanup(func() {
+		conf.Mock(nil)
+	})
+
+	db := dbmocks.NewMockDB()
 	t.Run("nil account", func(t *testing.T) {
 		p := NewProvider("", ProviderOptions{GitHubURL: mustURL(t, "https://github.com"), DB: db})
 		_, err := p.FetchUserPerms(context.Background(), nil, authz.FetchPermsOptions{})
@@ -155,8 +177,8 @@ func TestProvider_FetchUserPerms(t *testing.T) {
 				switch page {
 				case 1:
 					return []*github.Repository{
-						{ID: "MDEwOlJlcG9zaXRvcnkyNTI0MjU2NzE="}, // existing repo
 						{ID: "MDEwOlJlcG9zaXRvcnkyNDQ1MTc1234="},
+						{ID: "MDEwOlJlcG9zaXRvcnkyNTI0MjU2NzE="}, // existing repo
 					}, true, 1, nil
 				case 2:
 					return []*github.Repository{
@@ -200,10 +222,13 @@ func TestProvider_FetchUserPerms(t *testing.T) {
 		}
 
 		wantRepoIDs := []extsvc.RepoID{
-			"MDEwOlJlcG9zaXRvcnkyNTI0MjU2NzE=",
-			"MDEwOlJlcG9zaXRvcnkyNDQ1MTc1MzY=",
 			"MDEwOlJlcG9zaXRvcnkyNDI2NTEwMDA=",
+			"MDEwOlJlcG9zaXRvcnkyNDQ1MTc1MzY=",
+			"MDEwOlJlcG9zaXRvcnkyNTI0MjU2NzE=",
 		}
+
+		stableSortRepoID(wantRepoIDs)
+		stableSortRepoID(repoIDs.Exacts)
 		if diff := cmp.Diff(wantRepoIDs, repoIDs.Exacts); diff != "" {
 			t.Fatalf("RepoIDs mismatch (-want +got):\n%s", diff)
 		}
@@ -248,10 +273,12 @@ func TestProvider_FetchUserPerms(t *testing.T) {
 			}
 
 			wantRepoIDs := []extsvc.RepoID{
-				"MDEwOlJlcG9zaXRvcnkyNTI0MjU2NzE=",
-				"MDEwOlJlcG9zaXRvcnkyNDQ1MTc1MzY=",
 				"MDEwOlJlcG9zaXRvcnkyNDI2NTEwMDA=",
+				"MDEwOlJlcG9zaXRvcnkyNDQ1MTc1MzY=",
+				"MDEwOlJlcG9zaXRvcnkyNTI0MjU2NzE=",
 			}
+			stableSortRepoID(wantRepoIDs)
+			stableSortRepoID(repoIDs.Exacts)
 			if diff := cmp.Diff(wantRepoIDs, repoIDs.Exacts); diff != "" {
 				t.Fatalf("RepoIDs mismatch (-want +got):\n%s", diff)
 			}
@@ -279,13 +306,15 @@ func TestProvider_FetchUserPerms(t *testing.T) {
 			}
 
 			wantRepoIDs := []extsvc.RepoID{
-				"MDEwOlJlcG9zaXRvcnkyNTI0MjU2NzE=",
-				"MDEwOlJlcG9zaXRvcnkyNDQ1MTc1MzY=",
+				"MDEwOlJlcG9zaXRvcnkyNDI2NTE5678=",
 				"MDEwOlJlcG9zaXRvcnkyNDI2NTEwMDA=",
 				"MDEwOlJlcG9zaXRvcnkyNDI2NTadmin=",
 				"MDEwOlJlcG9zaXRvcnkyNDQ1MTc1234=",
-				"MDEwOlJlcG9zaXRvcnkyNDI2NTE5678=",
+				"MDEwOlJlcG9zaXRvcnkyNDQ1MTc1MzY=",
+				"MDEwOlJlcG9zaXRvcnkyNTI0MjU2NzE=",
 			}
+			stableSortRepoID(wantRepoIDs)
+			stableSortRepoID(repoIDs.Exacts)
 			if diff := cmp.Diff(wantRepoIDs, repoIDs.Exacts); diff != "" {
 				t.Fatalf("RepoIDs mismatch (-want +got):\n%s", diff)
 			}
@@ -348,15 +377,17 @@ func TestProvider_FetchUserPerms(t *testing.T) {
 			}
 
 			wantRepoIDs := []extsvc.RepoID{
-				"MDEwOlJlcG9zaXRvcnkyNTI0MjU2NzE=",
-				"MDEwOlJlcG9zaXRvcnkyNDQ1MTc1MzY=",
+				"MDEwOlJlcG9zaXRvcnkyNDI2NTE5678=",
 				"MDEwOlJlcG9zaXRvcnkyNDI2NTEwMDA=",
 				"MDEwOlJlcG9zaXRvcnkyNDI2NTadmin=",
-				"MDEwOlJlcG9zaXRvcnkyNDQ1MTc1234=",
-				"MDEwOlJlcG9zaXRvcnkyNDI2NTE5678=",
-				"MDEwOlJlcG9zaXRvcnkyNDQ1nsteam1=",
 				"MDEwOlJlcG9zaXRvcnkyNDI2nsteam2=",
+				"MDEwOlJlcG9zaXRvcnkyNDQ1MTc1234=",
+				"MDEwOlJlcG9zaXRvcnkyNDQ1MTc1MzY=",
+				"MDEwOlJlcG9zaXRvcnkyNDQ1nsteam1=",
+				"MDEwOlJlcG9zaXRvcnkyNTI0MjU2NzE=",
 			}
+			stableSortRepoID(wantRepoIDs)
+			stableSortRepoID(repoIDs.Exacts)
 			if diff := cmp.Diff(wantRepoIDs, repoIDs.Exacts); diff != "" {
 				t.Fatalf("RepoIDs mismatch (-want +got):\n%s", diff)
 			}
@@ -402,13 +433,15 @@ func TestProvider_FetchUserPerms(t *testing.T) {
 				}
 
 				wantRepoIDs := []extsvc.RepoID{
-					"MDEwOlJlcG9zaXRvcnkyNTI0MjU2NzE=", // from ListAffiliatedRepos
-					"MDEwOlJlcG9zaXRvcnkyNDQ1MTc1MzY=", // from ListAffiliatedRepos
+					"MDEwOlJlcG9zaXRvcnkyNDI2NTE5678=", // from ListOrgRepositories
 					"MDEwOlJlcG9zaXRvcnkyNDI2NTEwMDA=", // from ListAffiliatedRepos
 					"MDEwOlJlcG9zaXRvcnkyNDI2NTadmin=", // from ListOrgRepositories
 					"MDEwOlJlcG9zaXRvcnkyNDQ1MTc1234=", // from ListOrgRepositories
-					"MDEwOlJlcG9zaXRvcnkyNDI2NTE5678=", // from ListOrgRepositories
+					"MDEwOlJlcG9zaXRvcnkyNDQ1MTc1MzY=", // from ListAffiliatedRepos
+					"MDEwOlJlcG9zaXRvcnkyNTI0MjU2NzE=", // from ListAffiliatedRepos
 				}
+				stableSortRepoID(wantRepoIDs)
+				stableSortRepoID(repoIDs.Exacts)
 				if diff := cmp.Diff(wantRepoIDs, repoIDs.Exacts); diff != "" {
 					t.Fatalf("RepoIDs mismatch (-want +got):\n%s", diff)
 				}
@@ -453,15 +486,16 @@ func TestProvider_FetchUserPerms(t *testing.T) {
 			p.groupsCache = memCache
 
 			wantRepoIDs := []extsvc.RepoID{
-				"MDEwOlJlcG9zaXRvcnkyNTI0MjU2NzE=",
-				"MDEwOlJlcG9zaXRvcnkyNDQ1MTc1MzY=",
+				"MDEwOlJlcG9zaXRvcnkyNDI2NTE5678=",
 				"MDEwOlJlcG9zaXRvcnkyNDI2NTEwMDA=",
 				"MDEwOlJlcG9zaXRvcnkyNDI2NTadmin=",
-				"MDEwOlJlcG9zaXRvcnkyNDQ1MTc1234=",
-				"MDEwOlJlcG9zaXRvcnkyNDI2NTE5678=",
 				"MDEwOlJlcG9zaXRvcnkyNDI2nsteam1=",
+				"MDEwOlJlcG9zaXRvcnkyNDQ1MTc1234=",
+				"MDEwOlJlcG9zaXRvcnkyNDQ1MTc1MzY=",
+				"MDEwOlJlcG9zaXRvcnkyNTI0MjU2NzE=",
 			}
 
+			stableSortRepoID(wantRepoIDs)
 			// first call
 			t.Run("first call", func(t *testing.T) {
 				repoIDs, err := p.FetchUserPerms(context.Background(),
@@ -475,6 +509,7 @@ func TestProvider_FetchUserPerms(t *testing.T) {
 					t.Fatalf("expected repos to be listed: callsToListOrgRepos=%d, callsToListTeamRepos=%d",
 						callsToListOrgRepos, callsToListTeamRepos)
 				}
+				stableSortRepoID(repoIDs.Exacts)
 				if diff := cmp.Diff(wantRepoIDs, repoIDs.Exacts); diff != "" {
 					t.Fatalf("RepoIDs mismatch (-want +got):\n%s", diff)
 				}
@@ -495,6 +530,7 @@ func TestProvider_FetchUserPerms(t *testing.T) {
 					t.Fatalf("expected repos not to be listed: callsToListOrgRepos=%d, callsToListTeamRepos=%d",
 						callsToListOrgRepos, callsToListTeamRepos)
 				}
+				stableSortRepoID(repoIDs.Exacts)
 				if diff := cmp.Diff(wantRepoIDs, repoIDs.Exacts); diff != "" {
 					t.Fatalf("RepoIDs mismatch (-want +got):\n%s", diff)
 				}
@@ -515,6 +551,7 @@ func TestProvider_FetchUserPerms(t *testing.T) {
 					t.Fatalf("expected repos to be listed: callsToListOrgRepos=%d, callsToListTeamRepos=%d",
 						callsToListOrgRepos, callsToListTeamRepos)
 				}
+				stableSortRepoID(repoIDs.Exacts)
 				if diff := cmp.Diff(wantRepoIDs, repoIDs.Exacts); diff != "" {
 					t.Fatalf("RepoIDs mismatch (-want +got):\n%s", diff)
 				}
@@ -590,6 +627,37 @@ func TestProvider_FetchUserPerms(t *testing.T) {
 				t.Fatal("expected users not to be updated")
 			}
 		})
+	})
+
+	t.Run("no matching auth provider", func(t *testing.T) {
+		conf.Mock(&conf.Unified{
+			SiteConfiguration: schema.SiteConfiguration{
+				AuthProviders: []schema.AuthProviders{
+					{
+						Github: &schema.GitHubAuthProvider{
+							// Not for the same host, i.e., no auth provider found:
+							Url: "https://github.sgdev.org",
+						},
+					},
+				},
+			},
+		})
+		t.Cleanup(func() {
+			conf.Mock(nil)
+		})
+		p := NewProvider("", ProviderOptions{GitHubURL: mustURL(t, "https://github.com"), DB: db})
+		_, err := p.FetchUserPerms(context.Background(), &extsvc.Account{
+			AccountSpec: extsvc.AccountSpec{
+				ServiceType: "github",
+				ServiceID:   "https://github.com/",
+			},
+			AccountData: extsvc.AccountData{AuthData: extsvc.NewUnencryptedData(json.RawMessage(`{}`))},
+		}, authz.FetchPermsOptions{})
+		want := "no matching GitHub OAuth provider found for service \"https://github.com/\""
+		got := fmt.Sprintf("%v", err)
+		if got != want {
+			t.Fatalf("err: want %q but got %q", want, got)
+		}
 	})
 }
 
@@ -1280,7 +1348,7 @@ func TestProvider_ValidateConnection(t *testing.T) {
 }
 
 func setupProvider(t *testing.T, mc *MockClient) *Provider {
-	db := database.NewMockDB()
+	db := dbmocks.NewMockDB()
 	p := NewProvider("", ProviderOptions{GitHubURL: mustURL(t, "https://github.com"), DB: db})
 	p.client = mockClientFunc(mc)
 	p.groupsCache = memGroupsCache()

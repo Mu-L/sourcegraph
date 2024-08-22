@@ -1,24 +1,28 @@
 import React, { useCallback, useState } from 'react'
 
-import { asError, ErrorLike } from '@sourcegraph/common'
+import { lastValueFrom } from 'rxjs'
+
+import { asError, type ErrorLike } from '@sourcegraph/common'
 import { gql, dataOrThrowErrors } from '@sourcegraph/http-client'
 import { Button, Modal, H3, Form } from '@sourcegraph/wildcard'
 
 import { requestGraphQL } from '../../../backend/graphql'
-import { Scalars, DeleteExternalAccountResult, DeleteExternalAccountVariables } from '../../../graphql-operations'
+import type { Scalars, DeleteExternalAccountResult, DeleteExternalAccountVariables } from '../../../graphql-operations'
 
 const deleteUserExternalAccount = async (externalAccount: Scalars['ID']): Promise<void> => {
     dataOrThrowErrors(
-        await requestGraphQL<DeleteExternalAccountResult, DeleteExternalAccountVariables>(
-            gql`
-                mutation DeleteExternalAccount($externalAccount: ID!) {
-                    deleteExternalAccount(externalAccount: $externalAccount) {
-                        alwaysNil
+        await lastValueFrom(
+            requestGraphQL<DeleteExternalAccountResult, DeleteExternalAccountVariables>(
+                gql`
+                    mutation DeleteExternalAccount($externalAccount: ID!) {
+                        deleteExternalAccount(externalAccount: $externalAccount) {
+                            alwaysNil
+                        }
                     }
-                }
-            `,
-            { externalAccount }
-        ).toPromise()
+                `,
+                { externalAccount }
+            )
+        )
     )
 }
 

@@ -4,14 +4,15 @@ import AlertCircleIcon from 'mdi-react/AlertCircleIcon'
 import MapSearchIcon from 'mdi-react/MapSearchIcon'
 import { Route, Routes, useParams } from 'react-router-dom'
 
+import { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import { lazyComponent } from '@sourcegraph/shared/src/util/lazyComponent'
 import { LoadingSpinner, ErrorMessage } from '@sourcegraph/wildcard'
 
-import { AuthenticatedUser } from '../../auth'
+import type { AuthenticatedUser } from '../../auth'
 import { RouteError } from '../../components/ErrorBoundary'
 import { HeroPage } from '../../components/HeroPage'
-import { TeamAreaTeamFields } from '../../graphql-operations'
-import { RouteV6Descriptor } from '../../util/contributions'
+import type { TeamAreaTeamFields } from '../../graphql-operations'
+import type { RouteV6Descriptor } from '../../util/contributions'
 
 import { useTeam } from './backend'
 import type { TeamChildTeamsPageProps } from './TeamChildTeamsPage'
@@ -37,7 +38,7 @@ const NotFoundPage: React.FunctionComponent<React.PropsWithChildren<unknown>> = 
 
 export interface TeamAreaRoute extends RouteV6Descriptor<TeamAreaRouteContext> {}
 
-export interface TeamAreaProps {
+export interface TeamAreaProps extends TelemetryV2Props {
     /**
      * The currently authenticated user.
      */
@@ -47,7 +48,7 @@ export interface TeamAreaProps {
 /**
  * Properties passed to all page components in the team area.
  */
-export interface TeamAreaRouteContext {
+export interface TeamAreaRouteContext extends TelemetryV2Props {
     /** The team that is the subject of the page. */
     team: TeamAreaTeamFields
 
@@ -58,7 +59,7 @@ export interface TeamAreaRouteContext {
     authenticatedUser: AuthenticatedUser
 }
 
-export const TeamArea: React.FunctionComponent<TeamAreaProps> = ({ authenticatedUser }) => {
+export const TeamArea: React.FunctionComponent<TeamAreaProps> = ({ authenticatedUser, telemetryRecorder }) => {
     const { teamName } = useParams<{ teamName: string }>()
 
     const { data, loading, error, refetch } = useTeam(teamName!)
@@ -84,6 +85,7 @@ export const TeamArea: React.FunctionComponent<TeamAreaProps> = ({ authenticated
         authenticatedUser,
         team: data.team,
         onTeamUpdate: refetch,
+        telemetryRecorder,
     }
 
     return (

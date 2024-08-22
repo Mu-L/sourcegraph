@@ -9,6 +9,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+
+	"github.com/sourcegraph/sourcegraph/internal/grpc/grpcutil"
 )
 
 var metricGRPCMethodStatus = promauto.NewCounterVec(prometheus.CounterOpts{
@@ -26,7 +28,7 @@ var metricGRPCMethodStatus = promauto.NewCounterVec(prometheus.CounterOpts{
 // PrometheusUnaryClientInterceptor returns a grpc.UnaryClientInterceptor that observes the result of
 // the RPC and records it as a Prometheus metric ("src_grpc_method_status").
 func PrometheusUnaryClientInterceptor(ctx context.Context, fullMethod string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-	serviceName, methodName := splitMethodName(fullMethod)
+	serviceName, methodName := grpcutil.SplitMethodName(fullMethod)
 
 	err := invoker(ctx, fullMethod, req, reply, cc, opts...)
 	doObservation(serviceName, methodName, err)
@@ -39,7 +41,7 @@ func PrometheusUnaryClientInterceptor(ctx context.Context, fullMethod string, re
 // If any errors are encountered during the stream, the first error is recorded. Otherwise, the
 // final status of the stream is recorded.
 func PrometheusStreamClientInterceptor(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, fullMethod string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
-	serviceName, methodName := splitMethodName(fullMethod)
+	serviceName, methodName := grpcutil.SplitMethodName(fullMethod)
 
 	s, err := streamer(ctx, desc, cc, fullMethod, opts...)
 	if err != nil {
@@ -63,30 +65,29 @@ func newPrometheusServerStream(s grpc.ClientStream, serviceName, methodName stri
 	// that are encountered during a stream.
 	var observeOnce sync.Once
 
-	return &callBackClientStream{
-		ClientStream: s,
-		postMessageSend: func(_ any, err error) {
-			if err != nil {
-				observeOnce.Do(func() {
-					doObservation(serviceName, methodName, err)
-				})
-			}
-		},
-		postMessageReceive: func(_ any, err error) {
-			if err != nil {
-				if err == io.EOF {
-					// EOF signals end of stream, not an error. We handle this by setting err to nil, because
-					// we want to treat the stream as successfully completed.
-					err = nil
-				}
-
-				observeOnce.Do(func() {
-					doObservation(serviceName, methodName, err)
-				})
-			}
-		},
+	postMessageSend := func(_ any, err error) {
+		if err != nil {
+			observeOnce.Do(func() {
+				doObservation(serviceName, methodName, err)
+			})
+		}
 	}
 
+	postMessageReceive := func(_ any, err error) {
+		if err != nil {
+			if err == io.EOF {
+				// EOF signals end of stream, not an error. We handle this by setting err to nil, because
+				// we want to treat the stream as successfully completed.
+				err = nil
+			}
+
+			observeOnce.Do(func() {
+				doObservation(serviceName, methodName, err)
+			})
+		}
+	}
+
+	return grpcutil.NewCallBackClientStream(s, postMessageSend, postMessageReceive)
 }
 
 func doObservation(serviceName, methodName string, rpcErr error) {

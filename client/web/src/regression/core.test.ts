@@ -2,17 +2,18 @@ import delay from 'delay'
 import expect from 'expect'
 import { applyEdits, parse, modify } from 'jsonc-parser'
 import { describe, before, beforeEach, after, afterEach, test } from 'mocha'
+import { lastValueFrom } from 'rxjs'
 import { map } from 'rxjs/operators'
 
 import { logger } from '@sourcegraph/common'
 import { gql, dataOrThrowErrors } from '@sourcegraph/http-client'
 import { overwriteSettings } from '@sourcegraph/shared/src/settings/edit'
 import { getConfig } from '@sourcegraph/shared/src/testing/config'
-import { Driver } from '@sourcegraph/shared/src/testing/driver'
+import type { Driver } from '@sourcegraph/shared/src/testing/driver'
 import { afterEachSaveScreenshotIfFailed } from '@sourcegraph/shared/src/testing/screenshotReporter'
 
 import { getUser, setTosAccepted } from './util/api'
-import { GraphQLClient, createGraphQLClient } from './util/GraphQlClient'
+import { type GraphQLClient, createGraphQLClient } from './util/GraphQlClient'
 import { ensureSignedInOrCreateTestUser, getGlobalSettings } from './util/helpers'
 import { getTestTools } from './util/init'
 import { ScreenshotVerifier } from './util/ScreenshotVerifier'
@@ -87,7 +88,7 @@ describe.skip('Core functionality regression test suite', () => {
             await driver.page.waitForSelector('.test-settings-file .monaco-editor .view-lines')
             return driver.page.evaluate(() => {
                 const editor = document.querySelector('.test-settings-file .monaco-editor .view-lines') as HTMLElement
-                // eslint-disable-next-line unicorn/prefer-text-content
+
                 return editor ? editor.innerText : null
             })
         }
@@ -198,10 +199,9 @@ describe.skip('Core functionality regression test suite', () => {
                 }
             }
         `
-        const response = await gqlClientWithToken
-            .queryGraphQL(currentUsernameQuery)
-            .pipe(map(dataOrThrowErrors))
-            .toPromise()
+        const response = await lastValueFrom(
+            gqlClientWithToken.queryGraphQL(currentUsernameQuery).pipe(map(dataOrThrowErrors))
+        )
         expect(response).toEqual({ currentUser: { username: testUsername } })
 
         const gqlClientWithInvalidToken = createGraphQLClient({
@@ -210,7 +210,7 @@ describe.skip('Core functionality regression test suite', () => {
         })
 
         await expect(
-            gqlClientWithInvalidToken.queryGraphQL(currentUsernameQuery).pipe(map(dataOrThrowErrors)).toPromise()
+            lastValueFrom(gqlClientWithInvalidToken.queryGraphQL(currentUsernameQuery).pipe(map(dataOrThrowErrors)))
         ).rejects.toThrowError('401 Unauthorized')
     })
 

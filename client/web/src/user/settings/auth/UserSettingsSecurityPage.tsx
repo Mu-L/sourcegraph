@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react'
 
-import { ErrorLike } from '@sourcegraph/common'
+import type { ErrorLike } from '@sourcegraph/common'
 import { useMutation, useQuery } from '@sourcegraph/http-client'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import { EVENT_LOGGER } from '@sourcegraph/shared/src/telemetry/web/eventLogger'
 import {
     Container,
     PageHeader,
@@ -17,10 +19,10 @@ import {
     Form,
 } from '@sourcegraph/wildcard'
 
-import { AuthenticatedUser } from '../../../auth'
+import type { AuthenticatedUser } from '../../../auth'
 import { PasswordInput } from '../../../auth/SignInSignUpCommon'
 import { PageTitle } from '../../../components/PageTitle'
-import {
+import type {
     CreatePasswordResult,
     CreatePasswordVariables,
     UpdatePasswordResult,
@@ -29,8 +31,7 @@ import {
     UserExternalAccountFields,
     UserExternalAccountsWithAccountDataVariables,
 } from '../../../graphql-operations'
-import { AuthProvider, SourcegraphContext } from '../../../jscontext'
-import { eventLogger } from '../../../tracking/eventLogger'
+import type { AuthProvider, SourcegraphContext } from '../../../jscontext'
 import { getPasswordRequirements } from '../../../util/security'
 import { CREATE_PASSWORD, USER_EXTERNAL_ACCOUNTS, UPDATE_PASSWORD } from '../backend'
 
@@ -45,9 +46,8 @@ type ServiceType = AuthProvider['serviceType']
 
 export type ExternalAccountsByType = Partial<Record<ServiceType, UserExternalAccount>>
 export type AuthProvidersByBaseURL = Partial<Record<string, AuthProvider>>
-export type AccountsByServiceID = Partial<Record<string, UserExternalAccount[]>>
 
-interface UserExternalAccountsResult {
+export interface UserExternalAccountsResult {
     user: {
         externalAccounts: {
             nodes: UserExternalAccount[]
@@ -55,7 +55,7 @@ interface UserExternalAccountsResult {
     }
 }
 
-interface Props {
+interface Props extends TelemetryV2Props {
     user: UserAreaUserFields
     authenticatedUser: AuthenticatedUser
     context: Pick<SourcegraphContext, 'authProviders'>
@@ -91,20 +91,12 @@ export const UserSettingsSecurityPage: React.FunctionComponent<React.PropsWithCh
         newPasswordConfirmationField = element
     }
 
-    // auth providers by service ID
-    const accountsByServiceID = accounts.fetched?.reduce((accumulator: AccountsByServiceID, account) => {
-        const accountArray = accumulator[account.serviceID] ?? []
-        accountArray.push(account)
-        accumulator[account.serviceID] = accountArray
-
-        return accumulator
-    }, {})
-
     useEffect(() => {
-        eventLogger.logPageView('UserSettingsPassword')
+        EVENT_LOGGER.logPageView('UserSettingsPassword')
+        props.telemetryRecorder.recordEvent('settings.security', 'view')
 
         setAccounts({ fetched: data?.user?.externalAccounts.nodes, lastRemoved: '' })
-    }, [data])
+    }, [data, props.telemetryRecorder])
 
     const onAccountRemoval = (removeId: string, name: string): void => {
         // keep every account that doesn't match removeId
@@ -209,14 +201,15 @@ export const UserSettingsSecurityPage: React.FunctionComponent<React.PropsWithCh
             )}
 
             {/* fetched external accounts */}
-            {accountsByServiceID && (
+            {accounts.fetched && (
                 <Container>
                     <ExternalAccountsSignIn
-                        accounts={accountsByServiceID}
+                        accounts={accounts.fetched}
                         authProviders={props.context.authProviders}
                         onDidError={handleError}
                         onDidRemove={onAccountRemoval}
                         onDidAdd={onAccountAdd}
+                        telemetryRecorder={props.telemetryRecorder}
                     />
                 </Container>
             )}

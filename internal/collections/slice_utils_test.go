@@ -1,54 +1,14 @@
 package collections
 
 import (
-	"math"
+	stdcmp "cmp"
+	"pgregory.net/rapid"
+	"slices"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/require"
 )
-
-func Test_Min(t *testing.T) {
-	t.Run("Returns first int that is smaller", func(t *testing.T) {
-		got := Min(1, 2)
-		want := 1
-		if got != want {
-			t.Errorf("got %v, want %v", got, want)
-		}
-	})
-
-	t.Run("Returns second int that is smaller", func(t *testing.T) {
-		got := Min(2, 1)
-		want := 1
-		if got != want {
-			t.Errorf("got %v, want %v", got, want)
-		}
-	})
-
-	t.Run("Works with a float as well", func(t *testing.T) {
-		got := Min(1.5, 1.52)
-		want := 1.5
-		if got != want {
-			t.Errorf("got %v, want %v", got, want)
-		}
-	})
-
-	t.Run("Works with infinity", func(t *testing.T) {
-		got := Min(1.5, math.Inf(1))
-		want := 1.5
-		if got != want {
-			t.Errorf("got %v, want %v", got, want)
-		}
-	})
-
-	t.Run("Works with negative infinity", func(t *testing.T) {
-		got := Min(1.5, math.Inf(-1))
-		want := math.Inf(-1)
-		if got != want {
-			t.Errorf("got %v, want %v", got, want)
-		}
-	})
-}
 
 func Test_SplitIntoChunks(t *testing.T) {
 	t.Run("Splits a slice into chunks of size 3", func(t *testing.T) {
@@ -116,4 +76,53 @@ func Test_SplitIntoChunks(t *testing.T) {
 			t.Errorf("got %v, want %v", got, want)
 		}
 	})
+}
+
+func TestBinarySearchRangeFunc(t *testing.T) {
+	t.Run("returns the range of elements that are equal to the target", func(t *testing.T) {
+		got := BinarySearchRangeFunc([]int{1, 2, 2, 2, 3, 4, 5, 6, 7, 8, 9}, 2, func(x, y int) int {
+			return x - y
+		})
+		want := HalfOpenRange{Start: 1, End: 4}
+		if got != want {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	rapid.Check(t, func(t *rapid.T) {
+		s := rapid.SliceOfN(rapid.IntRange(0, 10), 0, 10).Draw(t, "slice")
+		slices.Sort(s)
+		cmpFunc := stdcmp.Compare[int]
+		target := rapid.IntRange(0, 10).Draw(t, "target")
+		got := BinarySearchRangeFunc(s, target, cmpFunc)
+		binarySearchFound := !got.IsEmpty()
+		expected, linearSearchFound := linearSearchRangeFunc(s, target, cmpFunc)
+		if binarySearchFound != linearSearchFound {
+			t.Errorf("BinarySearchRangeFunc returned %v, but linearSearchRangeFunc returned %v", binarySearchFound, linearSearchFound)
+		}
+		if binarySearchFound && got != expected {
+			t.Errorf("BinarySearchRangeFunc returned %v, but linearSearchRangeFunc returned %v", got, expected)
+		}
+	})
+}
+
+func linearSearchRangeFunc[S ~[]E, E, T any](x S, target T, cmp func(E, T) int) (HalfOpenRange, bool) {
+	start := -1
+	end := -1
+	found := false
+	for i, e := range x {
+		if cmp(e, target) == 0 {
+			if !found {
+				found = true
+				start = i
+				end = i + 1
+			} else {
+				end = i + 1
+			}
+		}
+	}
+	if found {
+		return HalfOpenRange{Start: start, End: end}, true
+	}
+	return HalfOpenRange{}, false
 }

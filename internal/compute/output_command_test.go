@@ -9,6 +9,8 @@ import (
 	"github.com/grafana/regexp"
 	"github.com/hexops/autogold/v2"
 
+	"github.com/sourcegraph/log/logtest"
+
 	"github.com/sourcegraph/sourcegraph/internal/comby"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver/gitdomain"
@@ -18,7 +20,7 @@ import (
 
 func Test_output(t *testing.T) {
 	test := func(input string, cmd *Output) string {
-		content, err := output(context.Background(), input, cmd.SearchPattern, cmd.OutputPattern, cmd.Separator)
+		content, err := output(context.Background(), logtest.Scoped(t), input, cmd.SearchPattern, cmd.OutputPattern, cmd.Separator)
 		if err != nil {
 			return err.Error()
 		}
@@ -46,6 +48,10 @@ train(commuter, lightrail)`).
 }
 
 func fileMatch(chunks ...string) result.Match {
+	return fileMatchWithPath("my/awesome/path.ml", chunks...)
+}
+
+func fileMatchWithPath(path string, chunks ...string) result.Match {
 	matches := make([]result.ChunkMatch, 0, len(chunks))
 	for _, content := range chunks {
 		matches = append(matches, result.ChunkMatch{
@@ -61,7 +67,7 @@ func fileMatch(chunks ...string) result.Match {
 	return &result.FileMatch{
 		File: result.File{
 			Repo: types.MinimalRepo{Name: "my/awesome/repo"},
-			Path: "my/awesome/path.ml",
+			Path: path,
 		},
 		ChunkMatches: matches,
 	}
@@ -73,6 +79,19 @@ func commitMatch(content string) result.Match {
 			Author:    gitdomain.Signature{Name: "bob"},
 			Committer: &gitdomain.Signature{},
 			Message:   gitdomain.Message(content),
+		},
+	}
+}
+
+func commitDiffMatch(path string, content string) result.Match {
+	return &result.CommitDiffMatch{
+		Commit: gitdomain.Commit{
+			Author:    gitdomain.Signature{Name: "bob"},
+			Committer: &gitdomain.Signature{},
+			Message:   gitdomain.Message(content),
+		},
+		DiffFile: &result.DiffFile{
+			NewName: path,
 		},
 	}
 }
@@ -120,7 +139,16 @@ func TestRun(t *testing.T) {
 
 	autogold.Expect("OCaml\n").
 		Equal(t, test(`content:output((.|\n)* -> $lang)`, fileMatch("anything")))
-
+	autogold.Expect("Magik\n").
+		Equal(t, test(`content:output((.|\n)* -> $lang)`, fileMatchWithPath("foo/bar/lang.magik", "anything")))
+	autogold.Expect("Magik\n").
+		Equal(t, test(`content:output((.|\n)* -> $lang)`, commitDiffMatch("foo/bar/lang.magik", "anything")))
+	autogold.Expect("C#\n").
+		Equal(t, test(`content:output((.|\n)* -> $lang)`, commitDiffMatch("foo/bar/lang.cs", "anything")))
 	autogold.Expect(`{"value":"OCaml\n","kind":"output","repositoryID":0,"repository":"my/awesome/repo"}`).
 		Equal(t, test(`content:output.extra((.|\n)* -> $lang)`, fileMatch("anything")))
+
+		// We may have empty string for language if there is not known language for file path
+	autogold.Expect("\n").
+		Equal(t, test(`content:output((.|\n)* -> $lang)`, commitDiffMatch("foo/bar/lang.blahblahblah", "anything")))
 }

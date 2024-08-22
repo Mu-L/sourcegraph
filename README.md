@@ -1,5 +1,14 @@
+> [!NOTE]
+> Sourcegraph transitioned to a private monorepo. This repository, `sourcegraph/sourcegraph-public-snapshot` is a publicly available copy of the `sourcegraph/sourcegraph` repository as it was just before the migration.
+
+> [!TIP]
+> If you are interested in working with the code, this [commit](https://github.com/sourcegraph/sourcegraph-public-snapshot/commit/1cd36d2dbbd2a9ab638cc437d208d2717eaefb0b) is the last one made under an Apache License.
+
+---
+
+
 <p align="center">
-<a href="https://about.sourcegraph.com/" target="_blank">
+<a href="https://sourcegraph.com/" target="_blank">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://p21.p4.n0.cdn.getcloudapp.com/items/6qub2y6g/8c25cf68-2715-4f0e-9de6-26292fad604f.svg" width="50%">
   <img src="https://p21.p4.n0.cdn.getcloudapp.com/items/12u7NWXL/5e21725d-6e84-4ccd-8300-27bf9a050416.svg" width="50%">
@@ -7,7 +16,7 @@
 </p>
 
 <p align="center">
-    <a href="https://docs.sourcegraph.com">Docs</a> •
+    <a href="https://sourcegraph.com/docs">Docs</a> •
     <a href="https://sourcegraph.com/github.com/sourcegraph/sourcegraph/-/blob/CONTRIBUTING.md">Contributing</a> •
     <a href="https://twitter.com/sourcegraph">Twitter</a> •
     <a href="https://discord.gg/s2qDtYGnAE">Discord</a>
@@ -38,23 +47,21 @@
 
 ## Getting started
 
-- [**Download Sourcegraph**](https://about.sourcegraph.com/app) for macOS and Linux
-- [Use Sourcegraph on the cloud or self-hosted](https://docs.sourcegraph.com/)
+- [Use Sourcegraph on the cloud or self-hosted](https://sourcegraph.com/docs/)
 - [Sourcegraph.com public code search](https://sourcegraph.com/search)
 
 <br><br>
 
-<img src="https://about.sourcegraph.com/home/banner.png" />
+<img src="https://sourcegraph.com/home/banner.png" />
 
 ## Development
 
-Refer to the [Developing Sourcegraph guide](https://docs.sourcegraph.com/dev) to get started.
+Refer to the [Developing Sourcegraph guide](https://docs-legacy.sourcegraph.com/dev) to get started.
 
 ### Documentation
 
 The `doc` directory has additional documentation for developing and understanding Sourcegraph:
 
-- [Project FAQ](./doc/admin/faq.md)
 - [Architecture](./doc/dev/background-information/architecture/index.md): high-level architecture
 - [Database setup](./doc/dev/background-information/postgresql.md): database best practices
 - [Go style guide](./doc/dev/background-information/languages/go.md)
@@ -64,6 +71,6 @@ The `doc` directory has additional documentation for developing and understandin
 
 ## License
 
-This repository contains primarily non-OSS-licensed files, and some OSS licensed files (for example, IDE extensions). We maintain one repository rather than two separate repositories mainly for development convenience.
+This repository contains primarily non-OSS-licensed files. See [LICENSE](LICENSE).
 
-See the [LICENSE](LICENSE) for an explanation of how files are licensed.
+Copyright (c) 2018-present Sourcegraph Inc.

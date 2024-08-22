@@ -20,70 +20,6 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func TestCallBackClientStream(t *testing.T) {
-	t.Run("SendMsg calls postMessageSend with message and error", func(t *testing.T) {
-		sentinelMessage := struct{}{}
-		sentinelErr := errors.New("send error")
-
-		var called bool
-		stream := callBackClientStream{
-			ClientStream: &mockClientStream{
-				sendErr: sentinelErr,
-			},
-			postMessageSend: func(message any, err error) {
-				called = true
-
-				if diff := cmp.Diff(message, sentinelMessage); diff != "" {
-					t.Errorf("postMessageSend called with unexpected message (-want +got):\n%s", diff)
-				}
-				if !errors.Is(err, sentinelErr) {
-					t.Errorf("got %v, want %v", err, sentinelErr)
-				}
-			},
-		}
-
-		sendErr := stream.SendMsg(sentinelMessage)
-		if !called {
-			t.Error("postMessageSend not called")
-		}
-
-		if !errors.Is(sendErr, sentinelErr) {
-			t.Errorf("got %v, want %v", sendErr, sentinelErr)
-		}
-	})
-
-	t.Run("RecvMsg calls postMessageReceive with message and error", func(t *testing.T) {
-		sentinelMessage := struct{}{}
-		sentinelErr := errors.New("receive error")
-
-		var called bool
-		stream := callBackClientStream{
-			ClientStream: &mockClientStream{
-				recvErr: sentinelErr,
-			},
-			postMessageReceive: func(message any, err error) {
-				called = true
-
-				if diff := cmp.Diff(message, sentinelMessage); diff != "" {
-					t.Errorf("postMessageReceive called with unexpected message (-want +got):\n%s", diff)
-				}
-				if !errors.Is(err, sentinelErr) {
-					t.Errorf("got %v, want %v", err, sentinelErr)
-				}
-			},
-		}
-
-		receiveErr := stream.RecvMsg(sentinelMessage)
-		if !called {
-			t.Error("postMessageReceive not called")
-		}
-
-		if !errors.Is(receiveErr, sentinelErr) {
-			t.Errorf("got %v, want %v", receiveErr, sentinelErr)
-		}
-	})
-}
-
 func TestRequestSavingClientStream_InitialRequest(t *testing.T) {
 	// Setup: create a mock ClientStream that returns a sentinel error on SendMsg
 	sentinelErr := errors.New("send error")
@@ -362,58 +298,6 @@ func TestGRPCUnexpectedContentTypeChecker(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := gRPCUnexpectedContentTypeChecker(tt.status); got != tt.want {
 				t.Errorf("gRPCUnexpectedContentTypeChecker() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestSplitMethodName(t *testing.T) {
-	testCases := []struct {
-		name string
-
-		fullMethod  string
-		wantService string
-		wantMethod  string
-	}{
-		{
-			name: "full method with service and method",
-
-			fullMethod:  "/package.service/method",
-			wantService: "package.service",
-			wantMethod:  "method",
-		},
-		{
-			name: "method without leading slash",
-
-			fullMethod:  "package.service/method",
-			wantService: "package.service",
-			wantMethod:  "method",
-		},
-		{
-			name: "service without method",
-
-			fullMethod:  "/package.service/",
-			wantService: "package.service",
-			wantMethod:  "",
-		},
-		{
-			name: "empty input",
-
-			fullMethod:  "",
-			wantService: "unknown",
-			wantMethod:  "unknown",
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			service, method := splitMethodName(tc.fullMethod)
-			if diff := cmp.Diff(service, tc.wantService); diff != "" {
-				t.Errorf("splitMethodName(%q) service (-want +got):\n%s", tc.fullMethod, diff)
-			}
-
-			if diff := cmp.Diff(method, tc.wantMethod); diff != "" {
-				t.Errorf("splitMethodName(%q) method (-want +got):\n%s", tc.fullMethod, diff)
 			}
 		})
 	}

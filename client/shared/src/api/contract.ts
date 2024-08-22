@@ -1,47 +1,38 @@
-import { Remote, ProxyMarked } from 'comlink'
-import { Unsubscribable } from 'rxjs'
-import { DocumentHighlight } from 'sourcegraph'
+import type { Remote, ProxyMarked } from 'comlink'
+import type { Unsubscribable } from 'rxjs'
 
-import { Contributions, Evaluated, Raw, TextDocumentPositionParameters, HoverMerged } from '@sourcegraph/client-api'
-import { MaybeLoadingResult } from '@sourcegraph/codeintellify'
-import * as clientType from '@sourcegraph/extension-api-types'
-import { GraphQLResult } from '@sourcegraph/http-client'
+import type {
+    Contributions,
+    Evaluated,
+    Raw,
+    TextDocumentPositionParameters,
+    HoverMerged,
+} from '@sourcegraph/client-api'
+import type { MaybeLoadingResult } from '@sourcegraph/codeintellify'
+import type * as clientType from '@sourcegraph/extension-api-types'
+import type { GraphQLResult } from '@sourcegraph/http-client'
 
-import type { ReferenceContext } from '../codeintel/legacy-extensions/api'
-import { Occurrence } from '../codeintel/scip'
-import { ConfiguredExtension } from '../extensions/extension'
-import { SettingsCascade } from '../settings/settings'
+import type { DocumentHighlight, ReferenceContext } from '../codeintel/legacy-extensions/api'
+import type { Occurrence } from '../codeintel/scip'
+import type { ConfiguredExtension } from '../extensions/extension'
+import type { SettingsCascade } from '../settings/settings'
+import type { TelemetryV2Props } from '../telemetry'
 
-import { SettingsEdit } from './client/services/settings'
-import { ExecutableExtension } from './extension/activation'
-import { ProxySubscribable } from './extension/api/common'
-import { ContributionOptions } from './extension/extensionHostApi'
-import { ExtensionViewer, TextDocumentData, ViewerData, ViewerId, ViewerUpdate } from './viewerTypes'
+import type { SettingsEdit } from './client/services/settings'
+import type { ExecutableExtension } from './extension/activation'
+import type { ProxySubscribable } from './extension/api/common'
+import type { ContributionOptions } from './extension/extensionHostApi'
+import type { ExtensionViewer, TextDocumentData, ViewerData, ViewerId, ViewerUpdate } from './viewerTypes'
 
 export interface ScipParameters {
     referenceOccurrence: Occurrence
     documentOccurrences: Occurrence[]
 }
 
-/**
- * This is exposed from the extension host thread to the main thread
- * e.g. for communicating  direction "main -> ext host"
- * Note this API object lives in the extension host thread
- */
-export interface FlatExtensionHostAPI {
-    /**
-     * Updates the settings exposed to extensions.
-     */
-    syncSettingsData: (data: Readonly<SettingsCascade<object>>) => void
-
-    // Workspace
-    addWorkspaceRoot: (root: clientType.WorkspaceRoot) => void
-    getWorkspaceRoots: () => ProxySubscribable<clientType.WorkspaceRoot[]>
-    removeWorkspaceRoot: (uri: string) => void
-
-    setSearchContext: (searchContext: string | undefined) => void
-
-    // Languages
+// Extracted from FlatExtensionHostAPI so it can be implemented separately.
+// The goal is to unify this with the CodeIntelAPI in client/shared/src/codeintel/api.ts
+// TODO(camdencheek)
+export interface CodeIntelExtensionHostAPI {
     getHover: (parameters: TextDocumentPositionParameters) => ProxySubscribable<MaybeLoadingResult<HoverMerged | null>>
     getDocumentHighlights: (parameters: TextDocumentPositionParameters) => ProxySubscribable<DocumentHighlight[]>
     getDefinition: (
@@ -59,6 +50,25 @@ export interface FlatExtensionHostAPI {
     ) => ProxySubscribable<MaybeLoadingResult<clientType.Location[]>>
 
     hasReferenceProvidersForDocument: (parameters: TextDocumentPositionParameters) => ProxySubscribable<boolean>
+}
+
+/**
+ * This is exposed from the extension host thread to the main thread
+ * e.g. for communicating  direction "main -> ext host"
+ * Note this API object lives in the extension host thread
+ */
+export interface FlatExtensionHostAPI extends CodeIntelExtensionHostAPI {
+    /**
+     * Updates the settings exposed to extensions.
+     */
+    syncSettingsData: (data: Readonly<SettingsCascade<object>>) => void
+
+    // Workspace
+    addWorkspaceRoot: (root: clientType.WorkspaceRoot) => void
+    getWorkspaceRoots: () => ProxySubscribable<clientType.WorkspaceRoot[]>
+    removeWorkspaceRoot: (uri: string) => void
+
+    setSearchContext: (searchContext: string | undefined) => void
 
     // CONTEXT + CONTRIBUTIONS
 
@@ -166,8 +176,15 @@ export interface MainThreadAPI {
 
     /**
      * Log an event (by sending it to the server).
+     *
+     * @deprecated use getTelemetryRecorder().recordEvent instead
      */
     logEvent: (eventName: string, eventProperties?: any) => void
+
+    /**
+     * Get a TelemetryRecorder for recording telemetry events to the server.
+     */
+    getTelemetryRecorder: () => TelemetryV2Props['telemetryRecorder']
 
     /**
      * Log messages from extensions in the main thread. Makes it easier to debug extensions for applications

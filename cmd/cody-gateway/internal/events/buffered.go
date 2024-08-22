@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"github.com/sourcegraph/log"
+	otelmetric "go.opentelemetry.io/otel/metric"
+
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
@@ -60,12 +63,14 @@ func defaultWorkers(bufferSize, workerCount int) int {
 	return bufferSize / 10
 }
 
+var meter = otel.GetMeterProvider().Meter("cody-gateway/internal/events")
+
 // NewBufferedLogger wraps handler with a buffered logger that submits events
 // in the background instead of in the hot-path of a request. It implements
 // goroutine.BackgroundRoutine that must be started.
-func NewBufferedLogger(logger log.Logger, handler Logger, bufferSize, workerCount int) *BufferedLogger {
-	return &BufferedLogger{
-		log: logger.Scoped("bufferedLogger", "buffered events logger"),
+func NewBufferedLogger(logger log.Logger, handler Logger, bufferSize, workerCount int) (*BufferedLogger, error) {
+	res := BufferedLogger{
+		log: logger.Scoped("bufferedLogger"),
 
 		handler: handler,
 
@@ -76,12 +81,21 @@ func NewBufferedLogger(logger log.Logger, handler Logger, bufferSize, workerCoun
 		bufferClosed: &atomic.Bool{},
 		flushedC:     make(chan struct{}),
 	}
+	_, err := meter.Int64ObservableGauge("cody-gateway.buffered_logger_buffer_size",
+		otelmetric.WithDescription("number of events in buffered logger buffer"), otelmetric.WithInt64Callback(func(ctx context.Context, observer otelmetric.Int64Observer) error {
+			observer.Observe(int64(len(res.bufferC)))
+			return nil
+		}))
+	if err != nil {
+		return nil, err
+	}
+	return &res, nil
 }
 
 // LogEvent implements event.Logger by submitting the event to a buffer for processing.
 func (l *BufferedLogger) LogEvent(spanCtx context.Context, event Event) error {
 	// Track whether or not the event buffered, and how long it took.
-	_, span := tracer.Start(backgroundContextWithSpan(spanCtx), "bufferedLogger.LogEvent",
+	_, span := tracer.Start(spanCtx, "bufferedLogger.LogEvent",
 		trace.WithAttributes(
 			attribute.String("source", event.Source),
 			attribute.String("event.name", string(event.Name))))
@@ -118,7 +132,11 @@ func (l *BufferedLogger) LogEvent(spanCtx context.Context, event Event) error {
 	}
 }
 
-// Start begins working by procssing the logger's buffer, blocking until stop
+func (l *BufferedLogger) Name() string {
+	return "BufferedLogger"
+}
+
+// Start begins working by processing the logger's buffer, blocking until stop
 // is called and the backlog is cleared.
 func (l *BufferedLogger) Start() {
 	var wg sync.WaitGroup
@@ -143,7 +161,7 @@ func (l *BufferedLogger) Start() {
 }
 
 // Stop stops buffered logger's background processing job and flushes its buffer.
-func (l *BufferedLogger) Stop() {
+func (l *BufferedLogger) Stop(context.Context) error {
 	l.bufferClosed.Store(true)
 	close(l.bufferC)
 	l.log.Info("buffer closed - waiting for events to flush")
@@ -161,4 +179,5 @@ func (l *BufferedLogger) Stop() {
 		l.log.Error("failed to shut down within shutdown deadline",
 			log.Error(errors.Newf("unflushed events: %d", len(l.bufferC)))) // real error for Sentry
 	}
+	return nil
 }

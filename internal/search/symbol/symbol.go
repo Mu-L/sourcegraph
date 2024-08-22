@@ -3,20 +3,21 @@ package symbol
 import (
 	"context"
 	"regexp/syntax" //nolint:depguard // zoekt requires this pkg
+	"sync"
 	"time"
 
 	"github.com/RoaringBitmap/roaring"
 	"github.com/grafana/regexp"
 	"github.com/sourcegraph/zoekt"
-	zoektquery "github.com/sourcegraph/zoekt/query"
+	"github.com/sourcegraph/zoekt/query"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/backend"
 	"github.com/sourcegraph/sourcegraph/internal/actor"
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/authz"
 	"github.com/sourcegraph/sourcegraph/internal/search"
 	"github.com/sourcegraph/sourcegraph/internal/search/result"
-	zoektutil "github.com/sourcegraph/sourcegraph/internal/search/zoekt"
+	"github.com/sourcegraph/sourcegraph/internal/search/zoektquery"
+	"github.com/sourcegraph/sourcegraph/internal/symbols"
 	"github.com/sourcegraph/sourcegraph/internal/trace/policy"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
@@ -24,179 +25,32 @@ import (
 
 const DefaultSymbolLimit = 100
 
-// indexedSymbols checks to see if Zoekt has indexed symbols information for a
-// repository at a specific commit. If it has it returns the branch name (for
-// use when querying zoekt). Otherwise an empty string is returned.
-func indexedSymbolsBranch(ctx context.Context, repo *types.MinimalRepo, commit string) string {
-	// We use ListAllIndexed since that is cached.
-	ctx, cancel := context.WithTimeout(ctx, time.Second)
-	defer cancel()
-	list, err := search.ListAllIndexed(ctx)
-	if err != nil {
-		return ""
+// NOTE: this lives inside a syncx.OnceValue because search.Indexed depends on
+// conf.Get, and running conf.Get() at init time can cause a deadlock. So,
+// we construct it lazily instead.
+var DefaultZoektSymbolsClient = sync.OnceValue(func() *ZoektSymbolsClient {
+	return &ZoektSymbolsClient{
+		subRepoPermsChecker: authz.DefaultSubRepoPermsChecker,
+		zoektStreamer:       search.Indexed(),
+		symbols:             symbols.DefaultClient,
 	}
+})
 
-	r, ok := list.ReposMap[uint32(repo.ID)]
-	if !ok || !r.HasSymbols {
-		return ""
-	}
-
-	for _, branch := range r.Branches {
-		if branch.Version == commit {
-			return branch.Name
-		}
-	}
-
-	return ""
+type ZoektSymbolsClient struct {
+	subRepoPermsChecker authz.SubRepoPermissionChecker
+	zoektStreamer       zoekt.Streamer
+	symbols             *symbols.Client
 }
 
-func FilterZoektResults(ctx context.Context, checker authz.SubRepoPermissionChecker, repo api.RepoName, results []*result.SymbolMatch) ([]*result.SymbolMatch, error) {
-	if !authz.SubRepoEnabled(checker) {
-		return results, nil
-	}
-	// Filter out results from files we don't have access to:
-	act := actor.FromContext(ctx)
-	filtered := results[:0]
-	for i, r := range results {
-		ok, err := authz.FilterActorPath(ctx, checker, act, repo, r.File.Path)
-		if err != nil {
-			return nil, errors.Wrap(err, "checking permissions")
-		}
-		if ok {
-			filtered = append(filtered, results[i])
-		}
-	}
-	return filtered, nil
-}
-
-func searchZoekt(ctx context.Context, repoName types.MinimalRepo, commitID api.CommitID, inputRev *string, branch string, queryString *string, first *int32, includePatterns *[]string) (res []*result.SymbolMatch, err error) {
-	var raw string
-	if queryString != nil {
-		raw = *queryString
-	}
-	if raw == "" {
-		raw = ".*"
-	}
-
-	expr, err := syntax.Parse(raw, syntax.ClassNL|syntax.PerlX|syntax.UnicodeGroups)
-	if err != nil {
-		return
-	}
-
-	var query zoektquery.Q
-	if expr.Op == syntax.OpLiteral {
-		query = &zoektquery.Substring{
-			Pattern: string(expr.Rune),
-			Content: true,
-		}
-	} else {
-		query = &zoektquery.Regexp{
-			Regexp:  expr,
-			Content: true,
-		}
-	}
-
-	ands := []zoektquery.Q{
-		&zoektquery.BranchesRepos{List: []zoektquery.BranchRepos{
-			{Branch: branch, Repos: roaring.BitmapOf(uint32(repoName.ID))},
-		}},
-		&zoektquery.Symbol{Expr: query},
-	}
-	if includePatterns != nil {
-		for _, p := range *includePatterns {
-			q, err := zoektutil.FileRe(p, true)
-			if err != nil {
-				return nil, err
-			}
-			ands = append(ands, q)
-		}
-	}
-
-	final := zoektquery.Simplify(zoektquery.NewAnd(ands...))
-	match := limitOrDefault(first) + 1
-	resp, err := search.Indexed().Search(ctx, final, &zoekt.SearchOptions{
-		Trace:              policy.ShouldTrace(ctx),
-		MaxWallTime:        3 * time.Second,
-		ShardMaxMatchCount: match * 25,
-		TotalMaxMatchCount: match * 25,
-		MaxDocDisplayCount: match,
-		ChunkMatches:       true,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	for _, file := range resp.Files {
-		newFile := &result.File{
-			Repo:     repoName,
-			CommitID: commitID,
-			InputRev: inputRev,
-			Path:     file.FileName,
-		}
-
-		for _, l := range file.LineMatches {
-			if l.FileName {
-				continue
-			}
-
-			for _, m := range l.LineFragments {
-				if m.SymbolInfo == nil {
-					continue
-				}
-
-				res = append(res, result.NewSymbolMatch(
-					newFile,
-					l.LineNumber,
-					-1, // -1 means infer the column
-					m.SymbolInfo.Sym,
-					m.SymbolInfo.Kind,
-					m.SymbolInfo.Parent,
-					m.SymbolInfo.ParentKind,
-					file.Language,
-					string(l.Line),
-					false,
-				))
-			}
-		}
-
-		for _, cm := range file.ChunkMatches {
-			if cm.FileName || len(cm.SymbolInfo) == 0 {
-				continue
-			}
-
-			for i, r := range cm.Ranges {
-				si := cm.SymbolInfo[i]
-				if si == nil {
-					continue
-				}
-
-				res = append(res, result.NewSymbolMatch(
-					newFile,
-					int(r.Start.LineNumber),
-					int(r.Start.Column),
-					si.Sym,
-					si.Kind,
-					si.Parent,
-					si.ParentKind,
-					file.Language,
-					"", // unused when column is set
-					false,
-				))
-			}
-		}
-	}
-	return
-}
-
-func Compute(ctx context.Context, checker authz.SubRepoPermissionChecker, repoName types.MinimalRepo, commitID api.CommitID, inputRev *string, query *string, first *int32, includePatterns *[]string) (res []*result.SymbolMatch, err error) {
+func (s *ZoektSymbolsClient) Compute(ctx context.Context, repoName types.MinimalRepo, commitID api.CommitID, inputRev *string, query *string, first *int32, includePatterns *[]string) (res []*result.SymbolMatch, err error) {
 	// TODO(keegancsmith) we should be able to use indexedSearchRequest here
 	// and remove indexedSymbolsBranch.
-	if branch := indexedSymbolsBranch(ctx, &repoName, string(commitID)); branch != "" {
-		results, err := searchZoekt(ctx, repoName, commitID, inputRev, branch, query, first, includePatterns)
+	if branch := indexedSymbolsBranch(ctx, s.zoektStreamer, &repoName, string(commitID)); branch != "" {
+		results, err := searchZoekt(ctx, s.zoektStreamer, repoName, commitID, inputRev, branch, query, first, includePatterns)
 		if err != nil {
 			return nil, errors.Wrap(err, "zoekt symbol search")
 		}
-		results, err = FilterZoektResults(ctx, checker, repoName.Name, results)
+		results, err = filterZoektResults(ctx, s.subRepoPermsChecker, repoName.Name, results)
 		if err != nil {
 			return nil, errors.Wrap(err, "checking permissions")
 		}
@@ -228,17 +82,24 @@ func Compute(ctx context.Context, checker authz.SubRepoPermissionChecker, repoNa
 		searchArgs.Query = *query
 	}
 
-	symbols, err := backend.Symbols.ListTags(ctx, searchArgs)
+	// We ignore LimitHit, which is consistent with how we treat stats coming
+	// from Zoekt in indexedSymbolsBranch.
+	symbols, _, err := s.symbols.Search(ctx, searchArgs)
 	if err != nil {
 		return nil, err
 	}
 
-	fileWithPath := func(path string) *result.File {
+	for i := range symbols {
+		symbols[i].Line += 1 // callers expect 1-indexed lines
+	}
+
+	fileWithPathAndLanguage := func(path, language string) *result.File {
 		return &result.File{
-			Path:     path,
-			Repo:     repoName,
-			InputRev: inputRev,
-			CommitID: commitID,
+			Path:            path,
+			Repo:            repoName,
+			InputRev:        inputRev,
+			CommitID:        commitID,
+			PreciseLanguage: language,
 		}
 	}
 
@@ -246,7 +107,7 @@ func Compute(ctx context.Context, checker authz.SubRepoPermissionChecker, repoNa
 	for _, symbol := range symbols {
 		matches = append(matches, &result.SymbolMatch{
 			Symbol: symbol,
-			File:   fileWithPath(symbol.Path),
+			File:   fileWithPathAndLanguage(symbol.Path, symbol.Language),
 		})
 	}
 	return matches, err
@@ -254,12 +115,12 @@ func Compute(ctx context.Context, checker authz.SubRepoPermissionChecker, repoNa
 
 // GetMatchAtLineCharacter retrieves the shortest matching symbol (if exists) defined
 // at a specific line number and character offset in the provided file.
-func GetMatchAtLineCharacter(ctx context.Context, checker authz.SubRepoPermissionChecker, repo types.MinimalRepo, commitID api.CommitID, filePath string, line int, character int) (*result.SymbolMatch, error) {
+func (s *ZoektSymbolsClient) GetMatchAtLineCharacter(ctx context.Context, repo types.MinimalRepo, commitID api.CommitID, filePath string, line int, character int) (*result.SymbolMatch, error) {
 	// Should be large enough to include all symbols from a single file
 	first := int32(999999)
 	emptyString := ""
 	includePatterns := []string{regexp.QuoteMeta(filePath)}
-	symbolMatches, err := Compute(ctx, checker, repo, commitID, &emptyString, &emptyString, &first, &includePatterns)
+	symbolMatches, err := s.Compute(ctx, repo, commitID, &emptyString, &emptyString, &first, &includePatterns)
 	if err != nil {
 		return nil, err
 	}
@@ -273,6 +134,157 @@ func GetMatchAtLineCharacter(ctx context.Context, checker authz.SubRepoPermissio
 		}
 	}
 	return match, nil
+}
+
+// indexedSymbols checks to see if Zoekt has indexed symbols information for a
+// repository at a specific commit. If it has it returns the branch name (for
+// use when querying zoekt). Otherwise an empty string is returned.
+func indexedSymbolsBranch(ctx context.Context, zs zoekt.Searcher, repo *types.MinimalRepo, commit string) string {
+	// We use ListAllIndexed since that is cached.
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	list, err := search.ListAllIndexed(ctx, zs)
+	if err != nil {
+		return ""
+	}
+
+	r, ok := list.ReposMap[uint32(repo.ID)]
+	if !ok || !r.HasSymbols {
+		return ""
+	}
+
+	for _, branch := range r.Branches {
+		if branch.Version == commit {
+			return branch.Name
+		}
+	}
+
+	return ""
+}
+
+func filterZoektResults(ctx context.Context, checker authz.SubRepoPermissionChecker, repo api.RepoName, results []*result.SymbolMatch) ([]*result.SymbolMatch, error) {
+	if !authz.SubRepoEnabled(checker) {
+		return results, nil
+	}
+	// Filter out results from files we don't have access to:
+	act := actor.FromContext(ctx)
+	filtered := results[:0]
+	for i, r := range results {
+		ok, err := authz.FilterActorPath(ctx, checker, act, repo, r.File.Path)
+		if err != nil {
+			return nil, errors.Wrap(err, "checking permissions")
+		}
+		if ok {
+			filtered = append(filtered, results[i])
+		}
+	}
+	return filtered, nil
+}
+
+func searchZoekt(
+	ctx context.Context,
+	z zoekt.Searcher,
+	repoName types.MinimalRepo,
+	commitID api.CommitID,
+	inputRev *string,
+	branch string,
+	queryString *string,
+	first *int32,
+	includePatterns *[]string,
+) (res []*result.SymbolMatch, err error) {
+	var raw string
+	if queryString != nil {
+		raw = *queryString
+	}
+	if raw == "" {
+		raw = ".*"
+	}
+
+	expr, err := syntax.Parse(raw, syntax.ClassNL|syntax.PerlX|syntax.UnicodeGroups)
+	if err != nil {
+		return
+	}
+
+	var q query.Q
+	if expr.Op == syntax.OpLiteral {
+		q = &query.Substring{
+			Pattern: string(expr.Rune),
+			Content: true,
+		}
+	} else {
+		q = &query.Regexp{
+			Regexp:  expr,
+			Content: true,
+		}
+	}
+
+	ands := []query.Q{
+		&query.BranchesRepos{List: []query.BranchRepos{
+			{Branch: branch, Repos: roaring.BitmapOf(uint32(repoName.ID))},
+		}},
+		&query.Symbol{Expr: q},
+	}
+	if includePatterns != nil {
+		for _, p := range *includePatterns {
+			q, err := zoektquery.FileRe(p, true)
+			if err != nil {
+				return nil, err
+			}
+			ands = append(ands, q)
+		}
+	}
+
+	final := query.Simplify(query.NewAnd(ands...))
+	match := limitOrDefault(first) + 1
+	resp, err := z.Search(ctx, final, &zoekt.SearchOptions{
+		Trace:              policy.ShouldTrace(ctx),
+		MaxWallTime:        3 * time.Second,
+		ShardMaxMatchCount: match * 25,
+		TotalMaxMatchCount: match * 25,
+		MaxDocDisplayCount: match,
+		ChunkMatches:       true,
+		NumContextLines:    0,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	for _, file := range resp.Files {
+		newFile := &result.File{
+			Repo:            repoName,
+			CommitID:        commitID,
+			InputRev:        inputRev,
+			Path:            file.FileName,
+			PreciseLanguage: file.Language,
+		}
+
+		for _, cm := range file.ChunkMatches {
+			if cm.FileName || len(cm.SymbolInfo) == 0 {
+				continue
+			}
+
+			for i, r := range cm.Ranges {
+				si := cm.SymbolInfo[i]
+				if si == nil {
+					continue
+				}
+
+				res = append(res, result.NewSymbolMatch(
+					newFile,
+					int(r.Start.LineNumber),
+					int(r.Start.Column),
+					si.Sym,
+					si.Kind,
+					si.Parent,
+					si.ParentKind,
+					file.Language,
+					"", // unused when column is set
+					false,
+				))
+			}
+		}
+	}
+	return
 }
 
 func limitOrDefault(first *int32) int {

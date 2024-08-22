@@ -1,30 +1,32 @@
-import { FC, PropsWithChildren, createContext, useContext, useCallback } from 'react'
+import { createContext, useCallback, useContext, type FC, type PropsWithChildren } from 'react'
 
-import { Observable } from 'rxjs'
+import type { Observable } from 'rxjs'
 
 import { isMacPlatform } from '@sourcegraph/common'
-import { FetchFileParameters, fetchHighlightedFileLineRanges } from '@sourcegraph/shared/src/backend/file'
-import { PlatformContext } from '@sourcegraph/shared/src/platform/context'
+import { fetchHighlightedFileLineRanges, type FetchFileParameters } from '@sourcegraph/shared/src/backend/file'
+import type { PlatformContext } from '@sourcegraph/shared/src/platform/context'
 import {
+    createSearchContext,
+    deleteSearchContext,
+    fetchSearchContext,
     fetchSearchContextBySpec,
     fetchSearchContexts,
-    fetchSearchContext,
     getUserSearchContextNamespaces,
-    createSearchContext,
-    updateSearchContext,
-    deleteSearchContext,
     isSearchContextSpecAvailable,
-    SearchContextProps,
+    updateSearchContext,
+    type SearchContextProps,
 } from '@sourcegraph/shared/src/search'
 import { aggregateStreamingSearch } from '@sourcegraph/shared/src/search/stream'
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import { EVENT_LOGGER } from '@sourcegraph/shared/src/telemetry/web/eventLogger'
 
 import { isBatchChangesExecutionEnabled } from './batches'
-import { useBreadcrumbs, BreadcrumbSetters, BreadcrumbsProps } from './components/Breadcrumbs'
-import { SearchStreamingProps } from './search'
-import { StaticSourcegraphWebAppContext, DynamicSourcegraphWebAppContext } from './SourcegraphWebApp'
-import { StaticAppConfig } from './staticAppConfig'
-import { eventLogger } from './tracking/eventLogger'
+import { useBreadcrumbs, type BreadcrumbSetters, type BreadcrumbsProps } from './components/Breadcrumbs'
+import { NotFoundPage } from './components/HeroPage'
+import type { SearchStreamingProps } from './search'
+import type { DynamicSourcegraphWebAppContext, StaticSourcegraphWebAppContext } from './SourcegraphWebApp'
+import type { StaticAppConfig } from './staticAppConfig'
 
 export interface StaticLegacyRouteContext extends LegacyRouteComputedContext, LegacyRouteStaticInjections {}
 
@@ -53,6 +55,7 @@ export interface LegacyRouteComputedContext {
  */
 export interface LegacyRouteStaticInjections
     extends Pick<TelemetryProps, 'telemetryService'>,
+        TelemetryV2Props,
         Pick<
             SearchContextProps,
             | 'getUserSearchContextNamespaces'
@@ -87,7 +90,7 @@ export interface LegacyLayoutRouteContext
         StaticLegacyRouteContext {}
 
 interface LegacyRouteProps {
-    render: (props: LegacyLayoutRouteContext) => JSX.Element
+    render: (props: LegacyLayoutRouteContext) => JSX.Element | null
     condition?: (props: LegacyLayoutRouteContext) => boolean
 }
 
@@ -102,7 +105,7 @@ export const LegacyRoute: FC<LegacyRouteProps> = ({ render, condition }) => {
     }
 
     if (condition && !condition(context)) {
-        return null
+        return <NotFoundPage pageType="" />
     }
 
     return render(context)
@@ -142,8 +145,8 @@ export const LegacyRouteContextProvider: FC<PropsWithChildren<LegacyRouteContext
          */
         streamSearch: aggregateStreamingSearch,
         fetchHighlightedFileLineRanges: _fetchHighlightedFileLineRanges,
-        telemetryService: eventLogger,
-
+        telemetryService: EVENT_LOGGER,
+        telemetryRecorder: platformContext.telemetryRecorder,
         /**
          * Breadcrumb props
          */
@@ -169,7 +172,6 @@ export const LegacyRouteContext = createContext<LegacyLayoutRouteContext | null>
 /**
  * DO NOT USE OUTSIDE OF STORM ROUTES!
  * A convenience hook to return the LegacyRouteContext.
- *
  * @deprecated This can be used only in components migrated under Storm routes.
  * Please use Apollo instead to make GraphQL requests and `useSettings` to access settings.
  */
@@ -183,7 +185,6 @@ export const useLegacyContext_onlyInStormRoutes = (): LegacyLayoutRouteContext =
 
 /**
  * A convenience hook to return the platform context.
- *
  * @deprecated This should not be used for new code anymore, please use Apollo instead to make
  * GraphQL requests and `useSettings` to access settings.
  */

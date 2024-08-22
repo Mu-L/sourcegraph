@@ -1,9 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react'
+import type React from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import { Subject, Subscription } from 'rxjs'
 import { debounceTime, distinctUntilChanged } from 'rxjs/operators'
 
-import { PANEL_POSITIONS } from './constants'
+import type { PANEL_POSITIONS } from './constants'
 
 const STORAGE_KEY_PREFIX = 'ResizePanel:'
 
@@ -113,7 +114,7 @@ export const useResizablePanel = ({
     const [isResizing, setResizing] = useState(false)
     const [panelSize, setPanelSize] = useState(defaultSize)
 
-    useEffect(() => {
+    useLayoutEffect(() => {
         const size = getCachedPanelSize(storageKey, defaultSize, maxSize, minSize)
         onResize?.(size)
         setPanelSize(size)

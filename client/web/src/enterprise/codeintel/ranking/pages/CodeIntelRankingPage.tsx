@@ -1,4 +1,4 @@
-import { FunctionComponent, useCallback, useEffect } from 'react'
+import { type FunctionComponent, useCallback, useEffect } from 'react'
 
 import { mdiTrashCan } from '@mdi/js'
 import classNames from 'classnames'
@@ -6,7 +6,8 @@ import { format, formatDistance, parseISO } from 'date-fns'
 
 import { Timestamp } from '@sourcegraph/branded/src/components/Timestamp'
 import { useMutation } from '@sourcegraph/http-client'
-import { TelemetryProps, TelemetryService } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import type { TelemetryProps, TelemetryService } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import {
     Badge,
     Button,
@@ -21,7 +22,7 @@ import {
 } from '@sourcegraph/wildcard'
 
 import { Collapsible } from '../../../../components/Collapsible'
-import {
+import type {
     BumpDerivativeGraphKeyResult,
     BumpDerivativeGraphKeyVariables,
     DeleteRankingProgressResult,
@@ -36,7 +37,7 @@ import {
 
 import styles from './CodeIntelRankingPage.module.scss'
 
-export interface CodeIntelRankingPageProps extends TelemetryProps {
+export interface CodeIntelRankingPageProps extends TelemetryProps, TelemetryV2Props {
     useRankingSummary?: typeof defaultUseRankingSummary
     telemetryService: TelemetryService
 }
@@ -44,8 +45,12 @@ export interface CodeIntelRankingPageProps extends TelemetryProps {
 export const CodeIntelRankingPage: FunctionComponent<CodeIntelRankingPageProps> = ({
     useRankingSummary = defaultUseRankingSummary,
     telemetryService,
+    telemetryRecorder,
 }) => {
-    useEffect(() => telemetryService.logViewEvent('CodeIntelRankingPage'), [telemetryService])
+    useEffect(() => {
+        telemetryService.logViewEvent('CodeIntelRankingPage')
+        telemetryRecorder.recordEvent('admin.codeIntel.ranking', 'view')
+    }, [telemetryService, telemetryRecorder])
 
     const { data, loading, error, refetch } = useRankingSummary({})
 

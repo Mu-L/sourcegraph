@@ -1,20 +1,20 @@
 import * as React from 'react'
 
-import { NavigateFunction, Location } from 'react-router-dom'
-import { Observable, Subject, Subscription } from 'rxjs'
+import type { Location, NavigateFunction } from 'react-router-dom'
+import { Subject, Subscription, type Observable } from 'rxjs'
 import { distinctUntilChanged, map, startWith } from 'rxjs/operators'
 
 import { createAggregateError } from '@sourcegraph/common'
 import { gql } from '@sourcegraph/http-client'
-import { CardHeader, Card } from '@sourcegraph/wildcard'
+import { Card, CardHeader } from '@sourcegraph/wildcard'
 
 import { queryGraphQL } from '../../backend/graphql'
 import { FilteredConnection } from '../../components/FilteredConnection'
-import { GitCommitFields, RepositoryComparisonCommitsResult, Scalars } from '../../graphql-operations'
-import { GitCommitNode, GitCommitNodeProps } from '../commits/GitCommitNode'
+import type { GitCommitFields, RepositoryComparisonCommitsResult, Scalars } from '../../graphql-operations'
+import { GitCommitNode, type GitCommitNodeProps } from '../commits/GitCommitNode'
 import { gitCommitFragment } from '../commits/RepositoryCommitsPage'
 
-import { RepositoryCompareAreaPageProps } from './RepositoryCompareArea'
+import type { RepositoryCompareAreaPageProps } from './RepositoryCompareArea'
 
 type RepositoryComparisonRepository = Extract<RepositoryComparisonCommitsResult['node'], { __typename?: 'Repository' }>
 
@@ -22,7 +22,7 @@ function queryRepositoryComparisonCommits(args: {
     repo: Scalars['ID']
     base: string | null
     head: string | null
-    first?: number
+    first?: number | null
     path?: string
 }): Observable<RepositoryComparisonRepository['comparison']['commits']> {
     return queryGraphQL<RepositoryComparisonCommitsResult>(
@@ -105,7 +105,7 @@ export class RepositoryCompareCommitsPage extends React.PureComponent<Props> {
                     <CardHeader>Commits</CardHeader>
                     <FilteredConnection<
                         GitCommitFields,
-                        Pick<GitCommitNodeProps, 'className' | 'compact' | 'wrapperElement'>
+                        Pick<GitCommitNodeProps, 'className' | 'compact' | 'wrapperElement' | 'telemetryRecorder'>
                     >
                         listClassName="list-group list-group-flush"
                         noun="commit"
@@ -117,6 +117,7 @@ export class RepositoryCompareCommitsPage extends React.PureComponent<Props> {
                             className: 'list-group-item',
                             compact: true,
                             wrapperElement: 'li',
+                            telemetryRecorder: this.props.telemetryRecorder,
                         }}
                         defaultFirst={50}
                         hideSearch={true}
@@ -129,7 +130,7 @@ export class RepositoryCompareCommitsPage extends React.PureComponent<Props> {
     }
 
     private queryCommits = (args: {
-        first?: number
+        first?: number | null
     }): Observable<RepositoryComparisonRepository['comparison']['commits']> =>
         queryRepositoryComparisonCommits({
             ...args,

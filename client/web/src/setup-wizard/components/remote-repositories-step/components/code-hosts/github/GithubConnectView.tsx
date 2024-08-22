@@ -1,11 +1,21 @@
-import { FC, ReactNode, ReactElement, useCallback, useState, useMemo, ChangeEvent, useEffect } from 'react'
+import {
+    type FC,
+    type ReactNode,
+    type ReactElement,
+    useCallback,
+    useState,
+    useMemo,
+    type ChangeEvent,
+    useEffect,
+} from 'react'
 
 import classNames from 'classnames'
 import { parse as parseJSONC } from 'jsonc-parser'
 
 import { modify } from '@sourcegraph/common'
 import { gql, useLazyQuery } from '@sourcegraph/http-client'
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import {
     Tabs,
     Tab,
@@ -16,33 +26,38 @@ import {
     Checkbox,
     useField,
     useForm,
-    FormInstance,
+    type FormInstance,
     getDefaultInputProps,
-    useFieldAPI,
+    type useFieldAPI,
     useControlledField,
     ErrorAlert,
     FORM_ERROR,
-    AsyncValidator,
-    FormChangeEvent,
+    type AsyncValidator,
+    type FormChangeEvent,
     Link,
 } from '@sourcegraph/wildcard'
 
 import { EXTERNAL_SERVICE_CHECK_CONNECTION_BY_ID } from '../../../../../../components/externalServices/backend'
 import { codeHostExternalServices } from '../../../../../../components/externalServices/externalServices'
-import {
+import type {
     ExternalServiceCheckConnectionByIdResult,
     ExternalServiceCheckConnectionByIdVariables,
     ValidateAccessTokenResult,
     ValidateAccessTokenVariables,
 } from '../../../../../../graphql-operations'
-import { CodeHostJSONFormContent, RadioGroupSection, CodeHostConnectFormFields, CodeHostJSONFormState } from '../common'
+import {
+    CodeHostJSONFormContent,
+    RadioGroupSection,
+    type CodeHostConnectFormFields,
+    type CodeHostJSONFormState,
+} from '../common'
 
 import { GithubOrganizationsPicker, GithubRepositoriesPicker } from './GithubEntityPickers'
 import { getAccessTokenValue, getRepositoriesSettings } from './helpers'
 
 import styles from './GithubConnectView.module.scss'
 
-interface GithubConnectViewProps extends TelemetryProps {
+interface GithubConnectViewProps extends TelemetryProps, TelemetryV2Props {
     initialValues: CodeHostConnectFormFields
     externalServiceId?: string
 
@@ -62,13 +77,15 @@ interface GithubConnectViewProps extends TelemetryProps {
  * storage
  */
 export const GithubConnectView: FC<GithubConnectViewProps> = props => {
-    const { initialValues, externalServiceId, telemetryService, children, onChange, onSubmit } = props
+    const { initialValues, externalServiceId, telemetryService, telemetryRecorder, children, onChange, onSubmit } =
+        props
 
     return (
         <GithubConnectForm
             initialValues={initialValues}
             externalServiceId={externalServiceId}
             telemetryService={telemetryService}
+            telemetryRecorder={telemetryRecorder}
             onChange={onChange}
             onSubmit={onSubmit}
         >
@@ -82,7 +99,7 @@ enum GithubConnectFormTab {
     JSONC,
 }
 
-interface GithubConnectFormProps extends TelemetryProps {
+interface GithubConnectFormProps extends TelemetryProps, TelemetryV2Props {
     initialValues: CodeHostConnectFormFields
     externalServiceId?: string
     children: (state: CodeHostJSONFormState) => ReactNode
@@ -95,7 +112,8 @@ interface GithubConnectFormProps extends TelemetryProps {
  * configuration UI.
  */
 export const GithubConnectForm: FC<GithubConnectFormProps> = props => {
-    const { initialValues, externalServiceId, telemetryService, children, onChange, onSubmit } = props
+    const { initialValues, externalServiceId, telemetryService, telemetryRecorder, children, onChange, onSubmit } =
+        props
 
     const [activeTab, setActiveTab] = useState(GithubConnectFormTab.Form)
     const form = useForm<CodeHostConnectFormFields>({
@@ -121,6 +139,11 @@ export const GithubConnectForm: FC<GithubConnectFormProps> = props => {
         telemetryService.log('SetupWizardCreationTabView', { view }, { view })
     }, [activeTab, telemetryService])
 
+    const onTabClick = useCallback(
+        () => telemetryRecorder.recordEvent('setupWizard.addRemoteRepos.tab', 'click', { metadata: { activeTab } }),
+        [activeTab, telemetryRecorder]
+    )
+
     return (
         <Tabs
             as="form"
@@ -134,10 +157,10 @@ export const GithubConnectForm: FC<GithubConnectFormProps> = props => {
             onSubmit={form.handleSubmit}
         >
             <TabList wrapperClassName={styles.tabList}>
-                <Tab index={GithubConnectFormTab.Form} className={styles.tab}>
+                <Tab index={GithubConnectFormTab.Form} className={styles.tab} onClick={onTabClick}>
                     Settings
                 </Tab>
-                <Tab index={GithubConnectFormTab.JSONC} className={styles.tab}>
+                <Tab index={GithubConnectFormTab.JSONC} className={styles.tab} onClick={onTabClick}>
                     JSONC editor
                 </Tab>
             </TabList>
@@ -156,6 +179,7 @@ export const GithubConnectForm: FC<GithubConnectFormProps> = props => {
                         displayNameField={displayName}
                         configurationField={configuration}
                         externalServiceOptions={codeHostExternalServices.github}
+                        telemetryRecorder={telemetryRecorder}
                     />
                 </TabPanel>
                 <>
@@ -385,12 +409,15 @@ function useAccessTokenValidator(input: useAccessTokenValidatorInput): AsyncVali
 
                 switch (externalService.checkConnection.__typename) {
                     // Everything is ok, code host successfully checked and connected
-                    case 'ExternalServiceAvailable':
+                    case 'ExternalServiceAvailable': {
                         return
-                    case 'ExternalServiceUnavailable':
+                    }
+                    case 'ExternalServiceUnavailable': {
                         return externalService.checkConnection.suspectedReason
-                    case 'ExternalServiceAvailabilityUnknown':
+                    }
+                    case 'ExternalServiceAvailabilityUnknown': {
                         return "Check your access token, we couldn't reach out to code host by the current token"
+                    }
                 }
             }
 
@@ -408,12 +435,15 @@ function useAccessTokenValidator(input: useAccessTokenValidatorInput): AsyncVali
 
 function getViewKindByIndex(index: number): string | null {
     switch (index) {
-        case GithubConnectFormTab.Form:
+        case GithubConnectFormTab.Form: {
             return 'form-ui'
-        case GithubConnectFormTab.JSONC:
+        }
+        case GithubConnectFormTab.JSONC: {
             return 'json-editor'
+        }
 
-        default:
+        default: {
             return null
+        }
     }
 }

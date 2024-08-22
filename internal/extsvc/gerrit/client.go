@@ -2,12 +2,16 @@
 package gerrit
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
+
+	"github.com/sourcegraph/log"
 
 	"github.com/sourcegraph/sourcegraph/internal/extsvc/auth"
 	"github.com/sourcegraph/sourcegraph/internal/httpcli"
@@ -49,6 +53,7 @@ type Client interface {
 	SetReadyForReview(ctx context.Context, changeID string) error
 	MoveChange(ctx context.Context, changeID string, input MoveChangePayload) (*Change, error)
 	SetCommitMessage(ctx context.Context, changeID string, input SetCommitMessagePayload) error
+	GetSSHInfo(ctx context.Context) (hostname string, port int, _ error)
 }
 
 // NewClient returns an authenticated Gerrit API client with
@@ -67,7 +72,7 @@ func NewClient(urn string, url *url.URL, creds *AccountCredentials, httpClient h
 	return &client{
 		httpClient: httpClient,
 		URL:        url,
-		rateLimit:  ratelimit.DefaultRegistry.Get(urn),
+		rateLimit:  ratelimit.NewInstrumentedLimiter(urn, ratelimit.NewGlobalRateLimiter(log.Scoped("GerritClient"), urn)),
 		auther:     auther,
 	}, nil
 }
@@ -112,12 +117,44 @@ func (c *client) GetAuthenticatedUserAccount(ctx context.Context) (*Account, err
 	return &account, nil
 }
 
-func (c *client) GetGroup(ctx context.Context, groupName string) (Group, error) {
+func (c *client) GetSSHInfo(ctx context.Context) (hostname string, port int, _ error) {
+	req, err := http.NewRequest("GET", "ssh_info", nil)
+	if err != nil {
+		return "", 0, err
+	}
 
+	resp, err := c.doHTTP(ctx, req)
+	if err != nil {
+		return "", 0, err
+	}
+	defer resp.Body.Close()
+
+	var bs []byte
+	bs, err = io.ReadAll(resp.Body)
+	if err != nil {
+		return "", 0, err
+	}
+
+	fs := bytes.Fields(bs)
+
+	if len(fs) != 2 {
+		return "", 0, errors.Wrapf(err, "got invalid reponse from Gerrit for ssh_info %q", string(bs))
+	}
+
+	hostname = string(fs[0])
+
+	port, err = strconv.Atoi(string(fs[1]))
+	if err != nil {
+		return "", 0, errors.Wrapf(err, "got invalid port from Gerrit for ssh_info %q", string(bs))
+	}
+
+	return hostname, port, nil
+}
+
+func (c *client) GetGroup(ctx context.Context, groupName string) (Group, error) {
 	urlGroup := url.URL{Path: fmt.Sprintf("a/groups/%s", groupName)}
 
 	reqAllAccounts, err := http.NewRequest("GET", urlGroup.String(), nil)
-
 	if err != nil {
 		return Group{}, err
 	}
@@ -130,6 +167,28 @@ func (c *client) GetGroup(ctx context.Context, groupName string) (Group, error) 
 }
 
 func (c *client) do(ctx context.Context, req *http.Request, result any) (*http.Response, error) { //nolint:unparam // http.Response is never used, but it makes sense API wise.
+	resp, err := c.doHTTP(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var bs []byte
+	bs, err = io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	// Gerrit attaches this prefix to most of its responses, so if it exists, we cut it, so we can parse it as a json properly.
+	bs, _ = bytes.CutPrefix(bs, []byte(")]}'"))
+
+	if result == nil {
+		return resp, nil
+	}
+	return resp, json.Unmarshal(bs, result)
+}
+
+func (c *client) doHTTP(ctx context.Context, req *http.Request) (*http.Response, error) { //nolint:unparam // http.Response is never used, but it makes sense API wise.
 	req.URL = c.URL.ResolveReference(req.URL)
 
 	// Authenticate request with auther
@@ -144,43 +203,22 @@ func (c *client) do(ctx context.Context, req *http.Request, result any) (*http.R
 	}
 
 	resp, err := c.httpClient.Do(req)
-
 	if err != nil {
 		return nil, err
 	}
 
-	defer resp.Body.Close()
-
-	var bs []byte
-	if resp.StatusCode != http.StatusNoContent {
-		bs, err = io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, err
-		}
-
-		// The first 4 characters of the Gerrit API responses need to be stripped, see: https://gerrit-review.googlesource.com/Documentation/rest-api.html#output .
-		if len(bs) < 4 {
-			return nil, &httpError{
-				URL:        req.URL,
-				StatusCode: resp.StatusCode,
-				Body:       bs,
-			}
-		}
-
-		bs = bs[4:]
-	}
-
 	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
+		defer resp.Body.Close()
+		// Read the body best effort.
+		bs, _ := io.ReadAll(resp.Body)
 		return nil, &httpError{
 			URL:        req.URL,
 			StatusCode: resp.StatusCode,
 			Body:       bs,
 		}
 	}
-	if result == nil {
-		return resp, nil
-	}
-	return resp, json.Unmarshal(bs, result)
+
+	return resp, nil
 }
 
 func (c *client) GetURL() *url.URL {

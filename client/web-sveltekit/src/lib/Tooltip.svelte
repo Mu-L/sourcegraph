@@ -1,15 +1,33 @@
-<script lang="ts">
-    import { createPopper, type Placement, type Options } from '@popperjs/core'
-    import { afterUpdate } from 'svelte'
+<script lang="ts" context="module">
+    import type { Placement } from '@floating-ui/dom'
 
+    export type { Placement }
+</script>
+
+<script lang="ts">
+    import { onMount, tick } from 'svelte'
+
+    import { type PopoverOptions, popover, portal, uniqueID } from './dom'
+
+    /**
+     * The content of the tooltip.
+     */
     export let tooltip: string
+    /**
+     * On which side to show the tooltip by default.
+     */
     export let placement: Placement = 'bottom'
+    /**
+     * Force the tooltip to be always visible
+     * (only used for stories).
+     */
+    export let alwaysVisible = false
+
+    const id = uniqueID('tooltip')
 
     let visible = false
-    let tooltipElement: HTMLElement
-    let container: HTMLElement
+    let wrapper: HTMLElement | null
     let target: Element | null
-    let instance: ReturnType<typeof createPopper>
 
     function show() {
         visible = true
@@ -19,55 +37,78 @@
         visible = false
     }
 
-    function updateInstance(options: Partial<Options>): void {
-        if (instance) {
-            instance.setOptions(options)
+    $: options = {
+        placement,
+        offset: 8,
+        shift: {
+            padding: 4,
+        },
+        onSize(element, { availableWidth, availableHeight }) {
+            Object.assign(element.style, {
+                maxWidth: `min(var(--tooltip-max-width), ${availableWidth}px)`,
+                maxHeight: `${availableHeight}px`,
+            })
+        },
+    } satisfies PopoverOptions
+
+    $: if (target && tooltip) {
+        target.setAttribute('aria-label', tooltip)
+    }
+
+    onMount(async () => {
+        // We need to wait for the element to be rendered before we can check whether it
+        // is part of the layout.
+        // (this fixes and issue where the tooltip would not show up in hovercards)
+        await tick()
+
+        let node = wrapper?.firstElementChild
+        // Use `getClientRects` to check if the element is part of the layout.
+        // For example, an element with `display: contents` will not be part of the layout.
+        // Elements with `display: contents` are created by Svelte when using style props
+        // (https://svelte.dev/docs/component-directives#style-props).
+        while (node && node.getClientRects().length === 0) {
+            node = node.firstElementChild
         }
-    }
-
-    afterUpdate(() => {
-        instance?.update()
+        if (node) {
+            target = node
+        }
     })
-
-    $: updateInstance({ placement })
-
-    $: target = container?.firstElementChild
-    $: if (tooltipElement && target && !instance) {
-        instance = createPopper(target, tooltipElement, {
-            placement,
-            modifiers: [
-                {
-                    name: 'offset',
-                    options: {
-                        offset: [0, 8],
-                    },
-                },
-            ],
-        })
-    }
 </script>
 
+<!-- TODO: close tooltip on escape -->
+<!--
+    These event handlers listen for bubbled events from the trigger. The element
+    itself is not interactable.
+    svelte-ignore a11y-no-static-element-interactions
+-->
 <div
-    class="target"
-    bind:this={container}
+    class="wrapper"
+    bind:this={wrapper}
     on:mouseenter={show}
     on:mouseleave={hide}
     on:focusin={show}
     on:focusout={hide}
->
-    <slot />
-</div>
-<div class="tooltip-content" class:visible role="tooltip" bind:this={tooltipElement}>
-    {tooltip}
-    <div class="arrow" data-popper-arrow />
-</div>
+    data-tooltip-root><!--
+--><slot /><!--
+--></div
+><!--
+-->{#if (alwaysVisible || visible) && target && tooltip}<div
+        role="tooltip"
+        {id}
+        use:popover={{ reference: target, options }}
+        use:portal
+    >
+        <div class="content">{tooltip}</div>
+        <div data-arrow />
+    </div>
+{/if}
 
 <style lang="scss">
-    .target {
+    .wrapper {
         display: contents;
     }
 
-    .tooltip-content {
+    [role='tooltip'] {
         --tooltip-font-size: 0.75rem; // 12px
         --tooltip-line-height: 1.02rem; // 16.32px / 16px, per Figma
         --tooltip-max-width: 256px;
@@ -77,59 +118,54 @@
         --tooltip-padding-x: 0.5rem;
         --tooltip-margin: 0;
 
+        --tooltip-arrow-side: 8px solid transparent;
+        --tooltip-arrow-main: 8px solid var(--tooltip-bg);
+
+        all: initial;
+        position: absolute;
         isolation: isolate;
+        z-index: 1;
+        font-family: inherit;
         font-size: var(--tooltip-font-size);
         font-style: normal;
         font-weight: normal;
         line-height: var(--tooltip-line-height);
         max-width: var(--tooltip-max-width);
-        background-color: var(--tooltip-bg);
-        border-radius: var(--tooltip-border-radius);
         color: var(--tooltip-color);
-        padding: var(--tooltip-padding-y) var(--tooltip-padding-x);
         user-select: text;
         word-wrap: break-word;
         border: none;
         min-width: 0;
-        display: none;
-        z-index: 100;
+        width: max-content;
 
-        &.visible {
-            display: block;
+        .content {
+            background-color: var(--tooltip-bg);
+            padding: var(--tooltip-padding-y) var(--tooltip-padding-x);
+            border-radius: var(--tooltip-border-radius);
+        }
+
+        :global([data-arrow][data-placement^='top']) {
+            bottom: -4px;
+        }
+
+        :global([data-arrow][data-placement^='bottom']) {
+            top: -4px;
+        }
+
+        :global([data-arrow][data-placement^='left']) {
+            right: -4px;
+        }
+
+        :global([data-arrow][data-placement^='right']) {
+            left: -4px;
         }
     }
 
-    :global([data-popper-placement^='top']) > .arrow {
-        bottom: -4px;
-    }
-
-    :global([data-popper-placement^='bottom']) > .arrow {
-        top: -4px;
-    }
-
-    :global([data-popper-placement^='left']) > .arrow {
-        right: -4px;
-    }
-
-    :global([data-popper-placement^='right']) > .arrow {
-        left: -4px;
-    }
-
-    .arrow,
-    .arrow::before {
+    [data-arrow] {
         position: absolute;
         width: 8px;
         height: 8px;
-        background: inherit;
-    }
-
-    .arrow {
-        visibility: hidden;
-
-        &::before {
-            visibility: visible;
-            content: '';
-            transform: rotate(45deg);
-        }
+        transform: rotate(45deg);
+        background-color: var(--tooltip-bg);
     }
 </style>

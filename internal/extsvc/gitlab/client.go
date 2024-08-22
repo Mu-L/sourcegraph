@@ -17,6 +17,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/sourcegraph/log"
+
 	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc/auth"
 	"github.com/sourcegraph/sourcegraph/internal/httpcli"
@@ -24,6 +25,7 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/oauthutil"
 	"github.com/sourcegraph/sourcegraph/internal/ratelimit"
 	"github.com/sourcegraph/sourcegraph/internal/rcache"
+	"github.com/sourcegraph/sourcegraph/internal/redispool"
 	"github.com/sourcegraph/sourcegraph/internal/trace"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
@@ -177,14 +179,14 @@ func (p *ClientProvider) NewClient(a auth.Authenticator) *Client {
 		tokenHash = a.Hash()
 		key += tokenHash
 	}
-	projCache := rcache.NewWithTTL(key, int(cacheTTL/time.Second))
+	projCache := rcache.NewWithTTL(redispool.Cache, key, int(cacheTTL/time.Second))
 
-	rl := ratelimit.DefaultRegistry.Get(p.urn)
+	rl := ratelimit.NewInstrumentedLimiter(p.urn, ratelimit.NewGlobalRateLimiter(log.Scoped("GitLabClient"), p.urn))
 	rlm := ratelimit.DefaultMonitorRegistry.GetOrSet(p.baseURL.String(), tokenHash, "rest", &ratelimit.Monitor{})
 
 	return &Client{
 		urn:                 p.urn,
-		log:                 log.Scoped("gitlabAPIClient", "client used to make API requests to Gitlab."),
+		log:                 log.Scoped("gitlabAPIClient"),
 		baseURL:             p.baseURL,
 		httpClient:          p.httpClient,
 		projCache:           projCache,
@@ -267,7 +269,7 @@ func (c *Client) doWithBaseURL(ctx context.Context, req *http.Request, result an
 	// to cache server-side
 	req.Header.Set("Cache-Control", "max-age=0")
 
-	resp, err = oauthutil.DoRequest(ctx, log.Scoped("gitlab client", "do request"), c.httpClient, req, c.Auth)
+	resp, err = oauthutil.DoRequest(ctx, log.Scoped("gitlab client"), c.httpClient, req, c.Auth)
 	if resp != nil {
 		c.externalRateLimiter.Update(resp.Header)
 	}
@@ -299,7 +301,7 @@ func (c *Client) WithAuthenticator(a auth.Authenticator) *Client {
 	tokenHash := a.Hash()
 
 	cc := *c
-	cc.internalRateLimiter = ratelimit.DefaultRegistry.Get(c.urn)
+	cc.internalRateLimiter = ratelimit.NewInstrumentedLimiter(c.urn, ratelimit.NewGlobalRateLimiter(log.Scoped("GitLabClient"), c.urn))
 	cc.externalRateLimiter = ratelimit.DefaultMonitorRegistry.GetOrSet(cc.baseURL.String(), tokenHash, "rest", &ratelimit.Monitor{})
 	cc.Auth = a
 
@@ -392,7 +394,7 @@ func HTTPErrorCode(err error) int {
 // IsNotFound reports whether err is a GitLab API error of type NOT_FOUND, the equivalent cached
 // response error, or HTTP 404.
 func IsNotFound(err error) bool {
-	return errors.HasType(err, &ProjectNotFoundError{}) ||
+	return errors.HasType[*ProjectNotFoundError](err) ||
 		errors.Is(err, ErrMergeRequestNotFound) ||
 		HTTPErrorCode(err) == http.StatusNotFound
 }

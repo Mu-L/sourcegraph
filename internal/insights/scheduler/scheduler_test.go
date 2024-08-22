@@ -5,10 +5,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/sourcegraph/sourcegraph/internal/database"
 	edb "github.com/sourcegraph/sourcegraph/internal/database"
+	"github.com/sourcegraph/sourcegraph/internal/database/dbmocks"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbtest"
 	"github.com/sourcegraph/sourcegraph/internal/goroutine"
 	"github.com/sourcegraph/sourcegraph/internal/insights/priority"
@@ -22,30 +23,31 @@ import (
 
 func Test_MonitorStartsAndStops(t *testing.T) {
 	logger := logtest.Scoped(t)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*1)
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 	insightsDB := edb.NewInsightsDB(dbtest.NewInsightsDB(logger, t), logger)
-	repos := database.NewMockRepoStore()
+	repos := dbmocks.NewMockRepoStore()
 	config := JobMonitorConfig{
 		InsightsDB:     insightsDB,
 		RepoStore:      repos,
-		ObservationCtx: &observation.TestContext,
+		ObservationCtx: observation.TestContextTB(t),
 		CostAnalyzer:   priority.NewQueryAnalyzer(),
 	}
 	routines := NewBackgroundJobMonitor(ctx, config).Routines()
-	goroutine.MonitorBackgroundRoutines(ctx, routines...)
+	err := goroutine.MonitorBackgroundRoutines(ctx, routines...)
+	assert.EqualError(t, err, "unable to stop routines gracefully: context deadline exceeded")
 }
 
 func TestScheduler_InitialBackfill(t *testing.T) {
 	logger := logtest.Scoped(t)
 	ctx := context.Background()
 	insightsDB := edb.NewInsightsDB(dbtest.NewInsightsDB(logger, t), logger)
-	repos := database.NewMockRepoStore()
+	repos := dbmocks.NewMockRepoStore()
 	insightsStore := store.NewInsightStore(insightsDB)
 	config := JobMonitorConfig{
 		InsightsDB:     insightsDB,
 		RepoStore:      repos,
-		ObservationCtx: &observation.TestContext,
+		ObservationCtx: observation.TestContextTB(t),
 		CostAnalyzer:   priority.NewQueryAnalyzer(),
 	}
 	monitor := NewBackgroundJobMonitor(ctx, config)

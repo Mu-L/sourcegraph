@@ -1,3 +1,4 @@
+load("//dev:go_mockgen.bzl", "go_mockgen")
 load("//dev:go_defs.bzl", "go_test")
 load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
@@ -9,6 +10,7 @@ go_library(
         "http.go",
     ],
     importpath = "github.com/sourcegraph/sourcegraph/cmd/frontend/internal/httpapi/releasecache",
+    tags = [TAG_INFRA_DEVINFRA],
     visibility = ["//cmd/frontend:__subpackages__"],
     deps = [
         "//internal/conf",
@@ -18,7 +20,7 @@ go_library(
         "//internal/goroutine",
         "//lib/errors",
         "@com_github_coreos_go_semver//semver",
-        "@com_github_google_go_github_v43//github",
+        "@com_github_google_go_github_v55//github",
         "@com_github_gorilla_mux//:mux",
         "@com_github_sourcegraph_log//:log",
     ],
@@ -36,6 +38,10 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     embed = [":releasecache"],
+    tags = [
+        TAG_INFRA_DEVINFRA,
+        "requires-network",
+    ],
     deps = [
         "//internal/conf",
         "//internal/errcode",
@@ -43,6 +49,7 @@ go_test(
         "//internal/extsvc/github",
         "//internal/httpcli",
         "//internal/httptestutil",
+        "//internal/ratelimit",
         "//internal/testutil",
         "//lib/errors",
         "//schema",
@@ -53,4 +60,15 @@ go_test(
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
     ],
+)
+
+go_mockgen(
+    name = "generate_mocks",
+    out = "mocks_test.go",
+    manifests = [
+        "//:mockgen.yaml",
+        "//:mockgen.test.yaml",
+        "//:mockgen.temp.yaml",
+    ],
+    deps = [":releasecache"],
 )

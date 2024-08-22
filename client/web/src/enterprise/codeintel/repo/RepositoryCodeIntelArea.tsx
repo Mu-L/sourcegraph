@@ -1,26 +1,27 @@
-import { FC } from 'react'
+import type { FC } from 'react'
 
 import { Routes, Route, Navigate } from 'react-router-dom'
 
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { lazyComponent } from '@sourcegraph/shared/src/util/lazyComponent'
 
-import { AuthenticatedUser } from '../../../auth'
-import { BreadcrumbSetters } from '../../../components/Breadcrumbs'
+import type { AuthenticatedUser } from '../../../auth'
+import type { BreadcrumbSetters } from '../../../components/Breadcrumbs'
 import { NotFoundPage } from '../../../components/HeroPage'
 import { RedirectRoute } from '../../../components/RedirectRoute'
-import { RepositoryFields } from '../../../graphql-operations'
-import { RouteV6Descriptor } from '../../../util/contributions'
-import { CodeIntelConfigurationPageProps } from '../configuration/pages/CodeIntelConfigurationPage'
-import { CodeIntelConfigurationPolicyPageProps } from '../configuration/pages/CodeIntelConfigurationPolicyPage'
-import { CodeIntelRepositoryIndexConfigurationPageProps } from '../configuration/pages/CodeIntelRepositoryIndexConfigurationPage'
-import { RepoDashboardPageProps } from '../dashboard/pages/RepoDashboardPage'
-import { CodeIntelPreciseIndexesPageProps } from '../indexes/pages/CodeIntelPreciseIndexesPage'
-import { CodeIntelPreciseIndexPageProps } from '../indexes/pages/CodeIntelPreciseIndexPage'
+import type { RepositoryFields } from '../../../graphql-operations'
+import type { RouteV6Descriptor } from '../../../util/contributions'
+import type { CodeIntelConfigurationPageProps } from '../configuration/pages/CodeIntelConfigurationPage'
+import type { CodeIntelConfigurationPolicyPageProps } from '../configuration/pages/CodeIntelConfigurationPolicyPage'
+import type { CodeIntelRepositoryIndexConfigurationPageProps } from '../configuration/pages/CodeIntelRepositoryIndexConfigurationPage'
+import type { RepoDashboardPageProps } from '../dashboard/pages/RepoDashboardPage'
+import type { CodeIntelPreciseIndexesPageProps } from '../indexes/pages/CodeIntelPreciseIndexesPage'
+import type { CodeIntelPreciseIndexPageProps } from '../indexes/pages/CodeIntelPreciseIndexPage'
 
-import { CodeIntelSidebar, CodeIntelSideBarGroups } from './CodeIntelSidebar'
+import { CodeIntelSidebar, type CodeIntelSideBarGroups } from './CodeIntelSidebar'
 
-export interface CodeIntelAreaRouteContext extends TelemetryProps {
+export interface CodeIntelAreaRouteContext extends TelemetryProps, TelemetryV2Props {
     repo: { id: string; name: string }
     authenticatedUser: AuthenticatedUser | null
 }
@@ -68,6 +69,7 @@ export const codeIntelAreaRoutes: readonly CodeIntelAreaRoute[] = [
     {
         path: '/dashboard',
         render: props => <RepoDashboardPage {...props} />,
+        condition: context => Boolean(context.authenticatedUser?.siteAdmin),
     },
 
     // Precise index routes
@@ -111,7 +113,7 @@ export const codeIntelAreaRoutes: readonly CodeIntelAreaRoute[] = [
 /**
  * Properties passed to all page components in the repository code navigation area.
  */
-export interface RepositoryCodeIntelAreaPageProps extends BreadcrumbSetters, TelemetryProps {
+export interface RepositoryCodeIntelAreaPageProps extends BreadcrumbSetters, TelemetryProps, TelemetryV2Props {
     /** The active repository. */
     repo: RepositoryFields
     authenticatedUser: AuthenticatedUser | null

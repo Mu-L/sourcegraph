@@ -21,7 +21,7 @@ import (
 
 func testStoreBatchSpecResolutionJobs(t *testing.T, ctx context.Context, s *Store, clock bt.Clock) {
 	jobs := make([]*btypes.BatchSpecResolutionJob, 0, 2)
-	for i := 0; i < cap(jobs); i++ {
+	for i := range cap(jobs) {
 		job := &btypes.BatchSpecResolutionJob{
 			BatchSpecID: int64(i + 567),
 			InitiatorID: int32(i + 123),
@@ -158,8 +158,8 @@ func TestBatchSpecResolutionJobs_BatchSpecIDUnique(t *testing.T) {
 	c := &bt.TestClock{Time: timeutil.Now()}
 	logger := logtest.Scoped(t)
 
-	db := database.NewDB(logger, dbtest.NewDB(logger, t))
-	s := NewWithClock(db, &observation.TestContext, nil, c.Now)
+	db := database.NewDB(logger, dbtest.NewDB(t))
+	s := NewWithClock(db, observation.TestContextTB(t), nil, c.Now)
 
 	user := bt.CreateTestUser(t, db, true)
 

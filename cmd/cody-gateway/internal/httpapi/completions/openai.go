@@ -2,112 +2,44 @@ package completions
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/sourcegraph/log"
 
-	"github.com/sourcegraph/sourcegraph/cmd/cody-gateway/internal/actor"
+	"github.com/sourcegraph/sourcegraph/cmd/cody-gateway/shared/config"
+	"github.com/sourcegraph/sourcegraph/internal/completions/client/openai"
+	"github.com/sourcegraph/sourcegraph/lib/errors"
+
 	"github.com/sourcegraph/sourcegraph/cmd/cody-gateway/internal/events"
 	"github.com/sourcegraph/sourcegraph/cmd/cody-gateway/internal/limiter"
 	"github.com/sourcegraph/sourcegraph/cmd/cody-gateway/internal/notify"
-	"github.com/sourcegraph/sourcegraph/internal/completions/client/openai"
+	"github.com/sourcegraph/sourcegraph/internal/codygateway"
 	"github.com/sourcegraph/sourcegraph/internal/conf/conftypes"
 	"github.com/sourcegraph/sourcegraph/internal/httpcli"
 )
 
-const openAIURL = "https://api.openai.com/v1/chat/completions"
+func NewOpenAIHandler(baseLogger log.Logger, eventLogger events.Logger, rs limiter.RedisStore, rateLimitNotifier notify.RateLimitNotifier, httpClient httpcli.Doer, config config.OpenAIConfig, promptRecorder PromptRecorder, upstreamConfig UpstreamHandlerConfig) http.Handler {
+	// OpenAI primarily uses tokens-per-minute ("TPM") to rate-limit spikes
+	// in requests, so set a very high retry-after to discourage Sourcegraph
+	// clients from retrying at all since retries are probably not going to
+	// help in a minute-long rate limit window.
+	upstreamConfig.DefaultRetryAfterSeconds = 30
 
-func NewOpenAIHandler(
-	logger log.Logger,
-	eventLogger events.Logger,
-	rs limiter.RedisStore,
-	rateLimitNotifier notify.RateLimitNotifier,
-	httpClient httpcli.Doer,
-	accessToken string,
-	orgID string,
-	allowedModels []string,
-) http.Handler {
-	return makeUpstreamHandler(
-		logger,
+	return makeUpstreamHandler[openaiRequest](
+		baseLogger,
 		eventLogger,
 		rs,
 		rateLimitNotifier,
 		httpClient,
 		string(conftypes.CompletionsProviderNameOpenAI),
-		openAIURL,
-		allowedModels,
-		upstreamHandlerMethods[openaiRequest]{
-			transformBody: func(body *openaiRequest, act *actor.Actor) {
-				// We don't want to let users generate multiple responses, as this would
-				// mess with rate limit counting.
-				if body.N > 1 {
-					body.N = 1
-				}
-				// We forward the actor ID to support tracking.
-				body.User = act.ID
-			},
-			getRequestMetadata: func(body openaiRequest) (promptCharacterCount int, model string, additionalMetadata map[string]any) {
-				for _, m := range body.Messages {
-					promptCharacterCount += len(m.Content)
-				}
-				return promptCharacterCount, body.Model, map[string]any{"stream": body.Stream}
-			},
-			transformRequest: func(r *http.Request) {
-				r.Header.Set("Content-Type", "application/json")
-				r.Header.Set("Authorization", "Bearer "+accessToken)
-				if orgID != "" {
-					r.Header.Set("OpenAI-Organization", orgID)
-				}
-			},
-			parseResponse: func(body openaiRequest, r io.Reader) (completionCharacterCount int) {
-				// Try to parse the request we saw, if it was non-streaming, we can simply parse
-				// it as JSON.
-				if !body.Stream {
-					var res openaiResponse
-					if err := json.NewDecoder(r).Decode(&res); err != nil {
-						logger.Error("failed to parse OpenAI response as JSON", log.Error(err))
-						return 0
-					}
-					if len(res.Choices) > 0 {
-						// TODO: Later, we should look at the usage field.
-						return len(res.Choices[0].Content)
-					}
-					return 0
-				}
-
-				// Otherwise, we have to parse the event stream.
-				dec := openai.NewDecoder(r)
-				var finalCompletion string
-				// Consume all the messages, but we only care about the last completion data.
-				for dec.Scan() {
-					data := dec.Data()
-
-					// Gracefully skip over any data that isn't JSON-like.
-					if !bytes.HasPrefix(data, []byte("{")) {
-						continue
-					}
-
-					var event openaiResponse
-					if err := json.Unmarshal(data, &event); err != nil {
-						logger.Error("failed to decode event payload", log.Error(err), log.String("body", string(data)))
-						continue
-					}
-					if len(event.Choices) > 0 {
-						finalCompletion += event.Choices[0].Delta.Content
-					}
-				}
-
-				if err := dec.Err(); err != nil {
-					logger.Error("failed to decode OpenAI streaming response", log.Error(err))
-				}
-				return len(finalCompletion)
-			},
-			validateRequest: func(_ openaiRequest) error {
-				return nil
-			},
-		},
+		config.AllowedModels,
+		&OpenAIHandlerMethods{config: config},
+		promptRecorder,
+		upstreamConfig,
 	)
 }
 
@@ -132,6 +64,22 @@ type openaiRequest struct {
 	User             string                 `json:"user,omitempty"`
 }
 
+func (r openaiRequest) ShouldStream() bool {
+	return r.Stream
+}
+
+func (r openaiRequest) GetModel() string {
+	return r.Model
+}
+
+func (r openaiRequest) BuildPrompt() string {
+	var sb strings.Builder
+	for _, m := range r.Messages {
+		sb.WriteString(m.Content + "\n")
+	}
+	return sb.String()
+}
+
 type openaiUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
@@ -154,4 +102,125 @@ type openaiResponse struct {
 	Usage   openaiUsage    `json:"usage"`
 	Model   string         `json:"model"`
 	Choices []openaiChoice `json:"choices"`
+}
+
+type OpenAIHandlerMethods struct {
+	config config.OpenAIConfig
+}
+
+func (*OpenAIHandlerMethods) getAPIURL(_ codygateway.Feature, _ openaiRequest) string {
+	return "https://api.openai.com/v1/chat/completions"
+}
+
+func (*OpenAIHandlerMethods) validateRequest(_ context.Context, _ log.Logger, feature codygateway.Feature, _ openaiRequest) error {
+	if feature == codygateway.FeatureCodeCompletions {
+		return errors.Newf("feature %q is currently not supported for OpenAI", feature)
+	}
+	return nil
+}
+
+func (o *OpenAIHandlerMethods) shouldFlagRequest(_ context.Context, _ log.Logger, req openaiRequest) (*flaggingResult, error) {
+	result, err := isFlaggedRequest(
+		nil, /* tokenizer, meaning token counts aren't considered when for flagging consideration. */
+		flaggingRequest{
+			ModelName:       req.Model,
+			FlattenedPrompt: req.BuildPrompt(),
+			MaxTokens:       int(req.MaxTokens),
+		},
+		makeFlaggingConfig(o.config.FlaggingConfig))
+	return result, err
+}
+
+func (*OpenAIHandlerMethods) transformBody(body *openaiRequest, identifier string) {
+	// We don't want to let users generate multiple responses, as this would
+	// mess with rate limit counting.
+	if body.N > 1 {
+		body.N = 1
+	}
+	// We forward the actor ID to support tracking.
+	body.User = identifier
+}
+
+func (*OpenAIHandlerMethods) getRequestMetadata(body openaiRequest) (model string, additionalMetadata map[string]any) {
+	return body.Model, map[string]any{"stream": body.Stream}
+}
+
+func (o *OpenAIHandlerMethods) transformRequest(downstreamRequest, upstreamRequest *http.Request) {
+	upstreamRequest.Header.Set("Content-Type", "application/json")
+	upstreamRequest.Header.Set("Authorization", "Bearer "+o.config.AccessToken)
+	if o.config.OrgID != "" {
+		upstreamRequest.Header.Set("OpenAI-Organization", o.config.OrgID)
+	}
+}
+
+func (*OpenAIHandlerMethods) parseResponseAndUsage(logger log.Logger, body openaiRequest, r io.Reader, isStreamRequest bool) (promptUsage, completionUsage usageStats) {
+	// First, extract prompt usage details from the request.
+	for _, m := range body.Messages {
+		promptUsage.characters += len(m.Content)
+	}
+
+	// Setting a default -1 value so that in case of errors the tokenizer computed tokens don't impact the data
+	promptUsage.tokenizerTokens = -1
+	completionUsage.tokenizerTokens = -1
+	// Try to parse the request we saw, if it was non-streaming, we can simply parse
+	// it as JSON.
+	if !isStreamRequest {
+		var res openaiResponse
+		if err := json.NewDecoder(r).Decode(&res); err != nil {
+			logger.Error("failed to parse OpenAI response as JSON", log.Error(err))
+			return promptUsage, completionUsage
+		}
+
+		// Extract usage data from response
+		promptUsage.tokens = res.Usage.PromptTokens
+		completionUsage.tokens = res.Usage.CompletionTokens
+		if len(res.Choices) > 0 {
+			completionUsage.characters = len(res.Choices[0].Content)
+		}
+		return promptUsage, completionUsage
+	}
+
+	// Otherwise, we have to parse the event stream.
+	//
+	// Currently, OpenAI only reports usage on non-streaming requests
+	// Until we can tokenize the response ourselves, just count
+	// character usage, and set token counts to -1 as sentinel values.
+	// TODO: https://github.com/sourcegraph/sourcegraph/issues/56590
+	promptUsage.tokens = -1
+	completionUsage.tokens = -1
+
+	dec := openai.NewDecoder(r)
+	// Consume all the messages, but we only care about the last completion data.
+	for dec.Scan() {
+		data := dec.Data()
+
+		// Gracefully skip over any data that isn't JSON-like.
+		if !bytes.HasPrefix(data, []byte("{")) {
+			continue
+		}
+
+		var event openaiResponse
+		if err := json.Unmarshal(data, &event); err != nil {
+			logger.Error("failed to decode event payload", log.Error(err), log.String("body", string(data)))
+			continue
+		}
+		if len(event.Choices) > 0 {
+			completionUsage.characters += len(event.Choices[0].Delta.Content)
+		}
+		// These are only included in the last message, so we're not worried about overwriting
+		if event.Usage.PromptTokens > 0 {
+			promptUsage.tokens = event.Usage.PromptTokens
+		}
+		if event.Usage.CompletionTokens > 0 {
+			completionUsage.tokens = event.Usage.CompletionTokens
+		}
+	}
+	if completionUsage.tokens == -1 || promptUsage.tokens == -1 {
+		logger.Warn("did not extract token counts from OpenAI streaming response", log.Int("prompt-tokens", promptUsage.tokens), log.Int("completion-tokens", completionUsage.tokens))
+	}
+	if err := dec.Err(); err != nil {
+		logger.Error("failed to decode OpenAI streaming response", log.Error(err))
+	}
+
+	return promptUsage, completionUsage
 }

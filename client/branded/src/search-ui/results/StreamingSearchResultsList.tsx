@@ -1,49 +1,45 @@
 import React, { useCallback, useState } from 'react'
 
 import classNames from 'classnames'
-import { useLocation } from 'react-router-dom'
-import { Observable } from 'rxjs'
+import type { Observable } from 'rxjs'
 
 import { TraceSpanProvider } from '@sourcegraph/observability-client'
-import { FetchFileParameters } from '@sourcegraph/shared/src/backend/file'
-import { FilePrefetcher, PrefetchableFile } from '@sourcegraph/shared/src/components/PrefetchableFile'
+import type { FetchFileParameters } from '@sourcegraph/shared/src/backend/file'
+import { type FilePrefetcher, PrefetchableFile } from '@sourcegraph/shared/src/components/PrefetchableFile'
 import { displayRepoName } from '@sourcegraph/shared/src/components/RepoLink'
 import { VirtualList } from '@sourcegraph/shared/src/components/VirtualList'
-import { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
+import type { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
+import type { BuildSearchQueryURLParameters, QueryState, SearchContextProps } from '@sourcegraph/shared/src/search'
 import {
-    BuildSearchQueryURLParameters,
-    QueryState,
-    SearchContextProps,
-    SearchMode,
-    SubmitSearchParameters,
-} from '@sourcegraph/shared/src/search'
-import {
-    AggregateStreamingSearchResults,
+    type AggregateStreamingSearchResults,
     getMatchUrl,
     getRevision,
-    SearchMatch,
+    type SearchMatch,
 } from '@sourcegraph/shared/src/search/stream'
-import { SettingsCascadeProps } from '@sourcegraph/shared/src/settings/settings'
-import { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import type { SettingsCascadeProps } from '@sourcegraph/shared/src/settings/settings'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 
-import { CommitSearchResult } from '../components/CommitSearchResult'
-import { FileContentSearchResult } from '../components/FileContentSearchResult'
-import { FilePathSearchResult } from '../components/FilePathSearchResult'
+import {
+    CommitSearchResult,
+    FileContentSearchResult,
+    FilePathSearchResult,
+    RepoSearchResult,
+    SymbolSearchResult,
+} from '../components'
 import { OwnerSearchResult } from '../components/OwnerSearchResult'
-import { RepoSearchResult } from '../components/RepoSearchResult'
-import { SymbolSearchResult } from '../components/SymbolSearchResult'
 
 import { NoResultsPage } from './NoResultsPage'
 import { StreamingSearchResultFooter } from './StreamingSearchResultsFooter'
 import { useItemsToShow } from './use-items-to-show'
 import { useSearchResultsKeyboardNavigation } from './useSearchResultsKeyboardNavigation'
 
-import resultContainerStyles from '../components/ResultContainer.module.scss'
 import styles from './StreamingSearchResultsList.module.scss'
 
 export interface StreamingSearchResultsListProps
     extends SettingsCascadeProps,
         TelemetryProps,
+        TelemetryV2Props,
         Pick<SearchContextProps, 'searchContextsEnabled'>,
         PlatformContextProps<'requestGraphQL'> {
     isSourcegraphDotCom: boolean
@@ -70,21 +66,17 @@ export interface StreamingSearchResultsListProps
     enableKeyboardNavigation?: boolean
 
     showQueryExamplesOnNoResultsPage?: boolean
-
+    /**
+     * Whether to show keyword search examples instead of standard search examples.
+     */
+    showQueryExamplesForKeywordSearch?: boolean
     /**
      * The query state to be used for the query examples and owner search.
      * If not provided, the query examples and owner search will not
      * allow modifying the query.
      */
     queryState?: QueryState
-    setQueryState?: (queryState: QueryState) => void
     buildSearchURLQueryFromQueryState?: (queryParameters: BuildSearchQueryURLParameters) => string
-
-    searchMode?: SearchMode
-    setSearchMode?: (mode: SearchMode) => void
-    submitSearch?: (parameters: SubmitSearchParameters) => void
-    searchQueryFromURL?: string
-    caseSensitive?: boolean
 
     selectedSearchContextSpec?: string
 
@@ -92,9 +84,15 @@ export interface StreamingSearchResultsListProps
      * An optional callback invoked whenever a search result is clicked.
      * It's passed the index of the result in the list and the result type.
      */
-    logSearchResultClicked?: (index: number, type: string) => void
+    logSearchResultClicked?: (index: number, type: string, resultsLength: number) => void
 
     enableRepositoryMetadata?: boolean
+    className?: string
+
+    /**
+     * Hide the file preview button in `FileContentSearchResult` and `FilePathSearchResult`
+     */
+    hideFilePreviewButton?: boolean
 }
 
 export const StreamingSearchResultsList: React.FunctionComponent<
@@ -105,6 +103,7 @@ export const StreamingSearchResultsList: React.FunctionComponent<
     fetchHighlightedFileLineRanges,
     settingsCascade,
     telemetryService,
+    telemetryRecorder,
     isSourcegraphDotCom,
     searchContextsEnabled,
     platformContext,
@@ -115,20 +114,16 @@ export const StreamingSearchResultsList: React.FunctionComponent<
     prefetchFileEnabled,
     enableKeyboardNavigation,
     showQueryExamplesOnNoResultsPage,
+    showQueryExamplesForKeywordSearch = true,
     queryState,
-    setQueryState,
     buildSearchURLQueryFromQueryState,
-    searchMode,
-    setSearchMode,
-    submitSearch,
-    caseSensitive,
-    searchQueryFromURL,
     logSearchResultClicked,
     enableRepositoryMetadata,
+    className,
+    hideFilePreviewButton = false,
 }) => {
     const resultsNumber = results?.results.length || 0
     const { itemsToShow, handleBottomHit } = useItemsToShow(executedQuery, resultsNumber)
-    const location = useLocation()
     const [rootRef, setRootRef] = useState<HTMLElement | null>(null)
 
     const renderResult = useCallback(
@@ -137,7 +132,7 @@ export const StreamingSearchResultsList: React.FunctionComponent<
                 switch (result.type) {
                     case 'content':
                     case 'symbol':
-                    case 'path':
+                    case 'path': {
                         return (
                             <PrefetchableFile
                                 isPrefetchEnabled={prefetchFileEnabled}
@@ -145,19 +140,15 @@ export const StreamingSearchResultsList: React.FunctionComponent<
                                 filePath={result.path}
                                 revision={getRevision(result.branches, result.commit)}
                                 repoName={result.repository}
-                                // PrefetchableFile adds an extra wrapper, so we lift the <li> up and match the ResultContainer styles.
-                                // Better approach would be to use `as` to avoid wrapping, but that requires a larger refactor of the
-                                // child components than is worth doing right now for this experimental feature
-                                className={resultContainerStyles.resultContainer}
                                 as="li"
                             >
                                 {result.type === 'content' && (
                                     <FileContentSearchResult
                                         index={index}
-                                        location={location}
                                         telemetryService={telemetryService}
+                                        telemetryRecorder={telemetryRecorder}
                                         result={result}
-                                        onSelect={() => logSearchResultClicked?.(index, 'fileMatch')}
+                                        onSelect={() => logSearchResultClicked?.(index, 'fileMatch', resultsNumber)}
                                         defaultExpanded={false}
                                         showAllMatches={false}
                                         allExpanded={allExpanded}
@@ -166,14 +157,16 @@ export const StreamingSearchResultsList: React.FunctionComponent<
                                         settingsCascade={settingsCascade}
                                         openInNewTab={openMatchesInNewTab}
                                         containerClassName={resultClassName}
+                                        hideFilePreviewButton={hideFilePreviewButton}
                                     />
                                 )}
                                 {result.type === 'symbol' && (
                                     <SymbolSearchResult
                                         index={index}
                                         telemetryService={telemetryService}
+                                        telemetryRecorder={telemetryRecorder}
                                         result={result}
-                                        onSelect={() => logSearchResultClicked?.(index, 'symbolMatch')}
+                                        onSelect={() => logSearchResultClicked?.(index, 'symbolMatch', resultsNumber)}
                                         fetchHighlightedFileLineRanges={fetchHighlightedFileLineRanges}
                                         repoDisplayName={displayRepoName(result.repository)}
                                         settingsCascade={settingsCascade}
@@ -185,32 +178,37 @@ export const StreamingSearchResultsList: React.FunctionComponent<
                                     <FilePathSearchResult
                                         index={index}
                                         result={result}
-                                        onSelect={() => logSearchResultClicked?.(index, 'filePathMatch')}
+                                        onSelect={() => logSearchResultClicked?.(index, 'filePathMatch', resultsNumber)}
                                         repoDisplayName={displayRepoName(result.repository)}
                                         containerClassName={resultClassName}
                                         telemetryService={telemetryService}
+                                        telemetryRecorder={telemetryRecorder}
+                                        settingsCascade={settingsCascade}
+                                        hideFilePreviewButton={hideFilePreviewButton}
                                     />
                                 )}
                             </PrefetchableFile>
                         )
-                    case 'commit':
+                    }
+                    case 'commit': {
                         return (
                             <CommitSearchResult
                                 index={index}
                                 result={result}
                                 platformContext={platformContext}
-                                onSelect={() => logSearchResultClicked?.(index, 'commit')}
+                                onSelect={() => logSearchResultClicked?.(index, 'commit', resultsNumber)}
                                 openInNewTab={openMatchesInNewTab}
                                 containerClassName={resultClassName}
                                 as="li"
                             />
                         )
-                    case 'repo':
+                    }
+                    case 'repo': {
                         return (
                             <RepoSearchResult
                                 index={index}
                                 result={result}
-                                onSelect={() => logSearchResultClicked?.(index, 'repo')}
+                                onSelect={() => logSearchResultClicked?.(index, 'repo', resultsNumber)}
                                 containerClassName={resultClassName}
                                 buildSearchURLQueryFromQueryState={buildSearchURLQueryFromQueryState}
                                 queryState={queryState}
@@ -218,20 +216,23 @@ export const StreamingSearchResultsList: React.FunctionComponent<
                                 as="li"
                             />
                         )
+                    }
                     case 'person':
-                    case 'team':
+                    case 'team': {
                         return (
                             <OwnerSearchResult
                                 index={index}
                                 result={result}
                                 as="li"
-                                onSelect={() => logSearchResultClicked?.(index, 'person')}
+                                onSelect={() => logSearchResultClicked?.(index, 'person', resultsNumber)}
                                 containerClassName={resultClassName}
                                 telemetryService={telemetryService}
+                                telemetryRecorder={telemetryRecorder}
                                 queryState={queryState}
                                 buildSearchURLQueryFromQueryState={buildSearchURLQueryFromQueryState}
                             />
                         )
+                    }
                 }
             }
 
@@ -250,8 +251,9 @@ export const StreamingSearchResultsList: React.FunctionComponent<
         [
             prefetchFileEnabled,
             prefetchFile,
-            location,
+            resultsNumber,
             telemetryService,
+            telemetryRecorder,
             allExpanded,
             fetchHighlightedFileLineRanges,
             settingsCascade,
@@ -262,6 +264,7 @@ export const StreamingSearchResultsList: React.FunctionComponent<
             enableRepositoryMetadata,
             buildSearchURLQueryFromQueryState,
             logSearchResultClicked,
+            hideFilePreviewButton,
         ]
     )
 
@@ -275,7 +278,7 @@ export const StreamingSearchResultsList: React.FunctionComponent<
             <VirtualList<SearchMatch>
                 as="ol"
                 aria-label="Search results"
-                className={classNames('mt-2 mb-0', styles.list)}
+                className={classNames(styles.list, className)}
                 itemsToShow={itemsToShow}
                 onShowMoreItems={handleBottomHit}
                 items={results?.results || []}
@@ -293,21 +296,17 @@ export const StreamingSearchResultsList: React.FunctionComponent<
             </div>
 
             {itemsToShow >= resultsNumber && (
-                <StreamingSearchResultFooter results={results}>
+                <StreamingSearchResultFooter results={results} className="m-3">
                     <>
                         {results?.state === 'complete' && resultsNumber === 0 && (
                             <NoResultsPage
                                 searchContextsEnabled={searchContextsEnabled}
                                 isSourcegraphDotCom={isSourcegraphDotCom}
                                 telemetryService={telemetryService}
+                                telemetryRecorder={telemetryRecorder}
                                 showSearchContext={searchContextsEnabled}
                                 showQueryExamples={showQueryExamplesOnNoResultsPage}
-                                setQueryState={setQueryState}
-                                searchMode={searchMode}
-                                setSearchMode={setSearchMode}
-                                submitSearch={submitSearch}
-                                caseSensitive={caseSensitive}
-                                searchQueryFromURL={searchQueryFromURL}
+                                showQueryExamplesForKeywordSearch={showQueryExamplesForKeywordSearch}
                             />
                         )}
                     </>

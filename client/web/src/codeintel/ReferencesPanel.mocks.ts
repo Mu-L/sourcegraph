@@ -1,32 +1,32 @@
 import { useState } from 'react'
 
-import { MockedResponse } from '@apollo/client/testing'
+import type { MockedResponse } from '@apollo/client/testing'
 import { of } from 'rxjs'
 
 import { logger } from '@sourcegraph/common'
-import { getDocumentNode, dataOrThrowErrors, useQuery } from '@sourcegraph/http-client'
+import { dataOrThrowErrors, getDocumentNode, useQuery } from '@sourcegraph/http-client'
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { NOOP_TELEMETRY_SERVICE } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { NOOP_PLATFORM_CONTEXT } from '@sourcegraph/shared/src/testing/searchTestHelpers'
 
-import { ConnectionQueryArguments } from '../components/FilteredConnection'
 import { asGraphQLResult } from '../components/FilteredConnection/utils'
 import {
-    UsePreciseCodeIntelForPositionResult,
-    UsePreciseCodeIntelForPositionVariables,
     HighlightResponseFormat,
-    LocationFields,
-    ReferencesPanelHighlightedBlobVariables,
-    ResolveRepoAndRevisionVariables,
+    type LocationFields,
+    type ReferencesPanelHighlightedBlobVariables,
+    type ResolveRepoAndRevisionVariables,
+    type UsePreciseCodeIntelForPositionResult,
+    type UsePreciseCodeIntelForPositionVariables,
 } from '../graphql-operations'
 
-import { buildPreciseLocation } from './location'
-import { ReferencesPanelProps } from './ReferencesPanel'
+import { buildPreciseLocation, LocationsGroup } from './location'
+import type { ReferencesPanelProps } from './ReferencesPanel'
 import {
-    USE_PRECISE_CODE_INTEL_FOR_POSITION_QUERY,
-    RESOLVE_REPO_REVISION_BLOB_QUERY,
     FETCH_HIGHLIGHTED_BLOB,
+    RESOLVE_REPO_REVISION_BLOB_QUERY,
+    USE_PRECISE_CODE_INTEL_FOR_POSITION_QUERY,
 } from './ReferencesPanelQueries'
-import { UseCodeIntelParameters, UseCodeIntelResult } from './useCodeIntel'
+import type { UseCodeIntelParameters, UseCodeIntelResult } from './useCodeIntel'
 
 const goDiffFileContent =
     'package main\n\nimport (\n\t"flag"\n\t"fmt"\n\t"io"\n\t"log"\n\t"os"\n\n\t"github.com/sourcegraph/go-diff/diff"\n)\n\n// A diagnostic program to aid in debugging diff parsing or printing\n// errors.\n\nconst stdin = "\u003Cstdin\u003E"\n\nvar (\n\tdiffPath = flag.String("f", stdin, "filename of diff (default: stdin)")\n\tfileIdx  = flag.Int("i", -1, "if \u003E= 0, only print and report errors from the i\'th file (0-indexed)")\n)\n\nfunc main() {\n\tlog.SetFlags(0)\n\tflag.Parse()\n\n\tvar diffFile *os.File\n\tif *diffPath == stdin {\n\t\tdiffFile = os.Stdin\n\t} else {\n\t\tvar err error\n\t\tdiffFile, err = os.Open(*diffPath)\n\t\tif err != nil {\n\t\t\tlog.Fatal(err)\n\t\t}\n\t}\n\tdefer diffFile.Close()\n\n\tr := diff.NewMultiFileDiffReader(diffFile)\n\tfor i := 0; ; i++ {\n\t\treport := (*fileIdx == -1) || i == *fileIdx // true if -i==-1 or if this is the i\'th file\n\n\t\tlabel := fmt.Sprintf("file(%d)", i)\n\t\tfdiff, err := r.ReadFile()\n\t\tif fdiff != nil {\n\t\t\tlabel = fmt.Sprintf("orig(%s) new(%s)", fdiff.OrigName, fdiff.NewName)\n\t\t}\n\t\tif err == io.EOF {\n\t\t\tbreak\n\t\t}\n\t\tif err != nil {\n\t\t\tif report {\n\t\t\t\tlog.Fatalf("err read %s: %s", label, err)\n\t\t\t} else {\n\t\t\t\tcontinue\n\t\t\t}\n\t\t}\n\n\t\tif report {\n\t\t\tlog.Printf("ok read: %s", label)\n\t\t}\n\n\t\tout, err := diff.PrintFileDiff(fdiff)\n\t\tif err != nil {\n\t\t\tif report {\n\t\t\t\tlog.Fatalf("err print %s: %s", label, err)\n\t\t\t} else {\n\t\t\t\tcontinue\n\t\t\t}\n\t\t}\n\t\tif report {\n\t\t\tif _, err := os.Stdout.Write(out); err != nil {\n\t\t\t\tlog.Fatal(err)\n\t\t\t}\n\t\t}\n\t}\n}\n'
@@ -681,8 +681,8 @@ const HIGHLIGHTED_FILE_MOCK = {
 }
 
 export const defaultProps: ReferencesPanelProps = {
-    extensionsController: null,
     telemetryService: NOOP_TELEMETRY_SERVICE,
+    telemetryRecorder: noOpTelemetryRecorder,
     settingsCascade: {
         subjects: null,
         final: null,
@@ -701,10 +701,10 @@ export const defaultProps: ReferencesPanelProps = {
     useCodeIntel: ({ variables }: UseCodeIntelParameters): UseCodeIntelResult => {
         const [result, setResult] = useState<UseCodeIntelResult>({
             data: {
-                implementations: { endCursor: '', nodes: [] },
-                prototypes: { endCursor: '', nodes: [] },
-                references: { endCursor: '', nodes: [] },
-                definitions: { endCursor: '', nodes: [] },
+                implementations: { endCursor: '', nodes: LocationsGroup.empty },
+                prototypes: { endCursor: '', nodes: LocationsGroup.empty },
+                references: { endCursor: '', nodes: LocationsGroup.empty },
+                definitions: { endCursor: '', nodes: LocationsGroup.empty },
             },
             loading: true,
             referencesHasNextPage: false,
@@ -717,45 +717,45 @@ export const defaultProps: ReferencesPanelProps = {
             fetchMorePrototypesLoading: false,
             fetchMorePrototypes: () => {},
         })
-        useQuery<
-            UsePreciseCodeIntelForPositionResult,
-            UsePreciseCodeIntelForPositionVariables & ConnectionQueryArguments
-        >(USE_PRECISE_CODE_INTEL_FOR_POSITION_QUERY, {
-            variables,
-            notifyOnNetworkStatusChange: false,
-            fetchPolicy: 'no-cache',
-            skip: !result.loading,
-            onCompleted: result => {
-                const data = dataOrThrowErrors(asGraphQLResult({ data: result, errors: [] }))
-                if (!data?.repository?.commit?.blob?.lsif) {
-                    return
-                }
-                const lsif = data.repository.commit.blob.lsif
-                setResult(prevResult => ({
-                    ...prevResult,
-                    loading: false,
-                    data: {
-                        implementations: {
-                            endCursor: lsif.implementations.pageInfo.endCursor,
-                            nodes: lsif.implementations.nodes.map(buildPreciseLocation),
-                        },
-                        prototypes: {
-                            endCursor: lsif.prototypes.pageInfo.endCursor,
-                            nodes: lsif.prototypes.nodes.map(buildPreciseLocation),
-                        },
+        useQuery<UsePreciseCodeIntelForPositionResult, UsePreciseCodeIntelForPositionVariables>(
+            USE_PRECISE_CODE_INTEL_FOR_POSITION_QUERY,
+            {
+                variables,
+                notifyOnNetworkStatusChange: false,
+                fetchPolicy: 'no-cache',
+                skip: !result.loading,
+                onCompleted: result => {
+                    const data = dataOrThrowErrors(asGraphQLResult({ data: result, errors: [] }))
+                    if (!data?.repository?.commit?.blob?.lsif) {
+                        return
+                    }
+                    const lsif = data.repository.commit.blob.lsif
+                    setResult(prevResult => ({
+                        ...prevResult,
+                        loading: false,
+                        data: {
+                            implementations: {
+                                endCursor: lsif.implementations.pageInfo.endCursor,
+                                nodes: new LocationsGroup(lsif.implementations.nodes.map(buildPreciseLocation)),
+                            },
+                            prototypes: {
+                                endCursor: lsif.prototypes.pageInfo.endCursor,
+                                nodes: new LocationsGroup(lsif.prototypes.nodes.map(buildPreciseLocation)),
+                            },
 
-                        references: {
-                            endCursor: lsif.references.pageInfo.endCursor,
-                            nodes: lsif.references.nodes.map(buildPreciseLocation),
+                            references: {
+                                endCursor: lsif.references.pageInfo.endCursor,
+                                nodes: new LocationsGroup(lsif.references.nodes.map(buildPreciseLocation)),
+                            },
+                            definitions: {
+                                endCursor: lsif.definitions.pageInfo.endCursor,
+                                nodes: new LocationsGroup(lsif.definitions.nodes.map(buildPreciseLocation)),
+                            },
                         },
-                        definitions: {
-                            endCursor: lsif.definitions.pageInfo.endCursor,
-                            nodes: lsif.definitions.nodes.map(buildPreciseLocation),
-                        },
-                    },
-                }))
-            },
-        })
+                    }))
+                },
+            }
+        )
         return result
     },
 }

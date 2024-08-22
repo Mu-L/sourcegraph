@@ -46,7 +46,7 @@ const insertCodeMonitorFmtStr = `
 INSERT INTO cm_monitors
 (created_at, created_by, changed_at, changed_by, description, enabled, namespace_user_id, namespace_org_id)
 VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-RETURNING %s; -- monitorColumns
+RETURNING %s -- monitorColumns
 `
 
 func (s *codeMonitorStore) CreateMonitor(ctx context.Context, args MonitorArgs) (*Monitor, error) {
@@ -95,7 +95,7 @@ func (s *codeMonitorStore) UpdateMonitor(ctx context.Context, id int64, args Mon
 		a.UID,
 		s.Now(),
 		id,
-		a.UID,
+		args.NamespaceUserID,
 		sqlf.Join(monitorColumns, ", "),
 	)
 
@@ -141,15 +141,21 @@ type ListMonitorsOpts struct {
 	UserID *int32
 	After  *int64
 	First  *int
+	// If true, we will filter out monitors that are associated with a user that has
+	// been soft-deleted.
+	SkipOrphaned bool
 }
 
 func (o ListMonitorsOpts) Conds() *sqlf.Query {
 	conds := []*sqlf.Query{sqlf.Sprintf("TRUE")}
 	if o.UserID != nil {
-		conds = append(conds, sqlf.Sprintf("namespace_user_id = %s", *o.UserID))
+		conds = append(conds, sqlf.Sprintf("cm_monitors.namespace_user_id = %s", *o.UserID))
 	}
 	if o.After != nil {
-		conds = append(conds, sqlf.Sprintf("id > %s", *o.After))
+		conds = append(conds, sqlf.Sprintf("cm_monitors.id > %s", *o.After))
+	}
+	if o.SkipOrphaned {
+		conds = append(conds, sqlf.Sprintf("users.deleted_at IS NULL"))
 	}
 	return sqlf.Join(conds, "AND")
 }
@@ -164,6 +170,8 @@ func (o ListMonitorsOpts) Limit() *sqlf.Query {
 const monitorsFmtStr = `
 SELECT %s -- monitorColumns
 FROM cm_monitors
+JOIN users
+ON cm_monitors.created_by = users.id
 WHERE %s
 ORDER BY id ASC
 LIMIT %s
@@ -205,12 +213,15 @@ func (s *codeMonitorStore) GetMonitor(ctx context.Context, monitorID int64) (*Mo
 const totalCountMonitorsFmtStr = `
 SELECT COUNT(*)
 FROM cm_monitors
-WHERE namespace_user_id = %s;
+JOIN users
+ON cm_monitors.created_by = users.id
+WHERE %s
 `
 
-func (s *codeMonitorStore) CountMonitors(ctx context.Context, userID int32) (int32, error) {
+func (s *codeMonitorStore) CountMonitors(ctx context.Context, opts ListMonitorsOpts) (int32, error) {
 	var count int32
-	err := s.QueryRow(ctx, sqlf.Sprintf(totalCountMonitorsFmtStr, userID)).Scan(&count)
+	query := sqlf.Sprintf(totalCountMonitorsFmtStr, opts.Conds())
+	err := s.QueryRow(ctx, query).Scan(&count)
 	return count, err
 }
 

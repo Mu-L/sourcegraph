@@ -1,6 +1,7 @@
 package migration
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -264,7 +265,7 @@ func setupDatabaseForSquash(database db.Database, runInContainer, runInTimescale
 
 // runTargetedUpMigrations runs up migration targeting the given versions on the given database instance.
 func runTargetedUpMigrations(database db.Database, targetVersions []int, postgresDSN string) (err error) {
-	logger := log.Scoped("runTargetedUpMigrations", "")
+	logger := log.Scoped("runTargetedUpMigrations")
 
 	pending := std.Out.Pending(output.Line("", output.StylePending, "Migrating PostgreSQL schema..."))
 	defer func() {
@@ -326,13 +327,13 @@ func setupLocalDatabase(databaseName string) (_ func(error) error, err error) {
 
 	createLocalDatabase := func() error {
 		cmd := exec.Command("createdb", databaseName)
-		_, err := run.InRoot(cmd)
+		_, err := run.InRoot(cmd, run.InRootArgs{})
 		return err
 	}
 
 	dropLocalDatabase := func() error {
 		cmd := exec.Command("dropdb", databaseName)
-		_, err := run.InRoot(cmd)
+		_, err := run.InRoot(cmd, run.InRootArgs{})
 		return err
 	}
 
@@ -423,7 +424,9 @@ func generateSquashedUpMigration(database db.Database, postgresDSN string, skipD
 
 	pgDump := func(args ...string) (string, error) {
 		cmd := exec.Command("pg_dump", append([]string{postgresDSN}, args...)...)
-		return run.InRoot(cmd)
+		var b bytes.Buffer
+		err := run.SplitOutputInRoot(cmd, &b, os.Stderr)
+		return b.String(), err
 	}
 
 	excludeTables := []string{
@@ -435,6 +438,7 @@ func generateSquashedUpMigration(database db.Database, postgresDSN string, skipD
 	args := []string{
 		"--schema-only",
 		"--no-owner",
+		"--verbose",
 	}
 	for _, tableName := range excludeTables {
 		args = append(args, "--exclude-table", tableName)

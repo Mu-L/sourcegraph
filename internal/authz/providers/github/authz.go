@@ -8,6 +8,7 @@ import (
 
 	atypes "github.com/sourcegraph/sourcegraph/internal/authz/types"
 	"github.com/sourcegraph/sourcegraph/internal/database"
+	"github.com/sourcegraph/sourcegraph/internal/encryption/keyring"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
 	eauth "github.com/sourcegraph/sourcegraph/internal/extsvc/auth"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc/github/auth"
@@ -75,22 +76,14 @@ func NewAuthzProviders(
 		// conditions. As a result, we use a temporary hack by setting this on the provider for now.
 		p.enableGithubInternalRepoVisibility = enableGithubInternalRepoVisibility
 
-		// Permissions require a corresponding GitHub OAuth provider. Without one, repos
-		// with restricted permissions will not be visible to non-admins.
-		if authProvider, exists := githubAuthProviders[p.ServiceID()]; !exists {
-			initResults.Warnings = append(initResults.Warnings,
-				fmt.Sprintf("GitHub config for %[1]s has `authorization` enabled, "+
-					"but no authentication provider matching %[1]q was found. "+
-					"Check the [**site configuration**](/site-admin/configuration) to "+
-					"verify an entry in [`auth.providers`](https://docs.sourcegraph.com/admin/auth) exists for %[1]s.",
-					p.ServiceID()))
-		} else if p.groupsCache != nil && !authProvider.AllowGroupsPermissionsSync {
+		authProvider, exists := githubAuthProviders[p.ServiceID()]
+		if exists && p.groupsCache != nil && !authProvider.AllowGroupsPermissionsSync {
 			// Groups permissions requires auth provider to request the correct scopes.
 			initResults.Warnings = append(initResults.Warnings,
 				fmt.Sprintf("GitHub config for %[1]s has `authorization.groupsCacheTTL` enabled, but "+
 					"the authentication provider matching %[1]q does not have `allowGroupsPermissionsSync` enabled. "+
 					"Update the [**site configuration**](/site-admin/configuration) in the appropriate entry "+
-					"in [`auth.providers`](https://docs.sourcegraph.com/admin/auth) to enable this.",
+					"in [`auth.providers`](https://sourcegraph.com/docs/admin/auth) to enable this.",
 					p.ServiceID()))
 			// Forcibly disable groups cache.
 			p.groupsCache = nil
@@ -130,7 +123,7 @@ func newAuthzProvider(
 
 	var auther eauth.Authenticator
 	if ghaDetails := c.GitHubConnection.GitHubAppDetails; ghaDetails != nil {
-		auther, err = auth.FromConnection(ctx, c.GitHubConnection.GitHubConnection)
+		auther, err = auth.FromConnection(ctx, c.GitHubConnection.GitHubConnection, db.GitHubApps(), keyring.Default().GitHubAppKey)
 		if err != nil {
 			return nil, err
 		}
@@ -140,16 +133,17 @@ func newAuthzProvider(
 
 	ttl := time.Duration(c.Authorization.GroupsCacheTTL) * time.Hour
 	return NewProvider(c.GitHubConnection.URN, ProviderOptions{
-		GitHubURL:      baseURL,
-		BaseAuther:     auther,
-		GroupsCacheTTL: ttl,
-		DB:             db,
+		GitHubURL:                   baseURL,
+		BaseAuther:                  auther,
+		GroupsCacheTTL:              ttl,
+		DB:                          db,
+		SyncInternalRepoPermissions: (c.Authorization != nil) && c.Authorization.SyncInternalRepoPermissions,
 	}), nil
 }
 
 // ValidateAuthz validates the authorization fields of the given GitHub external
 // service config.
-func ValidateAuthz(c *types.GitHubConnection) error {
-	_, err := newAuthzProvider(context.Background(), nil, &ExternalConnection{GitHubConnection: c})
+func ValidateAuthz(db database.DB, c *types.GitHubConnection) error {
+	_, err := newAuthzProvider(context.Background(), db, &ExternalConnection{GitHubConnection: c})
 	return err
 }

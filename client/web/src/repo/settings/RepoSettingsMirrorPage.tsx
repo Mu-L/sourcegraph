@@ -1,10 +1,12 @@
-import React, { FC, useEffect, useState } from 'react'
+import React, { type FC, useEffect, useState } from 'react'
 
 import { mdiChevronDown, mdiChevronUp, mdiLock } from '@mdi/js'
 import classNames from 'classnames'
 
 import { Timestamp } from '@sourcegraph/branded/src/components/Timestamp'
 import { useMutation, useQuery } from '@sourcegraph/http-client'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import { EVENT_LOGGER } from '@sourcegraph/shared/src/telemetry/web/eventLogger'
 import {
     Container,
     PageHeader,
@@ -22,12 +24,10 @@ import {
     Collapse,
     CollapsePanel,
     Label,
-    H4,
 } from '@sourcegraph/wildcard'
 
-import { LogOutput } from '../../components/LogOutput'
 import { PageTitle } from '../../components/PageTitle'
-import {
+import type {
     CheckMirrorRepositoryConnectionResult,
     CheckMirrorRepositoryConnectionVariables,
     RecloneRepositoryResult,
@@ -43,11 +43,11 @@ import {
     RECLONE_REPOSITORY_MUTATION,
     UPDATE_MIRROR_REPOSITORY,
 } from '../../site-admin/backend'
-import { eventLogger } from '../../tracking/eventLogger'
 import { DirectImportRepoAlert } from '../DirectImportRepoAlert'
 
 import { FETCH_SETTINGS_AREA_REPOSITORY_GQL } from './backend'
 import { ActionContainer, BaseActionContainer } from './components/ActionContainer'
+import { RepoSettingsOptions } from './RepoSettingsOptions'
 
 import styles from './RepoSettingsMirrorPage.module.scss'
 
@@ -76,16 +76,20 @@ const UpdateMirrorRepositoryActionContainer: FC<UpdateMirrorRepositoryActionCont
     let info: React.ReactNode
     if (props.repo.mirrorInfo.cloneInProgress) {
         title = 'Cloning in progress...'
-        description =
-            <Code>{props.repo.mirrorInfo.cloneProgress}</Code> ||
+        description = props.repo.mirrorInfo.cloneProgress ? (
+            <div className="overflow-auto">
+                <Code>{props.repo.mirrorInfo.cloneProgress}</Code>
+            </div>
+        ) : (
             'This repository is currently being cloned from its remote repository.'
+        )
         buttonLabel = (
             <span>
                 <LoadingSpinner /> Cloning...
             </span>
         )
         buttonDisabled = true
-        info = <DirectImportRepoAlert className={styles.alert} />
+        info = <DirectImportRepoAlert className={classNames(styles.alert, 'mb-0')} />
     } else if (props.repo.mirrorInfo.cloned) {
         const updateSchedule = props.repo.mirrorInfo.updateSchedule
         title = (
@@ -129,7 +133,7 @@ const UpdateMirrorRepositoryActionContainer: FC<UpdateMirrorRepositoryActionCont
         <ActionContainer
             title={title}
             titleAs="h3"
-            description={<div>{description}</div>}
+            description={description}
             buttonLabel={buttonLabel}
             buttonDisabled={buttonDisabled || props.disabled}
             buttonSubtitle={props.disabledReason}
@@ -152,7 +156,7 @@ const CheckMirrorRepositoryConnectionActionContainer: FC<
         CheckMirrorRepositoryConnectionResult,
         CheckMirrorRepositoryConnectionVariables
     >(CHECK_MIRROR_REPOSITORY_CONNECTION, {
-        variables: { repository: props.repo.id, name: null },
+        variables: { repository: props.repo.id },
         onCompleted: result => {
             props.onDidUpdateReachability(result.checkMirrorRepositoryConnection.error === null)
         },
@@ -246,86 +250,74 @@ const CorruptionLogsContainer: FC<CorruptionLogProps> = props => {
             title="Repository corruption"
             titleAs="h3"
             description={<span>Recent corruption events that have been detected on this repository.</span>}
+            className="mb-0"
             details={
                 <div className="flex-1">
                     {health}
-                    <Collapse isOpen={isOpened} onOpenChange={setIsOpened}>
-                        <CollapseHeader
-                            as={Button}
-                            outline={true}
-                            focusLocked={true}
-                            variant="secondary"
-                            className="w-100 my-2"
-                            disabled={!hasLogs}
-                        >
-                            {hasLogs ? (
-                                <>
-                                    Show corruption history
-                                    <Icon
-                                        aria-hidden={true}
-                                        svgPath={isOpened ? mdiChevronUp : mdiChevronDown}
-                                        className="mr-1"
-                                    />
-                                </>
-                            ) : (
-                                'No corruption history'
-                            )}
-                        </CollapseHeader>
-                        <CollapsePanel>
-                            <ul className="list-group">{logEvents}</ul>
-                        </CollapsePanel>
-                    </Collapse>
+                    {!hasLogs && <Text className="mt-3 text-muted text-center mb-0">No corruption history</Text>}
+                    {hasLogs && (
+                        <Collapse isOpen={isOpened} onOpenChange={setIsOpened}>
+                            <CollapseHeader
+                                as={Button}
+                                outline={true}
+                                focusLocked={true}
+                                variant="secondary"
+                                className="w-100 my-2"
+                                disabled={!hasLogs}
+                            >
+                                Show corruption history
+                                <Icon
+                                    aria-hidden={true}
+                                    svgPath={isOpened ? mdiChevronUp : mdiChevronDown}
+                                    className="mr-1"
+                                />
+                            </CollapseHeader>
+                            <CollapsePanel>
+                                <ul className="list-group">{logEvents}</ul>
+                            </CollapsePanel>
+                        </Collapse>
+                    )}
                 </div>
             }
         />
     )
 }
 
-interface LastSyncOutputProps {
+interface RepoSettingsMirrorPageProps extends TelemetryV2Props {
     repo: SettingsAreaRepositoryFields
-}
-
-const LastSyncOutputContainer: FC<LastSyncOutputProps> = props => {
-    const output =
-        (props.repo.mirrorInfo.cloneInProgress && 'Cloning in progress...') ||
-        props.repo.mirrorInfo.lastSyncOutput ||
-        'No logs yet.'
-    return (
-        <BaseActionContainer
-            title="Last sync log"
-            titleAs="h3"
-            description={<H4>Output from this repository's most recent sync</H4>}
-            details={<LogOutput text={output} logDescription="Job output:" />}
-        />
-    )
-}
-
-interface RepoSettingsMirrorPageProps {
-    repo: SettingsAreaRepositoryFields
+    disablePolling?: boolean
 }
 
 /**
  * The repository settings mirror page.
  */
-export const RepoSettingsMirrorPage: FC<RepoSettingsMirrorPageProps> = props => {
-    eventLogger.logPageView('RepoSettingsMirror')
+export const RepoSettingsMirrorPage: FC<RepoSettingsMirrorPageProps> = ({
+    repo: initialRepo,
+    disablePolling = false,
+    telemetryRecorder,
+}) => {
+    useEffect(() => {
+        EVENT_LOGGER.logPageView('RepoSettingsMirror')
+        telemetryRecorder.recordEvent('repo.settings.mirror', 'view')
+    }, [telemetryRecorder])
+
     const [reachable, setReachable] = useState<boolean>()
     const [recloneRepository] = useMutation<RecloneRepositoryResult, RecloneRepositoryVariables>(
         RECLONE_REPOSITORY_MUTATION,
         {
-            variables: { repo: props.repo.id },
+            variables: { repo: initialRepo.id },
         }
     )
 
     const { data, error, refetch } = useQuery<SettingsAreaRepositoryResult, SettingsAreaRepositoryVariables>(
         FETCH_SETTINGS_AREA_REPOSITORY_GQL,
         {
-            variables: { name: props.repo.name },
-            pollInterval: 3000,
+            variables: { name: initialRepo.name },
+            pollInterval: disablePolling ? undefined : 3000,
         }
     )
 
-    const repo = data?.repository ? data.repository : props.repo
+    const repo = data?.repository ? data.repository : initialRepo
 
     const onDidUpdateReachability = (reachable: boolean | undefined): void => setReachable(reachable)
 
@@ -333,6 +325,7 @@ export const RepoSettingsMirrorPage: FC<RepoSettingsMirrorPageProps> = props => 
         <>
             <PageTitle title="Mirror settings" />
             <PageHeader path={[{ text: 'Mirroring and cloning' }]} headingElement="h2" className="mb-3" />
+            <RepoSettingsOptions repo={repo} />
             <Container className="repo-settings-mirror-page">
                 {error && <ErrorAlert error={error} />}
 
@@ -340,15 +333,16 @@ export const RepoSettingsMirrorPage: FC<RepoSettingsMirrorPageProps> = props => 
                     <Label>
                         {' '}
                         Remote repository URL{' '}
-                        <small className="text-info">
-                            <Icon aria-hidden={true} svgPath={mdiLock} /> Only visible to site admins
+                        <small className="text-muted">
+                            <Icon aria-hidden={true} svgPath={mdiLock} className="text-warning" /> Only visible to site
+                            admins
                         </small>
                     </Label>
                     <Input value={repo.mirrorInfo.remoteURL || '(unknown)'} readOnly={true} className="mb-0" />
                     {repo.viewerCanAdminister && (
                         <small className="form-text text-muted">
                             Configure repository mirroring in{' '}
-                            <Link to="/site-admin/external-services">external services</Link>.
+                            <Link to="/site-admin/external-services">code host connections</Link>.
                         </small>
                     )}
                 </div>
@@ -428,7 +422,6 @@ export const RepoSettingsMirrorPage: FC<RepoSettingsMirrorPageProps> = props => 
                     </Alert>
                 )}
                 <CorruptionLogsContainer repo={repo} />
-                <LastSyncOutputContainer repo={repo} />
             </Container>
         </>
     )

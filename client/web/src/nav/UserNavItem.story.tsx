@@ -1,13 +1,13 @@
 import React, { useEffect, useRef } from 'react'
 
-import { Args, useMemo } from '@storybook/addons'
-import { Meta, Story } from '@storybook/react'
+import { useMemo } from '@storybook/addons'
+import type { Meta, StoryFn, Args } from '@storybook/react'
 
 import { NOOP_TELEMETRY_SERVICE } from '@sourcegraph/shared/src/telemetry/telemetryService'
 
 import { WebStory } from '../components/WebStory'
 
-import { UserNavItem, UserNavItemProps } from './UserNavItem'
+import { UserNavItem, type UserNavItemProps } from './UserNavItem'
 
 const config: Meta = {
     title: 'web/nav/UserNavItem',
@@ -17,16 +17,14 @@ const config: Meta = {
             type: 'figma',
             url: 'https://www.figma.com/file/HWLuLefEdev5KYtoEGHjFj/Sourcegraph-Components-Contractor?node-id=1346%3A0',
         },
-        chromatic: {
-            enableDarkMode: true,
-            viewports: [600],
-        },
     },
     argTypes: {
         isSourcegraphDotCom: {
             control: { type: 'boolean' },
-            defaultValue: true,
         },
+    },
+    args: {
+        isSourcegraphDotCom: true,
     },
 }
 
@@ -39,13 +37,13 @@ const authenticatedUser: UserNavItemProps['authenticatedUser'] = {
     session: { canSignOut: true },
     settingsURL: '#',
     siteAdmin: true,
+    emails: [],
     organizations: {
         nodes: [
             {
                 __typename: 'Org',
                 id: '0',
                 name: 'acme',
-                displayName: 'Acme Corp',
                 url: '/organizations/acme',
                 settingsURL: '/organizations/acme/settings',
             },
@@ -53,7 +51,6 @@ const authenticatedUser: UserNavItemProps['authenticatedUser'] = {
                 __typename: 'Org',
                 id: '1',
                 name: 'beta',
-                displayName: 'Beta Inc',
                 url: '/organizations/beta',
                 settingsURL: '/organizations/beta/settings',
             },
@@ -64,7 +61,6 @@ const authenticatedUser: UserNavItemProps['authenticatedUser'] = {
 const commonProps = (props: Args): UserNavItemProps => ({
     authenticatedUser,
     isSourcegraphDotCom: props.isSourcegraphDotCom,
-    isSourcegraphApp: false,
     showKeyboardShortcutsHelp: () => undefined,
     showFeedbackModal: () => undefined,
     telemetryService: NOOP_TELEMETRY_SERVICE,
@@ -82,7 +78,7 @@ const OpenByDefaultWrapper: React.FunctionComponent<{
     return children({ menuButtonRef: menuButtonReference })
 }
 
-export const SiteAdmin: Story = args => {
+export const SiteAdmin: StoryFn = args => {
     const props = useMemo(() => commonProps(args), [args])
     return (
         <OpenByDefaultWrapper>
@@ -95,7 +91,7 @@ export const SiteAdmin: Story = args => {
     )
 }
 
-export const WithAvatar: Story = args => {
+export const WithAvatar: StoryFn = args => {
     const props = useMemo(() => commonProps(args), [args])
     return (
         <OpenByDefaultWrapper>

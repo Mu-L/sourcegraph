@@ -1,41 +1,58 @@
-import { Dispatch, SetStateAction } from 'react'
+import type { Dispatch, SetStateAction } from 'react'
 
-import { QueryTuple, MutationTuple, QueryResult } from '@apollo/client'
+import type { MutationTuple, QueryResult, QueryTuple } from '@apollo/client'
 import { parse } from 'jsonc-parser'
-import { Observable } from 'rxjs'
+import { lastValueFrom, type Observable } from 'rxjs'
 import { map } from 'rxjs/operators'
 
 import { createAggregateError } from '@sourcegraph/common'
-import { gql, dataOrThrowErrors, useMutation, useLazyQuery, useQuery } from '@sourcegraph/http-client'
+import { dataOrThrowErrors, gql, useLazyQuery, useMutation, useQuery } from '@sourcegraph/http-client'
 
 import { requestGraphQL } from '../../backend/graphql'
-import {
-    UpdateExternalServiceResult,
-    UpdateExternalServiceVariables,
-    Scalars,
-    AddExternalServiceVariables,
+import type {
     AddExternalServiceResult,
-    DeleteExternalServiceVariables,
-    DeleteExternalServiceResult,
-    ExternalServicesVariables,
-    ExternalServicesResult,
-    ExternalServiceCheckConnectionByIdVariables,
-    ExternalServiceCheckConnectionByIdResult,
-    SyncExternalServiceResult,
-    SyncExternalServiceVariables,
-    ExternalServiceSyncJobsVariables,
-    ExternalServiceSyncJobConnectionFields,
-    ExternalServiceSyncJobsResult,
-    CancelExternalServiceSyncVariables,
+    AddExternalServiceVariables,
     CancelExternalServiceSyncResult,
-    ListExternalServiceFields,
+    CancelExternalServiceSyncVariables,
+    DeleteExternalServiceResult,
+    DeleteExternalServiceVariables,
+    ExternalServiceCheckConnectionByIdResult,
+    ExternalServiceCheckConnectionByIdVariables,
     ExternalServiceFields,
     ExternalServiceResult,
+    ExternalServiceSyncJobConnectionFields,
+    ExternalServiceSyncJobsResult,
+    ExternalServiceSyncJobsVariables,
     ExternalServiceVariables,
+    ExternalServicesResult,
+    ExternalServicesVariables,
+    ListExternalServiceFields,
+    Scalars,
+    SyncExternalServiceResult,
+    SyncExternalServiceVariables,
+    UpdateExternalServiceResult,
+    UpdateExternalServiceVariables,
 } from '../../graphql-operations'
-import { useShowMorePagination, UseShowMorePaginationResult } from '../FilteredConnection/hooks/useShowMorePagination'
+import {
+    ShowMoreConnectionQueryArguments,
+    useShowMorePagination,
+    type UseShowMorePaginationResult,
+} from '../FilteredConnection/hooks/useShowMorePagination'
+
+const RATE_LIMITER_STATE_FRAGMENT = gql`
+    fragment RateLimiterStateFields on RateLimiterState {
+        __typename
+        currentCapacity
+        burst
+        limit
+        interval
+        lastReplenishment
+        infinite
+    }
+`
 
 export const externalServiceFragment = gql`
+    ${RATE_LIMITER_STATE_FRAGMENT}
     fragment ExternalServiceFields on ExternalService {
         id
         kind
@@ -43,13 +60,24 @@ export const externalServiceFragment = gql`
         config
         warning
         lastSyncError
+        rateLimiterState {
+            ...RateLimiterStateFields
+        }
         repoCount
         lastSyncAt
         nextSyncAt
         updatedAt
         createdAt
-        webhookURL
+        creator {
+            username
+            url
+        }
+        lastUpdater {
+            username
+            url
+        }
         hasConnectionCheck
+        unrestricted
     }
 `
 
@@ -83,28 +111,30 @@ export const useUpdateExternalService = (
 export function updateExternalService(
     variables: UpdateExternalServiceVariables
 ): Promise<UpdateExternalServiceResult['updateExternalService']> {
-    return requestGraphQL<UpdateExternalServiceResult, UpdateExternalServiceVariables>(
-        UPDATE_EXTERNAL_SERVICE,
-        variables
-    )
-        .pipe(
+    return lastValueFrom(
+        requestGraphQL<UpdateExternalServiceResult, UpdateExternalServiceVariables>(
+            UPDATE_EXTERNAL_SERVICE,
+            variables
+        ).pipe(
             map(dataOrThrowErrors),
             map(data => data.updateExternalService)
         )
-        .toPromise()
+    )
 }
 
 export async function deleteExternalService(externalService: Scalars['ID']): Promise<void> {
-    const result = await requestGraphQL<DeleteExternalServiceResult, DeleteExternalServiceVariables>(
-        gql`
-            mutation DeleteExternalService($externalService: ID!) {
-                deleteExternalService(externalService: $externalService) {
-                    alwaysNil
+    const result = await lastValueFrom(
+        requestGraphQL<DeleteExternalServiceResult, DeleteExternalServiceVariables>(
+            gql`
+                mutation DeleteExternalService($externalService: ID!) {
+                    deleteExternalService(externalService: $externalService) {
+                        alwaysNil
+                    }
                 }
-            }
-        `,
-        { externalService }
-    ).toPromise()
+            `,
+            { externalService }
+        )
+    )
     dataOrThrowErrors(result)
 }
 
@@ -183,10 +213,14 @@ export const EXTERNAL_SERVICE_SYNC_JOBS = gql`
 
 export const LIST_EXTERNAL_SERVICE_FRAGMENT = gql`
     ${EXTERNAL_SERVICE_SYNC_JOB_CONNECTION_FIELDS_FRAGMENT}
+    ${RATE_LIMITER_STATE_FRAGMENT}
     fragment ListExternalServiceFields on ExternalService {
         id
         kind
         displayName
+        rateLimiterState {
+            ...RateLimiterStateFields
+        }
         config
         warning
         lastSyncError
@@ -195,11 +229,19 @@ export const LIST_EXTERNAL_SERVICE_FRAGMENT = gql`
         nextSyncAt
         updatedAt
         createdAt
-        webhookURL
+        creator {
+            username
+            url
+        }
+        lastUpdater {
+            username
+            url
+        }
         hasConnectionCheck
         syncJobs(first: 1) {
             ...ExternalServiceSyncJobConnectionFields
         }
+        unrestricted
     }
 `
 
@@ -214,8 +256,8 @@ export const FETCH_EXTERNAL_SERVICE = gql`
 `
 
 export const EXTERNAL_SERVICES = gql`
-    query ExternalServices($first: Int, $after: String) {
-        externalServices(first: $first, after: $after) {
+    query ExternalServices($first: Int, $after: String, $repo: ID) {
+        externalServices(first: $first, after: $after, repo: $repo) {
             nodes {
                 ...ListExternalServiceFields
             }
@@ -242,11 +284,11 @@ export const EXTERNAL_SERVICE_IDS_AND_NAMES = gql`
 `
 
 export const useExternalServicesConnection = (
-    vars: ExternalServicesVariables
+    vars: Omit<ExternalServicesVariables, keyof ShowMoreConnectionQueryArguments>
 ): UseShowMorePaginationResult<ExternalServicesResult, ListExternalServiceFields> =>
     useShowMorePagination<ExternalServicesResult, ExternalServicesVariables, ListExternalServiceFields>({
         query: EXTERNAL_SERVICES,
-        variables: { after: vars.after, first: vars.first ?? 10 },
+        variables: { repo: vars.repo },
         getConnection: result => {
             const { externalServices } = dataOrThrowErrors(result)
             return externalServices
@@ -340,14 +382,18 @@ export const useFetchExternalService = (
             }
         },
     })
+
 export interface GitHubAppDetails {
     appID: number
     baseURL: string
     installationID: number
 }
+
 export interface ExternalServiceFieldsWithConfig extends ExternalServiceFields {
     parsedConfig?: {
         gitHubAppDetails?: GitHubAppDetails
         url: string
     }
 }
+
+export type RateLimiterState = NonNullable<ExternalServiceFields['rateLimiterState']>

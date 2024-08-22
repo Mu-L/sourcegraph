@@ -1,4 +1,4 @@
-import { Meta } from '@storybook/react'
+import type { Meta } from '@storybook/react'
 
 import { H1, H2, Link, Text } from '..'
 import { BrandedStory } from '../../stories/BrandedStory'
@@ -13,10 +13,7 @@ const config: Meta = {
 
     parameters: {
         component: Badge,
-        chromatic: {
-            enableDarkMode: true,
-            disableSnapshot: false,
-        },
+
         design: [
             {
                 type: 'figma',

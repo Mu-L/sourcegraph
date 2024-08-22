@@ -1,12 +1,17 @@
-import { Observable } from 'rxjs'
+import type { Observable } from 'rxjs'
 import { map } from 'rxjs/operators'
 
 import { memoizeObservable } from '@sourcegraph/common'
 import { dataOrThrowErrors, gql } from '@sourcegraph/http-client'
-import { makeRepoURI } from '@sourcegraph/shared/src/util/url'
+import { makeRepoGitURI } from '@sourcegraph/shared/src/util/url'
 
 import { requestGraphQL } from '../../backend/graphql'
-import { BlobFileFields, BlobResult, BlobVariables, HighlightResponseFormat } from '../../graphql-operations'
+import {
+    type BlobFileFields,
+    type BlobResult,
+    type BlobVariables,
+    HighlightResponseFormat,
+} from '../../graphql-operations'
 
 /**
  * Makes sure that default values are applied consistently for the cache key and the `fetchBlob` function.
@@ -32,9 +37,9 @@ const applyDefaultValuesToFetchBlobOptions = ({
 function fetchBlobCacheKey(options: FetchBlobOptions): string {
     const { disableTimeout, format, scipSnapshot, visibleIndexID } = applyDefaultValuesToFetchBlobOptions(options)
 
-    return `${makeRepoURI(
+    return `${makeRepoGitURI(
         options
-    )}?disableTimeout=${disableTimeout}&=${format}&snap=${scipSnapshot}&visible=${visibleIndexID}`
+    )}?disableTimeout=${disableTimeout}&=${format}&snap=${scipSnapshot}&first=${visibleIndexID}`
 }
 
 interface FetchBlobOptions {
@@ -81,6 +86,7 @@ export const fetchBlob = memoizeObservable(
                     $visibleIndexID: ID!
                 ) {
                     repository(name: $repoName) {
+                        id
                         commit(rev: $revision) {
                             __typename
                             ...GitCommitFieldsWithFileAndBlob
@@ -134,6 +140,7 @@ export const fetchBlob = memoizeObservable(
                             serviceKind
                         }
                     }
+                    languages
                 }
             `,
             {
@@ -156,13 +163,13 @@ export const fetchBlob = memoizeObservable(
                     throw new Error('Commit not found')
                 }
 
-                if (!commit.file) {
-                    throw new Error('File not found')
+                if (commit.file === null) {
+                    return null
                 }
 
                 return {
                     ...commit.file,
-                    snapshot: commit.blob?.lsif?.snapshot,
+                    snapshot: commit?.blob?.lsif?.snapshot,
                 }
             })
         )

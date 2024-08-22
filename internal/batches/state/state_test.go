@@ -6,9 +6,13 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	azuredevops2 "github.com/sourcegraph/sourcegraph/internal/batches/sources/azuredevops"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc/azuredevops"
+	"github.com/sourcegraph/sourcegraph/internal/perforce"
+	"github.com/sourcegraph/sourcegraph/lib/errors"
 
 	btypes "github.com/sourcegraph/sourcegraph/internal/batches/types"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
@@ -154,6 +158,30 @@ func TestComputeGithubCheckState(t *testing.T) {
 				checkSuiteEvent(1, "cs1", "COMPLETED", ""),
 			},
 			want: btypes.ChangesetCheckStateFailed,
+		},
+		{
+			name: "completed suites with a successful run",
+			events: []*btypes.ChangesetEvent{
+				commitEvent(1, "ctx1", "SUCCESS"),
+				checkSuiteEvent(1, "cs1", "COMPLETED", "SUCCESS"),
+			},
+			want: btypes.ChangesetCheckStatePassed,
+		},
+		{
+			name: "completed suites with a skipped run",
+			events: []*btypes.ChangesetEvent{
+				commitEvent(1, "ctx1", "SUCCESS"),
+				checkSuiteEvent(1, "cs1", "COMPLETED", "SKIPPED"),
+			},
+			want: btypes.ChangesetCheckStatePassed,
+		},
+		{
+			name: "completed suites with a failed run",
+			events: []*btypes.ChangesetEvent{
+				commitEvent(1, "ctx1", "SUCCESS"),
+				checkSuiteEvent(1, "cs1", "COMPLETED", "FAILURE"),
+			},
+			want: btypes.ChangesetCheckStatePassed,
 		},
 	}
 
@@ -683,6 +711,7 @@ func TestComputeExternalState(t *testing.T) {
 		repo      *types.Repo
 		history   []changesetStatesAtTime
 		want      btypes.ChangesetExternalState
+		wantErr   error
 	}{
 		{
 			name:      "github - no events",
@@ -859,9 +888,39 @@ func TestComputeExternalState(t *testing.T) {
 			},
 			want: btypes.ChangesetExternalStateReadOnly,
 		},
+		{
+			name:      "perforce closed - no events",
+			changeset: perforceChangeset(daysAgo(10), perforce.ChangelistStateClosed),
+			history:   []changesetStatesAtTime{},
+			want:      btypes.ChangesetExternalStateClosed,
+		},
+		{
+			name:      "perforce submitted - no events",
+			changeset: perforceChangeset(daysAgo(10), perforce.ChangelistStateSubmitted),
+			history:   []changesetStatesAtTime{},
+			want:      btypes.ChangesetExternalStateMerged,
+		},
+		{
+			name:      "perforce pending - no events",
+			changeset: perforceChangeset(daysAgo(10), perforce.ChangelistStatePending),
+			history:   []changesetStatesAtTime{},
+			want:      btypes.ChangesetExternalStateOpen,
+		},
+		{
+			name:      "perforce shelved - no events",
+			changeset: perforceChangeset(daysAgo(10), perforce.ChangelistStateShelved),
+			history:   []changesetStatesAtTime{},
+			want:      btypes.ChangesetExternalStateOpen,
+		},
+		{
+			name:      "perforce unknown state",
+			changeset: perforceChangeset(daysAgo(10), "foobar"),
+			history:   []changesetStatesAtTime{},
+			wantErr:   errors.New("unknown Perforce Change state: foobar"),
+		},
 	}
 
-	for i, tc := range tests {
+	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			changeset := tc.changeset
 
@@ -871,12 +930,14 @@ func TestComputeExternalState(t *testing.T) {
 			}
 
 			have, err := computeExternalState(changeset, tc.history, repo)
-			if err != nil {
-				t.Fatalf("got error: %s", err)
-			}
 
-			if have, want := have, tc.want; have != want {
-				t.Errorf("%d: wrong external state. have=%s, want=%s", i, have, want)
+			if tc.wantErr != nil {
+				require.Error(t, err)
+				assert.Equal(t, tc.wantErr.Error(), err.Error())
+				assert.Empty(t, have)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tc.want, have)
 			}
 		})
 	}
@@ -1009,6 +1070,16 @@ func gitLabChangeset(updatedAt time.Time, state gitlab.MergeRequestState, notes 
 		UpdatedAt:           updatedAt,
 		Metadata: &gitlab.MergeRequest{
 			Notes: notes,
+			State: state,
+		},
+	}
+}
+
+func perforceChangeset(updatedAt time.Time, state perforce.ChangelistState) *btypes.Changeset {
+	return &btypes.Changeset{
+		ExternalServiceType: extsvc.TypePerforce,
+		UpdatedAt:           updatedAt,
+		Metadata: &perforce.Changelist{
 			State: state,
 		},
 	}

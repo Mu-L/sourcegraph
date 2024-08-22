@@ -2,12 +2,10 @@ package graphqlbackend
 
 import (
 	"context"
-	"strconv"
 
 	"github.com/graph-gophers/graphql-go"
 	"github.com/graph-gophers/graphql-go/relay"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/auth"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/gqlutil"
@@ -17,10 +15,10 @@ import (
 
 type AccessRequestsArgs struct {
 	database.AccessRequestsFilterArgs
-	graphqlutil.ConnectionResolverArgs
+	gqlutil.ConnectionResolverArgs
 }
 
-func (r *schemaResolver) AccessRequests(ctx context.Context, args *AccessRequestsArgs) (*graphqlutil.ConnectionResolver[*accessRequestResolver], error) {
+func (r *schemaResolver) AccessRequests(ctx context.Context, args *AccessRequestsArgs) (*gqlutil.ConnectionResolver[*accessRequestResolver], error) {
 	// 🚨 SECURITY: Only site admins can see access requests.
 	if err := auth.CheckCurrentUserIsSiteAdmin(ctx, r.db); err != nil {
 		return nil, err
@@ -32,12 +30,12 @@ func (r *schemaResolver) AccessRequests(ctx context.Context, args *AccessRequest
 	}
 
 	reverse := false
-	connectionOptions := graphqlutil.ConnectionResolverOptions{
+	connectionOptions := gqlutil.ConnectionResolverOptions{
 		Reverse:   &reverse,
 		OrderBy:   database.OrderBy{{Field: string(database.AccessRequestListID)}},
 		Ascending: false,
 	}
-	return graphqlutil.NewConnectionResolver[*accessRequestResolver](connectionStore, &args.ConnectionResolverArgs, &connectionOptions)
+	return gqlutil.NewConnectionResolver[*accessRequestResolver](connectionStore, &args.ConnectionResolverArgs, &connectionOptions)
 }
 
 type accessRequestConnectionStore struct {
@@ -45,15 +43,13 @@ type accessRequestConnectionStore struct {
 	args *database.AccessRequestsFilterArgs
 }
 
-func (s *accessRequestConnectionStore) ComputeTotal(ctx context.Context) (*int32, error) {
+func (s *accessRequestConnectionStore) ComputeTotal(ctx context.Context) (int32, error) {
 	count, err := s.db.AccessRequests().Count(ctx, s.args)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 
-	totalCount := int32(count)
-
-	return &totalCount, nil
+	return int32(count), nil
 }
 
 func (s *accessRequestConnectionStore) ComputeNodes(ctx context.Context, args *database.PaginationArgs) ([]*accessRequestResolver, error) {
@@ -80,15 +76,13 @@ func (s *accessRequestConnectionStore) MarshalCursor(node *accessRequestResolver
 	return &cursor, nil
 }
 
-func (s *accessRequestConnectionStore) UnmarshalCursor(cursor string, _ database.OrderBy) (*string, error) {
+func (s *accessRequestConnectionStore) UnmarshalCursor(cursor string, _ database.OrderBy) ([]any, error) {
 	nodeID, err := unmarshalAccessRequestID(graphql.ID(cursor))
 	if err != nil {
 		return nil, err
 	}
 
-	id := strconv.Itoa(int(nodeID))
-
-	return &id, nil
+	return []any{nodeID}, nil
 }
 
 // accessRequestResolver resolves an access request.

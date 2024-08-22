@@ -5,48 +5,55 @@ import (
 	"sync"
 
 	"github.com/sourcegraph/log"
-	"github.com/sourcegraph/sourcegraph/internal/gitserver/gitdomain"
-	"github.com/sourcegraph/sourcegraph/lib/errors"
 
+	"github.com/sourcegraph/sourcegraph/internal/gitserver/gitdomain"
 	"github.com/sourcegraph/sourcegraph/internal/metrics"
 	"github.com/sourcegraph/sourcegraph/internal/observation"
+	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
 
 type operations struct {
-	archiveReader    *observation.Operation
-	batchLog         *observation.Operation
-	batchLogSingle   *observation.Operation
-	blameFile        *observation.Operation
-	commits          *observation.Operation
-	contributorCount *observation.Operation
-	do               *observation.Operation
-	exec             *observation.Operation
-	firstEverCommit  *observation.Operation
-	getBehindAhead   *observation.Operation
-	getCommit        *observation.Operation
-	getCommits       *observation.Operation
-	hasCommitAfter   *observation.Operation
-	listBranches     *observation.Operation
-	listRefs         *observation.Operation
-	listTags         *observation.Operation
-	lstat            *observation.Operation
-	mergeBase        *observation.Operation
-	newFileReader    *observation.Operation
-	p4Exec           *observation.Operation
-	readDir          *observation.Operation
-	readFile         *observation.Operation
-	resolveRevision  *observation.Operation
-	revList          *observation.Operation
-	search           *observation.Operation
-	stat             *observation.Operation
-	streamBlameFile  *observation.Operation
+	archiveReader            *observation.Operation
+	commits                  *observation.Operation
+	contributorCount         *observation.Operation
+	firstEverCommit          *observation.Operation
+	behindAhead              *observation.Operation
+	getCommit                *observation.Operation
+	listRefs                 *observation.Operation
+	lstat                    *observation.Operation
+	mergeBase                *observation.Operation
+	newFileReader            *observation.Operation
+	readDir                  *observation.Operation
+	resolveRevision          *observation.Operation
+	revAtTime                *observation.Operation
+	search                   *observation.Operation
+	stat                     *observation.Operation
+	streamBlameFile          *observation.Operation
+	systemsInfo              *observation.Operation
+	systemInfo               *observation.Operation
+	isRepoCloneable          *observation.Operation
+	repoCloneProgress        *observation.Operation
+	isPerforcePathCloneable  *observation.Operation
+	checkPerforceCredentials *observation.Operation
+	perforceUsers            *observation.Operation
+	perforceProtectsForUser  *observation.Operation
+	perforceProtectsForDepot *observation.Operation
+	perforceGroupMembers     *observation.Operation
+	isPerforceSuperUser      *observation.Operation
+	perforceGetChangelist    *observation.Operation
+	createCommitFromPatch    *observation.Operation
+	getObject                *observation.Operation
+	getDefaultBranch         *observation.Operation
+	diff                     *observation.Operation
+	changedFiles             *observation.Operation
+	mergeBaseOctopus         *observation.Operation
 }
 
 func newOperations(observationCtx *observation.Context) *operations {
 	redMetrics := metrics.NewREDMetrics(
 		observationCtx.Registerer,
 		"gitserver_client",
-		metrics.WithLabels("op"),
+		metrics.WithLabels("op", "scope"),
 		metrics.WithCountHelp("Total number of method invocations."),
 	)
 
@@ -80,7 +87,7 @@ func newOperations(observationCtx *observation.Context) *operations {
 		MetricLabelValues: []string{"ResolveRevision"},
 		Metrics:           redMetrics,
 		ErrorFilter: func(err error) observation.ErrorFilterBehaviour {
-			if errors.HasType(err, &gitdomain.RevisionNotFoundError{}) {
+			if errors.HasType[*gitdomain.RevisionNotFoundError](err) {
 				return observation.EmitForMetrics
 			}
 			return observation.EmitForSentry
@@ -88,33 +95,40 @@ func newOperations(observationCtx *observation.Context) *operations {
 	})
 
 	return &operations{
-		archiveReader:    op("ArchiveReader"),
-		batchLog:         op("BatchLog"),
-		batchLogSingle:   subOp("batchLogSingle"),
-		blameFile:        op("BlameFile"),
-		commits:          op("Commits"),
-		contributorCount: op("ContributorCount"),
-		do:               subOp("do"),
-		exec:             op("Exec"),
-		firstEverCommit:  op("FirstEverCommit"),
-		getBehindAhead:   op("GetBehindAhead"),
-		getCommit:        op("GetCommit"),
-		getCommits:       op("GetCommits"),
-		hasCommitAfter:   op("HasCommitAfter"),
-		listBranches:     op("ListBranches"),
-		listRefs:         op("ListRefs"),
-		listTags:         op("ListTags"),
-		lstat:            subOp("lStat"),
-		mergeBase:        op("MergeBase"),
-		newFileReader:    op("NewFileReader"),
-		p4Exec:           op("P4Exec"),
-		readDir:          op("ReadDir"),
-		readFile:         op("ReadFile"),
-		resolveRevision:  resolveRevisionOperation,
-		revList:          op("RevList"),
-		search:           op("Search"),
-		stat:             op("Stat"),
-		streamBlameFile:  op("StreamBlameFile"),
+		archiveReader:            op("ArchiveReader"),
+		commits:                  op("Commits"),
+		contributorCount:         op("ContributorCount"),
+		firstEverCommit:          op("FirstEverCommit"),
+		behindAhead:              op("BehindAhead"),
+		getCommit:                op("GetCommit"),
+		listRefs:                 op("ListRefs"),
+		lstat:                    subOp("lStat"),
+		mergeBase:                op("MergeBase"),
+		newFileReader:            op("NewFileReader"),
+		readDir:                  op("ReadDir"),
+		resolveRevision:          resolveRevisionOperation,
+		revAtTime:                op("RevAtTime"),
+		search:                   op("Search"),
+		stat:                     op("Stat"),
+		streamBlameFile:          op("StreamBlameFile"),
+		systemsInfo:              op("SystemsInfo"),
+		systemInfo:               op("SystemInfo"),
+		isRepoCloneable:          op("IsRepoCloneable"),
+		repoCloneProgress:        op("RepoCloneProgress"),
+		isPerforcePathCloneable:  op("IsPerforcePathCloneable"),
+		checkPerforceCredentials: op("CheckPerforceCredentials"),
+		perforceUsers:            op("PerforceUsers"),
+		perforceProtectsForUser:  op("PerforceProtectsForUser"),
+		perforceProtectsForDepot: op("PerforceProtectsForDepot"),
+		perforceGroupMembers:     op("PerforceGroupMembers"),
+		isPerforceSuperUser:      op("IsPerforceSuperUser"),
+		perforceGetChangelist:    op("PerforceGetChangelist"),
+		createCommitFromPatch:    op("CreateCommitFromPatch"),
+		getObject:                op("GetObject"),
+		getDefaultBranch:         op("GetDefaultBranch"),
+		diff:                     op("Diff"),
+		changedFiles:             op("ChangedFiles"),
+		mergeBaseOctopus:         op("MergeBaseOctopus"),
 	}
 }
 
@@ -125,7 +139,7 @@ var (
 
 func getOperations() *operations {
 	operationsInstOnce.Do(func() {
-		observationCtx := observation.NewContext(log.Scoped("gitserver.client", "gitserver client"))
+		observationCtx := observation.NewContext(log.Scoped("gitserver.client"))
 		operationsInst = newOperations(observationCtx)
 	})
 

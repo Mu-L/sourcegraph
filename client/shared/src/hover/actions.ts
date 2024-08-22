@@ -1,7 +1,18 @@
-import { Remote } from 'comlink'
+import type { Remote } from 'comlink'
 import * as H from 'history'
 import { isEqual, uniqWith } from 'lodash'
-import { combineLatest, merge, Observable, of, Subscription, Unsubscribable, concat, from, EMPTY } from 'rxjs'
+import {
+    combineLatest,
+    merge,
+    type Observable,
+    of,
+    Subscription,
+    type Unsubscribable,
+    concat,
+    from,
+    EMPTY,
+    lastValueFrom,
+} from 'rxjs'
 import {
     catchError,
     delay,
@@ -13,36 +24,35 @@ import {
     switchMap,
     takeUntil,
     scan,
-    mapTo,
 } from 'rxjs/operators'
 
-import { ContributableMenu, TextDocumentPositionParameters } from '@sourcegraph/client-api'
-import { HoveredToken, LOADER_DELAY, MaybeLoadingResult, emitLoading } from '@sourcegraph/codeintellify'
+import { ContributableMenu, type TextDocumentPositionParameters } from '@sourcegraph/client-api'
+import { type HoveredToken, LOADER_DELAY, type MaybeLoadingResult, emitLoading } from '@sourcegraph/codeintellify'
 import {
     asError,
     compatNavigate,
-    ErrorLike,
-    HistoryOrNavigate,
+    type ErrorLike,
+    type HistoryOrNavigate,
     isErrorLike,
     isExternalLink,
     logger,
 } from '@sourcegraph/common'
-import { Location } from '@sourcegraph/extension-api-types'
-import { Context } from '@sourcegraph/template-parser'
+import type { Location } from '@sourcegraph/extension-api-types'
+import type { Context } from '@sourcegraph/template-parser'
 
-import { ActionItemAction } from '../actions/ActionItem'
+import type { ActionItemAction } from '../actions/ActionItem'
 import { wrapRemoteObservable } from '../api/client/api/common'
-import { FlatExtensionHostAPI } from '../api/contract'
-import { WorkspaceRootWithMetadata } from '../api/extension/extensionHostApi'
+import type { FlatExtensionHostAPI } from '../api/contract'
+import type { WorkspaceRootWithMetadata } from '../api/extension/extensionHostApi'
 import { syncRemoteSubscription } from '../api/util'
 import { resolveRawRepoName } from '../backend/repo'
 import { languageSpecs } from '../codeintel/legacy-extensions/language-specs/languages'
 import { getContributedActionItems } from '../contributions/contributions'
-import { Controller, ExtensionsControllerProps } from '../extensions/controller'
-import { PlatformContext, PlatformContextProps, URLToFileContext } from '../platform/context'
-import { makeRepoURI, parseRepoURI, withWorkspaceRootInputRevision } from '../util/url'
+import type { Controller, ExtensionsControllerProps } from '../extensions/controller'
+import type { PlatformContext, PlatformContextProps, URLToFileContext } from '../platform/context'
+import { makeRepoGitURI, parseRepoGitURI, withWorkspaceRootInputRevision } from '../util/url'
 
-import { HoverContext } from './HoverOverlay'
+import type { HoverContext } from './HoverOverlay'
 
 const LOADING = 'loading' as const
 
@@ -136,7 +146,7 @@ export function getHoverActionsContext(
     hoverContext: HoveredToken & HoverContext
 ): Observable<Context<TextDocumentPositionParameters>> {
     const parameters: TextDocumentPositionParameters & URLToFileContext = {
-        textDocument: { uri: makeRepoURI(hoverContext) },
+        textDocument: { uri: makeRepoGitURI(hoverContext) },
         position: { line: hoverContext.line - 1, character: hoverContext.character - 1 },
         part: hoverContext.part,
     }
@@ -168,7 +178,7 @@ export function getHoverActionsContext(
             ),
             definitionURLOrError.pipe(
                 filter(({ result }) => result !== null),
-                mapTo(true)
+                map(() => true)
             )
         ),
     ]).pipe(
@@ -246,7 +256,7 @@ export const getDefinitionURL =
                     Partial<MaybeLoadingResult<UIDefinitionURL | null>>
                 > => {
                     if (definitions.length === 0) {
-                        return of<MaybeLoadingResult<UIDefinitionURL | null>>({ isLoading, result: null })
+                        return of({ isLoading, result: null })
                     }
 
                     // Get unique definitions.
@@ -256,9 +266,9 @@ export const getDefinitionURL =
                         // Open the panel to show all definitions.
                         const uri = withWorkspaceRootInputRevision(
                             workspaceRoots || [],
-                            parseRepoURI(parameters.textDocument.uri)
+                            parseRepoGitURI(parameters.textDocument.uri)
                         )
-                        return of<MaybeLoadingResult<UIDefinitionURL | null>>({
+                        return of({
                             isLoading,
                             result: {
                                 url: urlToFile(
@@ -283,7 +293,7 @@ export const getDefinitionURL =
                     // Preserve the input revision (e.g., a Git branch name instead of a Git commit SHA) if the result is
                     // inside one of the current roots. This avoids navigating the user from (e.g.) a URL with a nice Git
                     // branch name to a URL with a full Git commit SHA.
-                    const uri = withWorkspaceRootInputRevision(workspaceRoots || [], parseRepoURI(defer.uri))
+                    const uri = withWorkspaceRootInputRevision(workspaceRoots || [], parseRepoGitURI(defer.uri))
                     if (defer.range) {
                         uri.position = {
                             line: defer.range.start.line + 1,
@@ -369,6 +379,9 @@ export function registerHoverContributions({
                             '${json(hoverPosition)}',
                             /* eslint-enable no-template-curly-in-string */
                         ],
+                        telemetryProps: {
+                            feature: 'blob.goToDefinition',
+                        },
                     },
                     {
                         // This action is used when preloading the definition succeeded and at least 1
@@ -379,6 +392,9 @@ export function registerHoverContributions({
                         command: 'open',
                         // eslint-disable-next-line no-template-curly-in-string
                         commandArguments: ['${goToDefinition.url}'],
+                        telemetryProps: {
+                            feature: 'blob.goToDefinition.preloaded',
+                        },
                     },
                 ],
                 menus: {
@@ -409,8 +425,8 @@ export function registerHoverContributions({
                         const parameters: TextDocumentPositionParameters & URLToFileContext =
                             JSON.parse(parametersString)
 
-                        const { result } = await wrapRemoteObservable(extensionHostAPI.getDefinition(parameters))
-                            .pipe(
+                        const { result } = await lastValueFrom(
+                            wrapRemoteObservable(extensionHostAPI.getDefinition(parameters)).pipe(
                                 getDefinitionURL(
                                     { urlToFile, requestGraphQL },
                                     {
@@ -425,7 +441,7 @@ export function registerHoverContributions({
                                 ),
                                 first(({ isLoading, result }) => !isLoading || result !== null)
                             )
-                            .toPromise()
+                        )
 
                         if (!result) {
                             throw new Error('No definition found.')
@@ -469,6 +485,9 @@ export function registerHoverContributions({
                         command: 'open',
                         // eslint-disable-next-line no-template-curly-in-string
                         commandArguments: ['${findReferences.url}'],
+                        telemetryProps: {
+                            feature: 'blob.findReferences',
+                        },
                     },
                 ],
                 menus: {
@@ -508,6 +527,10 @@ export function registerHoverContributions({
                             ],
                             id: 'findImplementations_' + spec.languageID,
                             title: 'Find implementations',
+                            telemetryProps: {
+                                feature: 'blob.findImplementations',
+                                privateMetadata: { languageID: spec.languageID },
+                            },
                         })),
                     ],
                     menus: {

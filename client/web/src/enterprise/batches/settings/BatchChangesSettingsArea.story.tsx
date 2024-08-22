@@ -1,14 +1,15 @@
-import { DecoratorFn, Meta, Story } from '@storybook/react'
+import type { Decorator, Meta, StoryFn } from '@storybook/react'
 
 import { getDocumentNode } from '@sourcegraph/http-client'
 import { MockedTestProvider } from '@sourcegraph/shared/src/testing/apollo'
 
 import { WebStory } from '../../../components/WebStory'
 import {
-    BatchChangesCodeHostFields,
-    BatchChangesCredentialFields,
+    type BatchChangesCodeHostFields,
+    type BatchChangesCredentialFields,
     ExternalServiceKind,
-    UserBatchChangesCodeHostsResult,
+    type UserBatchChangesCodeHostsResult,
+    type UserAreaUserFields,
 } from '../../../graphql-operations'
 import { BATCH_CHANGES_SITE_CONFIGURATION } from '../backend'
 import { noRolloutWindowMockResult, rolloutWindowConfigMockResult } from '../mocks'
@@ -16,7 +17,7 @@ import { noRolloutWindowMockResult, rolloutWindowConfigMockResult } from '../moc
 import { USER_CODE_HOSTS } from './backend'
 import { BatchChangesSettingsArea } from './BatchChangesSettingsArea'
 
-const decorator: DecoratorFn = story => <div className="p-3 container">{story()}</div>
+const decorator: Decorator = story => <div className="p-3 container">{story()}</div>
 
 const config: Meta = {
     title: 'web/batches/settings/BatchChangesSettingsArea',
@@ -46,9 +47,10 @@ const sshCredential = (isSiteCredential: boolean): BatchChangesCredentialFields 
     isSiteCredential,
     sshPublicKey:
         'rsa-ssh randorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorando',
+    gitHubApp: null,
 })
 
-export const Overview: Story = () => (
+export const Overview: StoryFn = () => (
     <WebStory>
         {props => (
             <MockedTestProvider
@@ -133,13 +135,13 @@ export const Overview: Story = () => (
                     },
                 ]}
             >
-                <BatchChangesSettingsArea {...props} user={{ id: 'user-id-1' }} />
+                <BatchChangesSettingsArea {...props} user={{ id: 'user-id-1' } as UserAreaUserFields} />
             </MockedTestProvider>
         )}
     </WebStory>
 )
 
-export const ConfigAdded: Story = () => (
+export const ConfigAdded: StoryFn = () => (
     <WebStory>
         {props => (
             <MockedTestProvider
@@ -214,7 +216,7 @@ export const ConfigAdded: Story = () => (
                     },
                 ]}
             >
-                <BatchChangesSettingsArea {...props} user={{ id: 'user-id-2' }} />
+                <BatchChangesSettingsArea {...props} user={{ id: 'user-id-2' } as UserAreaUserFields} />
             </MockedTestProvider>
         )}
     </WebStory>
@@ -222,7 +224,7 @@ export const ConfigAdded: Story = () => (
 
 ConfigAdded.storyName = 'Config added'
 
-export const RolloutWindowsConfigurationStory: Story = () => (
+export const RolloutWindowsConfigurationStory: StoryFn = () => (
     <WebStory>
         {props => (
             <MockedTestProvider
@@ -297,7 +299,7 @@ export const RolloutWindowsConfigurationStory: Story = () => (
                     },
                 ]}
             >
-                <BatchChangesSettingsArea {...props} user={{ id: 'user-id-2' }} />
+                <BatchChangesSettingsArea {...props} user={{ id: 'user-id-2' } as UserAreaUserFields} />
             </MockedTestProvider>
         )}
     </WebStory>

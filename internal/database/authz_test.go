@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -10,11 +11,10 @@ import (
 	"github.com/sourcegraph/log/logtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/exp/slices"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/globals"
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/authz"
+	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbtest"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
 	"github.com/sourcegraph/sourcegraph/internal/timeutil"
@@ -30,7 +30,7 @@ func clock() time.Time {
 
 func TestAuthzStore_GrantPendingPermissions(t *testing.T) {
 	logger := logtest.Scoped(t)
-	db := NewDB(logger, dbtest.NewDB(logger, t))
+	db := NewDB(logger, dbtest.NewDB(t))
 	ctx := context.Background()
 
 	// Create repos needed
@@ -71,25 +71,27 @@ func TestAuthzStore_GrantPendingPermissions(t *testing.T) {
 	}
 
 	// Add two external accounts
-	err = db.UserExternalAccounts().AssociateUserAndSave(ctx, user.ID,
-		extsvc.AccountSpec{
-			ServiceType: "gitlab",
-			ServiceID:   "https://gitlab.com/",
-			AccountID:   "alice_gitlab",
-		},
-		extsvc.AccountData{},
-	)
+	_, err = db.UserExternalAccounts().Upsert(ctx,
+		&extsvc.Account{
+			UserID: user.ID,
+			AccountSpec: extsvc.AccountSpec{
+				ServiceType: "gitlab",
+				ServiceID:   "https://gitlab.com/",
+				AccountID:   "alice_gitlab",
+			},
+		})
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = db.UserExternalAccounts().AssociateUserAndSave(ctx, user.ID,
-		extsvc.AccountSpec{
-			ServiceType: "github",
-			ServiceID:   "https://github.com/",
-			AccountID:   "alice_github",
-		},
-		extsvc.AccountData{},
-	)
+	_, err = db.UserExternalAccounts().Upsert(ctx,
+		&extsvc.Account{
+			UserID: user.ID,
+			AccountSpec: extsvc.AccountSpec{
+				ServiceType: "github",
+				ServiceID:   "https://github.com/",
+				AccountID:   "alice_github",
+			},
+		})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +216,15 @@ func TestAuthzStore_GrantPendingPermissions(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			defer cleanupPermsTables(t, s.store.(*permsStore))
 
-			globals.SetPermissionsUserMapping(test.config)
+			conf.Mock(&conf.Unified{
+				SiteConfiguration: schema.SiteConfiguration{
+					PermissionsUserMapping: &schema.PermissionsUserMapping{
+						Enabled: true,
+						BindID:  test.config.BindID,
+					},
+				},
+			})
+			t.Cleanup(func() { conf.Mock(nil) })
 
 			for _, update := range test.updates {
 				err := s.store.SetRepoPendingPermissions(ctx, update.accounts, &authz.RepoPermissions{
@@ -246,7 +256,7 @@ func TestAuthzStore_GrantPendingPermissions(t *testing.T) {
 
 func TestAuthzStore_AuthorizedRepos(t *testing.T) {
 	logger := logtest.Scoped(t)
-	db := NewDB(logger, dbtest.NewDB(logger, t))
+	db := NewDB(logger, dbtest.NewDB(t))
 	ctx := context.Background()
 
 	s := NewAuthzStore(logger, db, clock).(*authzStore)
@@ -357,7 +367,7 @@ func TestAuthzStore_AuthorizedRepos(t *testing.T) {
 
 func TestAuthzStore_RevokeUserPermissions(t *testing.T) {
 	logger := logtest.Scoped(t)
-	db := NewDB(logger, dbtest.NewDB(logger, t))
+	db := NewDB(logger, dbtest.NewDB(t))
 	ctx := context.Background()
 
 	s := NewAuthzStore(logger, db, clock).(*authzStore)

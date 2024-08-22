@@ -10,12 +10,12 @@ import {
     mdiClose,
 } from '@mdi/js'
 import classNames from 'classnames'
-import { Observable } from 'rxjs'
+import type { Observable } from 'rxjs'
 
 import { SourcegraphLogo } from '@sourcegraph/branded/src/components/SourcegraphLogo'
 import { Toggle } from '@sourcegraph/branded/src/components/Toggle'
 import { createURLWithUTM } from '@sourcegraph/shared/src/tracking/utm'
-import { InputValidationState, useInputValidation } from '@sourcegraph/shared/src/util/useInputValidation'
+import { type InputValidationState, useInputValidation } from '@sourcegraph/shared/src/util/useInputValidation'
 import {
     Combobox,
     ComboboxInput,
@@ -31,7 +31,7 @@ import {
     InputStatus,
 } from '@sourcegraph/wildcard'
 
-import { CurrentUserResult } from '../../graphql-operations'
+import type { CurrentUserResult } from '../../graphql-operations'
 import { getPlatformName, isDefaultSourcegraphUrl } from '../../shared/util/context'
 
 import { OptionsPageContainer } from './components/OptionsPageContainer'
@@ -153,7 +153,7 @@ export const OptionsPage: React.FunctionComponent<React.PropsWithChildren<Option
 
             <section className={styles.section}>
                 <Link
-                    to="https://docs.sourcegraph.com/integration/browser_extension#privacy"
+                    to="https://sourcegraph.com/docs/integration/browser_extension#privacy"
                     {...NEW_TAB_LINK_PROPS}
                     className="d-block mb-1"
                 >
@@ -189,7 +189,7 @@ export const OptionsPage: React.FunctionComponent<React.PropsWithChildren<Option
                     </Link>
                 </div>
                 <div className={styles.splitSectionPart}>
-                    <Link to="https://docs.sourcegraph.com" {...NEW_TAB_LINK_PROPS}>
+                    <Link to="https://sourcegraph.com/docs" {...NEW_TAB_LINK_PROPS}>
                         <Icon className="mr-2" aria-hidden={true} svgPath={mdiBookOpenPageVariant} />
                         Documentation
                     </Link>
@@ -247,7 +247,7 @@ const RepoSyncErrorAlert: React.FunctionComponent<
                         You need to setup a{' '}
                         <Link
                             to={
-                                createURLWithUTM(new URL('https://docs.sourcegraph.com/'), {
+                                createURLWithUTM(new URL('https://sourcegraph.com/docs/'), {
                                     utm_source: getPlatformName(),
                                     utm_campaign: 'sync-private-repo-with-cloud',
                                 }).href
@@ -262,7 +262,7 @@ const RepoSyncErrorAlert: React.FunctionComponent<
                     <>
                         <Link
                             to={
-                                createURLWithUTM(new URL('admin/repo/add', 'https://docs.sourcegraph.com/'), {
+                                createURLWithUTM(new URL('admin/repo/add', 'https://sourcegraph.com/docs/'), {
                                     utm_source: getPlatformName(),
                                     utm_campaign: 'add-repo-to-instance',
                                 }).href
@@ -305,14 +305,18 @@ interface SourcegraphURLFormProps {
 
 const getInputStatusFromKind = (kind: InputValidationState['kind']): InputStatus => {
     switch (kind) {
-        case 'INVALID':
+        case 'INVALID': {
             return InputStatus.error
-        case 'VALID':
+        }
+        case 'VALID': {
             return InputStatus.valid
-        case 'LOADING':
+        }
+        case 'LOADING': {
             return InputStatus.loading
-        default:
+        }
+        default: {
             return InputStatus.initial
+        }
     }
 }
 

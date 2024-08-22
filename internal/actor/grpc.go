@@ -4,7 +4,11 @@ import (
 	"context"
 	"strconv"
 
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
+
+	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
 
 // ActorPropagator implements the (internal/grpc).Propagator interface
@@ -14,44 +18,50 @@ type ActorPropagator struct{}
 
 func (ActorPropagator) FromContext(ctx context.Context) metadata.MD {
 	actor := FromContext(ctx)
+	md := make(metadata.MD)
+
+	// We always propagate AnonymousUID if present.
+	if actor.AnonymousUID != "" {
+		md.Append(headerKeyActorAnonymousUID, actor.AnonymousUID)
+	}
+
 	switch {
 	case actor.IsInternal():
-		return metadata.Pairs(headerKeyActorUID, headerValueInternalActor)
+		md.Append(headerKeyActorUID, headerValueInternalActor)
 	case actor.IsAuthenticated():
-		return metadata.Pairs(headerKeyActorUID, actor.UIDString())
+		md.Append(headerKeyActorUID, actor.UIDString())
 	default:
-		md := metadata.Pairs(headerKeyActorUID, headerValueNoActor)
-		if actor.AnonymousUID != "" {
-			md.Append(headerKeyActorAnonymousUID, actor.AnonymousUID)
-		}
-		return md
+		md.Append(headerKeyActorUID, headerValueNoActor)
 	}
+
+	return md
 }
 
-func (ActorPropagator) InjectContext(ctx context.Context, md metadata.MD) context.Context {
+func (ActorPropagator) InjectContext(ctx context.Context, md metadata.MD) (context.Context, error) {
 	var uidStr string
 	if vals := md.Get(headerKeyActorUID); len(vals) > 0 {
 		uidStr = vals[0]
 	}
 
+	act := &Actor{}
 	switch uidStr {
-	case headerValueInternalActor:
-		ctx = WithInternalActor(ctx)
 	case "", headerValueNoActor:
-		if vals := md.Get(headerKeyActorAnonymousUID); len(vals) > 0 {
-			ctx = WithActor(ctx, FromAnonymousUser(vals[0]))
-		}
+	case headerValueInternalActor:
+		act = Internal()
 	default:
 		uid, err := strconv.Atoi(uidStr)
 		if err != nil {
-			// If the actor is invalid, ignore the error
-			// and do not set an actor on the context.
-			break
+			// The actor is invalid.
+			return ctx, status.New(codes.InvalidArgument, errors.Wrap(err, "bad actor value in metadata").Error()).Err()
 		}
-
-		actor := FromUser(int32(uid))
-		ctx = WithActor(ctx, actor)
+		act = FromUser(int32(uid))
 	}
 
-	return ctx
+	// Always preserve the AnonymousUID if present
+	if vals := md.Get(headerKeyActorAnonymousUID); len(vals) > 0 {
+		act.AnonymousUID = vals[0]
+	}
+
+	// FromContext always returns a non-nil Actor, so it's okay to always add it
+	return WithActor(ctx, act), nil
 }

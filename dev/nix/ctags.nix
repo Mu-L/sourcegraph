@@ -18,15 +18,15 @@ let
   stdenv = pkgsStatic.stdenv;
 in
 # yoinked from github.com/nixos/nixpkgs
-unNixifyDylibs pkgs (stdenv.mkDerivation rec {
+unNixifyDylibs { inherit pkgs; } (stdenv.mkDerivation rec {
   pname = "universal-ctags";
-  version = "5.9.20220403.0";
+  version = "6.0.0";
 
   src = fetchFromGitHub {
     owner = "universal-ctags";
     repo = "ctags";
-    rev = "p${version}";
-    sha256 = "sha256-pd89KERQj6K11Nue3YFNO+NLOJGqcMnHkeqtWvMFk38=";
+    rev = "v${version}";
+    sha256 = "sha256-XlqBndo8g011SDGp3zM7S+AQ0aCp6rpQlqJF6e5Dd6w=";
   };
 
   depsBuildBuild = [
@@ -62,7 +62,11 @@ unNixifyDylibs pkgs (stdenv.mkDerivation rec {
     patchShebangs misc/*
   '';
 
+  # we create two symbolic links
+  # 1. ctags-$version: Used bazel in dev/tool_deps.bzl. With the version it allows us to pin the ctags version bazel uses
+  # 2. ctags: gets referenced by shell.nix and there is no version to ensure we always point to the latest.
   postFixup = ''
+    ln -s $out/bin/ctags $out/bin/universal-ctags-$version
     ln -s $out/bin/ctags $out/bin/universal-ctags
   '';
 

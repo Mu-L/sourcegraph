@@ -1,22 +1,22 @@
 import { of } from 'rxjs'
 
-import { PlatformContext } from '@sourcegraph/shared/src/platform/context'
+import type { PlatformContext } from '@sourcegraph/shared/src/platform/context'
 import { NOOP_TELEMETRY_SERVICE } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { NOOP_PLATFORM_CONTEXT } from '@sourcegraph/shared/src/testing/searchTestHelpers'
 
-import {
+import type {
     LegacyLayoutRouteContext,
     LegacyRouteComputedContext,
     LegacyRouteStaticInjections,
 } from '../LegacyRouteContext'
-import { DynamicSourcegraphWebAppContext, StaticSourcegraphWebAppContext } from '../SourcegraphWebApp'
-import {
-    StaticInjectedAppConfig,
-    StaticHardcodedAppConfig,
-    StaticWindowContextComputedAppConfig,
-} from '../staticAppConfig'
+import type { DynamicSourcegraphWebAppContext, StaticSourcegraphWebAppContext } from '../SourcegraphWebApp'
+import type { StaticInjectedAppConfig, StaticWindowContextComputedAppConfig } from '../staticAppConfig'
 
-const hardcodedConfig = {
+export const windowContextConfig = {
+    isSourcegraphDotCom: false,
+    needsRepositoryConfiguration: false,
+    batchChangesWebhookLogsEnabled: true,
+    batchChangesEnabled: true,
     codeIntelligenceEnabled: true,
     codeInsightsEnabled: true,
     searchContextsEnabled: true,
@@ -24,14 +24,7 @@ const hardcodedConfig = {
     codeMonitoringEnabled: true,
     searchAggregationEnabled: true,
     ownEnabled: true,
-} satisfies StaticHardcodedAppConfig
-
-export const windowContextConfig = {
-    isSourcegraphDotCom: false,
-    isSourcegraphApp: false,
-    needsRepositoryConfiguration: false,
-    batchChangesWebhookLogsEnabled: true,
-    batchChangesEnabled: true,
+    searchJobsEnabled: true,
 } satisfies StaticWindowContextComputedAppConfig
 
 export const injectedAppConfig = {} as unknown as StaticInjectedAppConfig
@@ -39,7 +32,6 @@ export const injectedAppConfig = {} as unknown as StaticInjectedAppConfig
 export const staticWebAppConfig = {
     setSelectedSearchContextSpec: () => {},
     platformContext: NOOP_PLATFORM_CONTEXT as PlatformContext,
-    extensionsController: null,
 } satisfies StaticSourcegraphWebAppContext
 
 export const dynamicWebAppConfig = {
@@ -75,7 +67,6 @@ export const legacyRouteInjectedContext = {
 } as Record<keyof LegacyRouteStaticInjections, unknown> as LegacyRouteStaticInjections
 
 export const legacyLayoutRouteContextMock = {
-    ...hardcodedConfig,
     ...windowContextConfig,
     ...injectedAppConfig,
     ...staticWebAppConfig,

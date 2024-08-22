@@ -2,12 +2,12 @@
 package redispool
 
 import (
+	"os"
 	"strings"
 	"time"
 
 	"github.com/gomodule/redigo/redis"
 
-	"github.com/sourcegraph/sourcegraph/internal/conf/deploy"
 	"github.com/sourcegraph/sourcegraph/internal/env"
 	"github.com/sourcegraph/sourcegraph/internal/lazyregexp"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
@@ -29,41 +29,15 @@ var addresses = func() struct {
 		Store string
 	}{}
 
-	fallback := env.Get("REDIS_ENDPOINT", "", "redis endpoint. Used as fallback if REDIS_CACHE_ENDPOINT or REDIS_STORE_ENDPOINT is not specified.")
-
-	// maybe is a convenience which returns s if include is true, otherwise
-	// returns the empty string.
-	maybe := func(include bool, s string) string {
-		if include {
-			return s
+	fallback := func(d string) string {
+		if os.Getenv("REDIS_ENDPOINT") != "" {
+			return os.Getenv("REDIS_ENDPOINT")
 		}
-		return ""
+		return d
 	}
 
-	for _, addr := range []string{
-		env.Get("REDIS_CACHE_ENDPOINT", "", "redis used for cache data. Default redis-cache:6379"),
-		fallback,
-		maybe(deploy.IsSingleBinary(), MemoryKeyValueURI),
-		"redis-cache:6379",
-	} {
-		if addr != "" {
-			redis.Cache = addr
-			break
-		}
-	}
-
-	// addrStore
-	for _, addr := range []string{
-		env.Get("REDIS_STORE_ENDPOINT", "", "redis used for persistent stores (eg HTTP sessions). Default redis-store:6379"),
-		fallback,
-		maybe(deploy.IsSingleBinary(), DBKeyValueURI("store")),
-		"redis-store:6379",
-	} {
-		if addr != "" {
-			redis.Store = addr
-			break
-		}
-	}
+	redis.Cache = env.Get("REDIS_CACHE_ENDPOINT", fallback("redis-cache:6379"), "redis used for cache data. if not set, REDIS_ENDPOINT will be considered")
+	redis.Store = env.Get("REDIS_STORE_ENDPOINT", fallback("redis-store:6379"), "redis used for persistent stores (eg HTTP sessions). if not set, REDIS_ENDPOINT will be considered")
 
 	return redis
 }()
@@ -93,6 +67,7 @@ func dialRedis(rawEndpoint string) (redis.Conn, error) {
 var Cache = NewKeyValue(addresses.Cache, &redis.Pool{
 	MaxIdle:     3,
 	IdleTimeout: 240 * time.Second,
+	MaxActive:   1000,
 })
 
 // Store is a redis configured for persisting data. Do not abuse this pool,
@@ -102,4 +77,5 @@ var Cache = NewKeyValue(addresses.Cache, &redis.Pool{
 var Store = NewKeyValue(addresses.Store, &redis.Pool{
 	MaxIdle:     10,
 	IdleTimeout: 240 * time.Second,
+	MaxActive:   1000,
 })

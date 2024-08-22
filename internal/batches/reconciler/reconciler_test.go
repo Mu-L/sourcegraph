@@ -12,6 +12,7 @@ import (
 	bstore "github.com/sourcegraph/sourcegraph/internal/batches/store"
 	bt "github.com/sourcegraph/sourcegraph/internal/batches/testing"
 	btypes "github.com/sourcegraph/sourcegraph/internal/batches/types"
+	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbtest"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc/auth"
@@ -28,9 +29,9 @@ func TestReconcilerProcess_IntegrationTest(t *testing.T) {
 
 	ctx := actor.WithInternalActor(context.Background())
 	logger := logtest.Scoped(t)
-	db := database.NewDB(logger, dbtest.NewDB(logger, t))
+	db := database.NewDB(logger, dbtest.NewDB(t))
 
-	store := bstore.New(db, &observation.TestContext, nil)
+	store := bstore.New(db, observation.TestContextTB(t), nil)
 
 	admin := bt.CreateTestUser(t, db, true)
 
@@ -41,10 +42,8 @@ func TestReconcilerProcess_IntegrationTest(t *testing.T) {
 		Name: repo.Name,
 		VCS:  protocol.VCSInfo{URL: repo.URI},
 	})
-	defer state.Unmock()
 
-	btypes.MockInternalClientExternalURL("https://sourcegraph.test")
-	t.Cleanup(btypes.ResetInternalClient)
+	mockExternalURL(t, "https://sourcegraph.test")
 
 	githubPR := buildGithubPR(time.Now(), btypes.ChangesetExternalStateOpen)
 	githubHeadRef := gitdomain.EnsureRefPrefix(githubPR.HeadRefName)
@@ -176,4 +175,12 @@ func TestReconcilerProcess_IntegrationTest(t *testing.T) {
 		// Clean up database.
 		bt.TruncateTables(t, db, "changeset_events", "changesets", "batch_changes", "batch_specs", "changeset_specs")
 	}
+}
+
+func mockExternalURL(t *testing.T, url string) {
+	oldConf := conf.Get()
+	newConf := *oldConf
+	newConf.ExternalURL = url
+	conf.Mock(&newConf)
+	t.Cleanup(func() { conf.Mock(oldConf) })
 }

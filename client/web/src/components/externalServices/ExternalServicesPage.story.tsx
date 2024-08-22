@@ -1,8 +1,9 @@
-import { DecoratorFn, Meta, Story } from '@storybook/react'
+import type { Decorator, Meta, StoryFn } from '@storybook/react'
 import { subMinutes } from 'date-fns'
 import { MATCH_ANY_PARAMETERS, WildcardMockLink } from 'wildcard-mock-link'
 
 import { getDocumentNode } from '@sourcegraph/http-client'
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { NOOP_TELEMETRY_SERVICE } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { MockedTestProvider } from '@sourcegraph/shared/src/testing/apollo'
 
@@ -12,7 +13,7 @@ import { WebStory } from '../WebStory'
 import { EXTERNAL_SERVICES } from './backend'
 import { ExternalServicesPage } from './ExternalServicesPage'
 
-const decorator: DecoratorFn = story => (
+const decorator: Decorator = story => (
     <div className="p-3 container">
         <WebStory>{story}</WebStory>
     </div>
@@ -25,7 +26,7 @@ const config: Meta = {
 
 export default config
 
-export const ListOfExternalServices: Story = () => (
+export const ListOfExternalServices: StoryFn = () => (
     <MockedTestProvider
         link={
             new WildcardMockLink([
@@ -44,9 +45,9 @@ export const ListOfExternalServices: Story = () => (
     >
         <ExternalServicesPage
             telemetryService={NOOP_TELEMETRY_SERVICE}
+            telemetryRecorder={noOpTelemetryRecorder}
             externalServicesFromFile={false}
             allowEditExternalServicesWithFile={false}
-            isSourcegraphApp={false}
         />
     </MockedTestProvider>
 )

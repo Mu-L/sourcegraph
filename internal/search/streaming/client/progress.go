@@ -1,14 +1,14 @@
 package client
 
 import (
+	"slices"
 	"time"
-
-	"golang.org/x/exp/slices"
 
 	sgapi "github.com/sourcegraph/sourcegraph/internal/api"
 	searchshared "github.com/sourcegraph/sourcegraph/internal/search"
 	"github.com/sourcegraph/sourcegraph/internal/search/streaming"
 	"github.com/sourcegraph/sourcegraph/internal/search/streaming/api"
+	"github.com/sourcegraph/sourcegraph/lib/pointers"
 )
 
 type ProgressAggregator struct {
@@ -62,7 +62,7 @@ func (p *ProgressAggregator) currentStats() api.ProgressStats {
 		BackendsMissing:     p.Stats.BackendsMissing,
 		ExcludedArchived:    p.Stats.ExcludedArchived,
 		ExcludedForks:       p.Stats.ExcludedForks,
-		Timedout:            getRepos(p.Stats, searchshared.RepoStatusTimedout),
+		Timedout:            getRepos(p.Stats, searchshared.RepoStatusTimedOut),
 		Missing:             getRepos(p.Stats, searchshared.RepoStatusMissing),
 		Cloning:             getRepos(p.Stats, searchshared.RepoStatusCloning),
 		LimitHit:            p.Stats.IsLimitHit,
@@ -89,7 +89,7 @@ func (p *ProgressAggregator) Final() api.Progress {
 	// We only send RepositoriesCount at the end because the number is
 	// confusing to users to see while searching.
 	if c := len(p.Stats.Repos); c > 0 {
-		s.RepositoriesCount = intPtr(c)
+		s.RepositoriesCount = pointers.Ptr(c)
 	}
 
 	event := api.BuildProgressEvent(s, p.RepoNamer)
@@ -106,8 +106,4 @@ func getRepos(stats streaming.Stats, status searchshared.RepoStatus) []sgapi.Rep
 	// give deterministic messages between updates.
 	slices.Sort(repos)
 	return repos
-}
-
-func intPtr(i int) *int {
-	return &i
 }

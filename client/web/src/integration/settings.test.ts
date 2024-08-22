@@ -1,14 +1,16 @@
 import assert from 'assert'
 
+import { afterEach, beforeEach, describe, it } from 'mocha'
+
 import { accessibilityAudit } from '@sourcegraph/shared/src/testing/accessibility'
-import { createDriverForTest, Driver } from '@sourcegraph/shared/src/testing/driver'
+import { createDriverForTest, type Driver } from '@sourcegraph/shared/src/testing/driver'
 import { settingsID, testUserID } from '@sourcegraph/shared/src/testing/integration/graphQlResults'
 import { afterEachSaveScreenshotIfFailed } from '@sourcegraph/shared/src/testing/screenshotReporter'
 import { retry } from '@sourcegraph/shared/src/testing/utils'
 
-import { createWebIntegrationTestContext, WebIntegrationTestContext } from './context'
+import { createWebIntegrationTestContext, type WebIntegrationTestContext } from './context'
 import { commonWebGraphQlResults } from './graphQlResults'
-import { createEditorAPI, isElementDisabled, percySnapshotWithVariants } from './utils'
+import { createEditorAPI, isElementDisabled } from './utils'
 
 describe('Settings', () => {
     let driver: Driver
@@ -118,8 +120,6 @@ describe('Settings', () => {
             // The editor API needs to be created before taking the screenshot
             // (waits for the editor to be ready)
             const editor = await createEditorAPI(driver, '.test-settings-file .test-editor')
-
-            await percySnapshotWithVariants(driver.page, 'Settings page')
             await accessibilityAudit(driver.page)
 
             // Replace with new settings
